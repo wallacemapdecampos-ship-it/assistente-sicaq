@@ -105,9 +105,25 @@
       justify-content: flex-end;
       margin-top: 20px;
     }
-    #mensagem {
+    #mensagem, #mensagemHolerite {
       margin-top: 12px;
       font-weight: 700;
+    }
+    .painel { display: none; }
+    .painel.active { display: block; }
+    .fixo {
+      background: #eef3f8 !important;
+      font-weight: 700;
+    }
+    .destaque {
+      background: #fff2b2 !important;
+    }
+    .nota {
+      margin-top: 12px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #5f6b7a;
+      line-height: 1.45;
     }
     @media (max-width: 700px) {
       .grid { grid-template-columns: 1fr; }
@@ -123,10 +139,11 @@
 
 <div class="container">
   <div class="tabs">
-    <button class="tab active" type="button">IDENTIFICAÇÃO</button>
-    <button class="tab" type="button" disabled>HOLERITE</button>
+    <button id="tabIdentificacao" class="tab active" type="button">IDENTIFICAÇÃO</button>
+    <button id="tabHolerite" class="tab" type="button">HOLERITE</button>
   </div>
 
+  <section id="painelIdentificacao" class="painel active">
   <div class="card">
     <div class="statusbar">
       <h3 style="margin:0">Documento de identificação</h3>
@@ -229,6 +246,96 @@
       <button id="btnSicaq" type="button" disabled>PREENCHER SICAQ</button>
     </div>
   </div>
+  </section>
+
+  <section id="painelHolerite" class="painel">
+    <div class="card">
+      <div class="statusbar">
+        <h3 style="margin:0">Holerite / Contracheque</h3>
+        <div id="statusServidorHolerite" class="status ok">Servidor online • Groq/Qwen</div>
+      </div>
+
+      <div class="upload">
+        <input type="file" id="holeriteArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp">
+        <button id="btnLerHolerite" type="button" disabled>LER HOLERITE</button>
+      </div>
+
+      <div id="mensagemHolerite" class="muted">
+        Selecione um holerite para leitura.
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Renda Formal - dados para o SICAQ</h3>
+
+      <div class="grid">
+        <div class="campo">
+          <label>Característica da Renda</label>
+          <input id="hCaracteristica" class="fixo" value="COMPROVADA" readonly>
+        </div>
+
+        <div class="campo">
+          <label>Documento</label>
+          <input id="hDocumento" class="fixo" value="CONTRACHEQUE/HOLLERITH" readonly>
+        </div>
+
+        <div class="campo">
+          <label>Tipo de Fonte</label>
+          <input id="hTipoFonte" class="fixo" value="JURIDICA" readonly>
+        </div>
+
+        <div class="campo">
+          <label>Data do Comprovante</label>
+          <input id="hCompetencia" type="text">
+        </div>
+
+        <div class="campo">
+          <label>CNPJ</label>
+          <input id="hCnpj" type="text">
+        </div>
+
+        <div class="campo">
+          <label>IRRF</label>
+          <input id="hIrrf" type="text">
+        </div>
+
+        <div class="campo">
+          <label>Data de Admissão</label>
+          <input id="hAdmissao" type="text">
+        </div>
+
+        <div class="campo">
+          <label>Líquido do Holerite</label>
+          <input id="hLiquidoOriginal" type="text">
+        </div>
+
+        <div class="campo">
+          <label>Bruta</label>
+          <input id="hBruta" type="text">
+        </div>
+
+        <div class="campo">
+          <label>Adiantamento Salarial</label>
+          <input id="hAdiantamento" type="text">
+        </div>
+
+        <div class="campo">
+          <label>Líquida para o SICAQ</label>
+          <input id="hLiquida" type="text">
+        </div>
+
+        <div class="campo">
+          <label>Descrição do Adiantamento</label>
+          <input id="hDescricaoAdiantamento" type="text">
+        </div>
+      </div>
+
+      <div id="notaHolerite" class="nota">
+        Regra: Bruta = Total de Proventos. Líquida = Líquido a Receber + somente Adiantamento Salarial.
+        Empréstimos/consignados NÃO são somados.
+      </div>
+    </div>
+  </section>
 </div>
 
 <script>
@@ -465,10 +572,32 @@
       status.className = "status ok";
       btn.disabled = false;
       setMensagem("Selecione um documento e clique em LER DOCUMENTO.", "muted");
+
+      const hbtn = document.getElementById("btnLerHolerite");
+      if (hbtn) hbtn.disabled = false;
+      const hstatus = document.getElementById("statusServidorHolerite");
+      if (hstatus) {
+        hstatus.textContent = "Servidor online • Groq/Qwen configurado";
+        hstatus.className = "status ok";
+      }
+      const validas = data.holerite_competencias || [];
+      const nota = document.getElementById("notaHolerite");
+      if (nota && validas.length >= 2) {
+        nota.textContent =
+          "Regra: Bruta = Total de Proventos. Líquida = Líquido a Receber + somente Adiantamento Salarial. " +
+          "Empréstimos/consignados NÃO são somados. Período aceito: " + validas[0] + " e " + validas[1] + ".";
+      }
     } catch (e) {
       status.textContent = "Servidor iniciando ou indisponível";
       status.className = "status erro";
       btn.disabled = true;
+      const hbtn = document.getElementById("btnLerHolerite");
+      if (hbtn) hbtn.disabled = true;
+      const hstatus = document.getElementById("statusServidorHolerite");
+      if (hstatus) {
+        hstatus.textContent = "Servidor iniciando ou indisponível";
+        hstatus.className = "status erro";
+      }
       setMensagem("No plano gratuito do Render, a primeira conexão pode demorar até cerca de 1 minuto. Tentando novamente...", "warn");
       setTimeout(checarServidor, 8000);
     }
@@ -528,6 +657,116 @@
   document.getElementById("documento").addEventListener("change", () => {
     limparCampos();
     ajustarCampos("");
+  });
+
+
+  // ============================================================
+  // ABA HOLERITE
+  // ============================================================
+  const holeriteIds = [
+    "hCnpj","hAdmissao","hCompetencia","hBruta","hLiquida","hIrrf",
+    "hLiquidoOriginal","hAdiantamento","hDescricaoAdiantamento"
+  ];
+
+  function mostrarAba(nome) {
+    const ident = nome === "identificacao";
+    document.getElementById("painelIdentificacao").classList.toggle("active", ident);
+    document.getElementById("painelHolerite").classList.toggle("active", !ident);
+    document.getElementById("tabIdentificacao").classList.toggle("active", ident);
+    document.getElementById("tabHolerite").classList.toggle("active", !ident);
+  }
+
+  function setMensagemHolerite(texto, classe="muted") {
+    const el = document.getElementById("mensagemHolerite");
+    el.textContent = texto;
+    el.className = classe;
+  }
+
+  function limparHolerite() {
+    holeriteIds.forEach(id => {
+      const el = document.getElementById(id);
+      el.value = "";
+      el.classList.remove("destaque");
+    });
+  }
+
+  function preencherHolerite(d) {
+    document.getElementById("hCnpj").value = d.cnpj || "";
+    document.getElementById("hAdmissao").value = d.data_admissao || "";
+    document.getElementById("hCompetencia").value = d.competencia || "";
+    document.getElementById("hBruta").value = d.bruta || "";
+    document.getElementById("hLiquida").value = d.liquida || "";
+    document.getElementById("hIrrf").value = d.irrf || "";
+    document.getElementById("hLiquidoOriginal").value = d.liquido_original || "";
+    document.getElementById("hAdiantamento").value = d.adiantamento || "";
+    document.getElementById("hDescricaoAdiantamento").value = d.descricao_adiantamento || "";
+
+    const ad = Number(String(d.adiantamento || "0").replace(".", "").replace(",", "."));
+    if (ad > 0) {
+      document.getElementById("hAdiantamento").classList.add("destaque");
+      document.getElementById("hDescricaoAdiantamento").classList.add("destaque");
+    }
+  }
+
+  async function lerHolerite() {
+    const input = document.getElementById("holeriteArquivo");
+    const btn = document.getElementById("btnLerHolerite");
+
+    if (!input.files.length) {
+      setMensagemHolerite("Selecione um holerite PDF ou imagem primeiro.", "erro");
+      return;
+    }
+
+    limparHolerite();
+    btn.disabled = true;
+    btn.textContent = "LENDO...";
+    setMensagemHolerite("Qwen analisando o holerite...", "warn");
+
+    const form = new FormData();
+    form.append("file", input.files[0]);
+    const inicio = performance.now();
+
+    try {
+      const resp = await fetch(API + "/ler-holerite", {
+        method: "POST",
+        body: form
+      });
+
+      let data;
+      try {
+        data = await resp.json();
+      } catch {
+        throw new Error("Resposta inválida do servidor.");
+      }
+
+      if (!resp.ok || !data.ok) {
+        if (data && data.code === "HOLERITE_FORA_PERIODO") {
+          throw new Error("Holerite fora do período aceito. " + (data.error || ""));
+        }
+        throw new Error((data && data.error) || "Falha na leitura do holerite.");
+      }
+
+      preencherHolerite(data.dados || {});
+      const total = ((performance.now() - inicio) / 1000).toFixed(2);
+      const api = data.tempo_api ? ` • Groq/Qwen: ${data.tempo_api}s` : "";
+      setMensagemHolerite(
+        `Holerite lido e renda calculada em ${total}s${api}. Revise os valores.`,
+        "ok"
+      );
+    } catch (e) {
+      setMensagemHolerite("Erro: " + (e.message || e), "erro");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "LER HOLERITE";
+    }
+  }
+
+  document.getElementById("tabIdentificacao").addEventListener("click", () => mostrarAba("identificacao"));
+  document.getElementById("tabHolerite").addEventListener("click", () => mostrarAba("holerite"));
+  document.getElementById("btnLerHolerite").addEventListener("click", lerHolerite);
+  document.getElementById("holeriteArquivo").addEventListener("change", () => {
+    limparHolerite();
+    setMensagemHolerite("Holerite selecionado. Clique em LER HOLERITE.", "muted");
   });
 
   ajustarCampos("");
