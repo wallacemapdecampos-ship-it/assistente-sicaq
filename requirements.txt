@@ -1,0 +1,5 @@
+Flask==3.1.2
+flask-cors==6.0.1
+Pillow==11.3.0
+PyMuPDF==1.26.4
+gunicorn==23.0.0
