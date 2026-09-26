@@ -7,6 +7,8 @@ import time
 import urllib.error
 import urllib.request
 from collections import defaultdict, deque
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -286,12 +288,334 @@ def _normalizar_saida(d):
     }
 
 
+
+# ============================================================
+# HOLERITE / RENDA FORMAL
+# ============================================================
+
+def _sem_acentos(txt):
+    import unicodedata
+    txt = str(txt or "")
+    return "".join(
+        c for c in unicodedata.normalize("NFD", txt)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _holerite_competencias_validas():
+    """Dois últimos meses fechados no fuso de São Paulo."""
+    agora = datetime.now(ZoneInfo("America/Sao_Paulo"))
+    primeiro_dia_mes = agora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    ultimo_mes_passado = primeiro_dia_mes - timedelta(days=1)
+    primeiro_mes_passado = ultimo_mes_passado.replace(day=1)
+    ultimo_mes_anterior = primeiro_mes_passado - timedelta(days=1)
+    return [
+        f"{ultimo_mes_passado.month:02d}/{ultimo_mes_passado.year:04d}",
+        f"{ultimo_mes_anterior.month:02d}/{ultimo_mes_anterior.year:04d}",
+    ]
+
+
+def _holerite_prompt():
+    recente, anterior = _holerite_competencias_validas()
+    return f"""
+Leia este HOLERITE / CONTRACHEQUE brasileiro e devolva SOMENTE JSON válido.
+
+Chaves obrigatórias:
+cnpj, data_admissao, competencia, bruta, liquido_original,
+adiantamento_salarial_total, descricao_adiantamento, irrf, campos_incertos.
+
+Regras:
+- cnpj: CNPJ do empregador, somente dígitos.
+- data_admissao: DD/MM/AAAA. Não confunda com data de pagamento.
+- competencia: mês/ano do holerite em MM/AAAA.
+- bruta: TOTAL DE PROVENTOS / TOTAL BRUTO. Não use salário base, base INSS,
+  base FGTS ou líquido.
+- liquido_original: somente LÍQUIDO A RECEBER / LÍQUIDO DO HOLERITE.
+- adiantamento_salarial_total: some SOMENTE antecipação do salário mensal.
+  Exemplos válidos: ADIANTAMENTO DE SALÁRIO, ADIANTAMENTO SALARIAL,
+  ADIANT. SALÁRIO, ADIANTAMENTO QUINZENAL, VALE SALÁRIO, ANTECIPAÇÃO SALARIAL.
+- NÃO trate como adiantamento salarial: empréstimo/consignado, férias,
+  adiantamento de férias, 13º, vale transporte, vale refeição, vale alimentação,
+  INSS, IRRF, pensão ou contribuições.
+- descricao_adiantamento: copie a descrição usada para formar o adiantamento;
+  se não houver, deixe vazio.
+- irrf: valor DESCONTADO de IRRF / I.R.R.F. / IMPOSTO DE RENDA RETIDO.
+  Se não houver, devolva "0,00".
+- Valores monetários no formato brasileiro, ex.: "2304,21".
+- Não invente. Campo ilegível = vazio e inclua a chave em campos_incertos.
+
+REGRA DE PERÍODO DO SICAQ:
+- As únicas competências aceitas hoje são {recente} e {anterior}.
+- Se houver mais de um holerite/página, examine TODAS as páginas.
+- Ignore holerites fora dessas duas competências.
+- Se encontrar {recente}, use {recente}.
+- Se não houver {recente}, mas houver {anterior}, use {anterior}.
+- Nunca misture valores de meses diferentes.
+- CNPJ, admissão, bruto, líquido, adiantamento e IRRF devem vir da MESMA
+  página/competência escolhida.
+- Se nenhuma página estiver dentro do período aceito, devolva competencia vazia
+  e inclua "competencia" em campos_incertos.
+""".strip()
+
+
+def _holerite_competencia_mm_aaaa(valor):
+    valor = _sem_acentos(valor).upper().strip()
+    if not valor:
+        return ""
+
+    m = re.search(r"\b(0?[1-9]|1[0-2])\s*[/.\-]\s*((?:19|20)\d{2})\b", valor)
+    if m:
+        return f"{int(m.group(1)):02d}/{m.group(2)}"
+
+    meses = {
+        "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4,
+        "MAIO": 5, "JUNHO": 6, "JULHO": 7, "AGOSTO": 8,
+        "SETEMBRO": 9, "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12,
+    }
+    ano = re.search(r"\b((?:19|20)\d{2})\b", valor)
+    if ano:
+        for nome, numero in meses.items():
+            if nome in valor:
+                return f"{numero:02d}/{ano.group(1)}"
+    return valor
+
+
+def _holerite_numero(valor):
+    if valor is None:
+        return 0.0
+    s = str(valor).strip().upper().replace("R$", "").replace("\xa0", " ")
+    s = re.sub(r"[^0-9,.\-]", "", s)
+    if not s:
+        return 0.0
+    try:
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif s.count(".") > 1:
+            partes = s.split(".")
+            s = "".join(partes[:-1]) + "." + partes[-1]
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def _holerite_valor(valor):
+    return f"{float(valor or 0):.2f}".replace(".", ",")
+
+
+def _pdf_texto_holerite(data):
+    try:
+        doc = pymupdf.open(stream=data, filetype="pdf")
+        try:
+            partes = []
+            for i in range(min(len(doc), 8)):
+                texto = doc[i].get_text("text") or ""
+                if texto.strip():
+                    partes.append(f"\n--- PÁGINA {i+1} ---\n{texto}")
+            return "".join(partes).strip()
+        finally:
+            doc.close()
+    except Exception:
+        return ""
+
+
+def _imagem_holerite(data, filename, mimetype):
+    ext = PathLikeSuffix(filename)
+    is_pdf = ext == ".pdf" or mimetype == "application/pdf"
+
+    if not is_pdf:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        max_w = 1500
+        if img.width > max_w:
+            escala = max_w / img.width
+            img = img.resize((max_w, max(1, int(img.height * escala))))
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=88, optimize=True)
+        return out.getvalue()
+
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        paginas = []
+        for i in range(min(len(doc), 3)):
+            pix = doc[i].get_pixmap(matrix=pymupdf.Matrix(1.8, 1.8), alpha=False)
+            img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+            if img.width > 1350:
+                escala = 1350 / img.width
+                img = img.resize((1350, max(1, int(img.height * escala))))
+            paginas.append(img.copy())
+
+        if not paginas:
+            raise RuntimeError("O PDF do holerite não possui páginas válidas.")
+
+        margem = 16
+        largura = max(p.width for p in paginas)
+        altura = margem + sum(p.height + margem for p in paginas)
+        composta = Image.new("RGB", (largura + 2*margem, altura), "white")
+        y = margem
+        for pagina in paginas:
+            x = margem + (largura - pagina.width)//2
+            composta.paste(pagina, (x, y))
+            y += pagina.height + margem
+
+        out = io.BytesIO()
+        composta.save(out, format="JPEG", quality=87, optimize=True)
+        return out.getvalue()
+    finally:
+        doc.close()
+
+
+def _groq_holerite_call(data, filename, mimetype):
+    key = os.getenv("GROQ_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("GROQ_API_KEY não configurada no Render.")
+
+    texto_pdf = ""
+    if PathLikeSuffix(filename) == ".pdf" or mimetype == "application/pdf":
+        texto_pdf = _pdf_texto_holerite(data)
+
+    if len(texto_pdf) >= 120:
+        conteudo = _holerite_prompt() + "\n\nTEXTO EXTRAÍDO DO HOLERITE:\n" + texto_pdf[:18000]
+    else:
+        imagem = _imagem_holerite(data, filename, mimetype)
+        b64 = base64.b64encode(imagem).decode("ascii")
+        conteudo = [
+            {"type": "text", "text": _holerite_prompt()},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+        ]
+
+    models = [
+        os.getenv("GROQ_MODEL", "").strip(),
+        "qwen/qwen3.8-27b",
+        "qwen/qwen3.6-27b",
+    ]
+    models = [m for i, m in enumerate(models) if m and m not in models[:i]]
+
+    ultimo = None
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": conteudo}],
+            "temperature": 0.0,
+            "top_p": 0.8,
+            "max_completion_tokens": 650,
+            "stream": False,
+            "reasoning_effort": "none",
+            "response_format": {"type": "json_object"},
+        }
+        req = urllib.request.Request(
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Assistente-SICAQ-Holerite-Web/1.0",
+            },
+            method="POST",
+        )
+        try:
+            t0 = time.perf_counter()
+            with urllib.request.urlopen(req, timeout=35) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            elapsed = time.perf_counter() - t0
+            content = body["choices"][0]["message"]["content"]
+            dados = json.loads(content)
+            return dados, model, elapsed
+        except urllib.error.HTTPError as e:
+            detalhe = e.read().decode("utf-8", errors="replace")
+            ultimo = RuntimeError(f"Groq HTTP {e.code}: {detalhe}")
+            if e.code not in (400, 404):
+                break
+        except Exception as e:
+            ultimo = e
+            break
+
+    raise RuntimeError(str(ultimo or "Falha na leitura do holerite."))
+
+
+def _normalizar_holerite(resultado):
+    resultado = dict(resultado or {})
+    cnpj = re.sub(r"\D", "", str(resultado.get("cnpj") or ""))
+    competencia = _holerite_competencia_mm_aaaa(resultado.get("competencia"))
+    validas = _holerite_competencias_validas()
+
+    if competencia not in validas:
+        identificada = competencia or "não identificada"
+        raise ValueError(
+            f"HOLERITE_FORA_PERIODO|Competência identificada: {identificada}. "
+            f"Período aceito: {validas[0]} e {validas[1]}."
+        )
+
+    bruta = _holerite_numero(resultado.get("bruta"))
+    liquido_original = _holerite_numero(resultado.get("liquido_original"))
+    adiantamento = _holerite_numero(resultado.get("adiantamento_salarial_total"))
+    irrf = _holerite_numero(resultado.get("irrf"))
+
+    # Regra SICAQ: somente adiantamento salarial volta ao líquido.
+    liquida_sicaq = liquido_original + adiantamento
+
+    return {
+        "caracteristica_renda": "COMPROVADA",
+        "tipo_fonte": "JURIDICA",
+        "documento": "CONTRACHEQUE/HOLLERITH",
+        "cnpj": cnpj,
+        "data_admissao": str(resultado.get("data_admissao") or "").strip(),
+        "competencia": competencia,
+        "bruta": _holerite_valor(bruta),
+        "liquida": _holerite_valor(liquida_sicaq),
+        "irrf": _holerite_valor(irrf),
+        "liquido_original": _holerite_valor(liquido_original),
+        "adiantamento": _holerite_valor(adiantamento),
+        "descricao_adiantamento": str(resultado.get("descricao_adiantamento") or "").strip().upper(),
+        "campos_incertos": list(resultado.get("campos_incertos") or []),
+    }
+
+
+@app.post("/ler-holerite")
+def ler_holerite():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "Holerite não enviado."}), 400
+
+    f = request.files["file"]
+    data = f.read()
+    if not data:
+        return jsonify({"ok": False, "error": "Arquivo vazio."}), 400
+
+    inicio = time.perf_counter()
+    try:
+        resultado, modelo, tempo_api = _groq_holerite_call(
+            data,
+            f.filename or "",
+            f.mimetype or "",
+        )
+        dados = _normalizar_holerite(resultado)
+        return jsonify({
+            "ok": True,
+            "dados": dados,
+            "modelo": modelo,
+            "tempo_api": round(tempo_api, 3),
+            "tempo_total": round(time.perf_counter() - inicio, 3),
+            "competencias_validas": _holerite_competencias_validas(),
+        })
+    except ValueError as e:
+        txt = str(e)
+        if txt.startswith("HOLERITE_FORA_PERIODO|"):
+            return jsonify({
+                "ok": False,
+                "code": "HOLERITE_FORA_PERIODO",
+                "error": txt.split("|", 1)[1],
+                "competencias_validas": _holerite_competencias_validas(),
+            }), 422
+        return jsonify({"ok": False, "error": txt}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.get("/health")
 def health():
     return jsonify({
         "ok": True,
         "service": "Assistente SICAQ Web",
         "groq_configurada": bool(os.getenv("GROQ_API_KEY", "").strip()),
+        "holerite_competencias": _holerite_competencias_validas(),
     })
 
 
