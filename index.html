@@ -224,7 +224,8 @@
       </div>
     </div>
 
-    <div class="rodape">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:18px;">
+      <div id="statusExtensao" class="status warn">Extensão SICAQ: verificando...</div>
       <button id="btnSicaq" type="button" disabled>PREENCHER SICAQ</button>
     </div>
   </div>
@@ -232,6 +233,9 @@
 
 <script>
   const API = "https://assistente-sicaq.onrender.com";
+  let ultimoDados = null;
+  let extensaoPronta = false;
+  let aguardandoSicaq = false;
 
   const ids = [
     "documentoTipo","nome","cpf","rg","numero_cnh","uf","nascimento",
@@ -245,8 +249,16 @@
     el.className = classe;
   }
 
+  function atualizarBotaoSicaq() {
+    const btn = document.getElementById("btnSicaq");
+    const temDocumento = !!(document.getElementById("documentoTipo").value || "").trim();
+    btn.disabled = !extensaoPronta || !temDocumento || aguardandoSicaq;
+  }
+
   function limparCampos() {
     ids.forEach(id => document.getElementById(id).value = "");
+    ultimoDados = null;
+    atualizarBotaoSicaq();
   }
 
   function ajustarCampos(tipo) {
@@ -268,6 +280,7 @@
   }
 
   function preencher(d) {
+    ultimoDados = {...(d || {})};
     const tipo = (d.documento || "").toUpperCase();
     document.getElementById("documentoTipo").value = tipo;
     document.getElementById("nome").value = d.nome || "";
@@ -285,6 +298,153 @@
     document.getElementById("pai").value = d.filiacao1 || "";
     document.getElementById("mae").value = d.filiacao2 || "";
     ajustarCampos(tipo);
+    atualizarBotaoSicaq();
+  }
+
+
+  function semAcentos(txt) {
+    return String(txt || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  }
+
+  function nomeReduzido(nome) {
+    const partes = semAcentos(nome).toUpperCase().trim().split(/\s+/).filter(Boolean);
+    if (partes.length <= 2) return partes.join(" ");
+    const particulas = new Set(["DE","DA","DO","DAS","DOS"]);
+    const saida = [partes[0]];
+    for (let i = 1; i < partes.length - 1; i++) {
+      const p = partes[i];
+      saida.push(particulas.has(p) ? p : p.charAt(0));
+    }
+    saida.push(partes[partes.length - 1]);
+    return saida.join(" ");
+  }
+
+  function separarNaturalidade(valor) {
+    const v = String(valor || "").trim().toUpperCase();
+    if (!v) return { municipio: "", uf: "" };
+    if (v.includes("/")) {
+      const i = v.lastIndexOf("/");
+      return { municipio: v.slice(0, i).trim(), uf: v.slice(i + 1).trim() };
+    }
+    const m = v.match(/^(.*?)[\s-]+([A-Z]{2})$/);
+    return m ? { municipio: m[1].trim(), uf: m[2] } : { municipio: v, uf: "" };
+  }
+
+  function montarPayloadSicaq() {
+    const tipoOrigem = (document.getElementById("documentoTipo").value || "").trim().toUpperCase();
+    const nat = separarNaturalidade(document.getElementById("naturalidade").value);
+    const modelo = String((ultimoDados && ultimoDados.modelo_documento) || "").toUpperCase();
+    const cpf = (document.getElementById("cpf").value || "").replace(/\D/g, "");
+    const rg = (document.getElementById("rg").value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+
+    let tipoSicaq = tipoOrigem;
+    if (tipoOrigem === "RG" || tipoOrigem === "CIN") {
+      tipoSicaq = "DOCUMENTO DE IDENTIFICAÇÃO";
+    } else if (tipoOrigem === "CNH") {
+      tipoSicaq = "CNH - CARTEIRA NACIONAL DE HABILITAÇÃO";
+    }
+
+    let numeroIdentidade = "";
+    if (tipoOrigem === "CIN" || modelo === "NOVO" || modelo === "NOVA") {
+      numeroIdentidade = cpf || rg;
+    } else if (tipoOrigem === "RG") {
+      numeroIdentidade = rg || cpf;
+    }
+
+    return {
+      nome_reduzido: nomeReduzido(document.getElementById("nome").value),
+      sexo: (document.getElementById("sexo").value || "").toUpperCase(),
+      nacionalidade: "BRASILEIRA",
+      naturalidade_uf: nat.uf,
+      naturalidade_municipio: nat.municipio,
+      filiacao_1: (document.getElementById("pai").value || "").toUpperCase(),
+      filiacao_2: (document.getElementById("mae").value || "").toUpperCase(),
+      grau_instrucao: "ENSINO MÉDIO COMPLETO",
+      tipo_documento: tipoSicaq,
+      tipo_documento_origem: tipoOrigem,
+      orgao_emissor: tipoOrigem === "CNH"
+        ? "ÓRGÃO DE TRÂNSITO"
+        : String((ultimoDados && ultimoDados.orgao_emissor) || "").toUpperCase(),
+      uf_emissao: (document.getElementById("uf").value || "").toUpperCase(),
+      numero_cnh: document.getElementById("numero_cnh").value || "",
+      data_primeira_habilitacao: document.getElementById("primeira").value || "",
+      data_emissao: document.getElementById("emissao").value || "",
+      validade: document.getElementById("validade").value || "",
+      numero_identidade: numeroIdentidade,
+      checkboxes: [
+        "Movimentação de Conta de Depósito/Poupança",
+        "Empréstimos/Financiamentos",
+        "Cartão de Crédito"
+      ],
+      financiamento_habitacional: "SIM"
+    };
+  }
+
+  function preencherSicaq() {
+    if (!extensaoPronta) {
+      setMensagem("A extensão SICAQ não foi detectada. Recarregue a extensão e atualize esta página.", "erro");
+      return;
+    }
+    const tipo = (document.getElementById("documentoTipo").value || "").trim();
+    if (!tipo) {
+      setMensagem("Leia um documento antes de preencher o SICAQ.", "erro");
+      return;
+    }
+
+    aguardandoSicaq = true;
+    atualizarBotaoSicaq();
+    document.getElementById("btnSicaq").textContent = "PREENCHENDO...";
+    setMensagem("Enviando os dados para a extensão. Deixe a página Dados Cadastrais do SICAQ aberta e logada.", "warn");
+
+    window.postMessage({
+      source: "ASSISTENTE_SICAQ_SITE",
+      type: "FILL_SICAQ",
+      id: `site-${Date.now()}`,
+      payload: montarPayloadSicaq()
+    }, window.location.origin);
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window || event.origin !== window.location.origin) return;
+    const msg = event.data || {};
+    if (msg.source !== "ASSISTENTE_SICAQ_EXTENSION") return;
+
+    if (msg.type === "EXTENSION_READY") {
+      extensaoPronta = true;
+      const el = document.getElementById("statusExtensao");
+      el.textContent = "Extensão SICAQ conectada";
+      el.className = "status ok";
+      atualizarBotaoSicaq();
+      return;
+    }
+
+    if (msg.type === "SICAQ_ACCEPTED" && !msg.ok) {
+      aguardandoSicaq = false;
+      document.getElementById("btnSicaq").textContent = "PREENCHER SICAQ";
+      atualizarBotaoSicaq();
+      setMensagem("A extensão não aceitou o comando: " + (msg.error || "erro desconhecido"), "erro");
+      return;
+    }
+
+    if (msg.type === "SICAQ_RESULT") {
+      aguardandoSicaq = false;
+      document.getElementById("btnSicaq").textContent = "PREENCHER SICAQ";
+      atualizarBotaoSicaq();
+      const r = msg.result || {};
+      if (r.ok) {
+        setMensagem("Dados preenchidos no SICAQ com sucesso.", "ok");
+      } else {
+        const erros = (r.erros || []).join(" | ") || "O preenchimento não foi concluído.";
+        setMensagem("SICAQ: " + erros, "erro");
+      }
+    }
+  });
+
+  function pingExtensao() {
+    window.postMessage({
+      source: "ASSISTENTE_SICAQ_SITE",
+      type: "PING_EXTENSION"
+    }, window.location.origin);
   }
 
   async function checarServidor() {
@@ -364,6 +524,7 @@
   }
 
   document.getElementById("btnLer").addEventListener("click", lerDocumento);
+  document.getElementById("btnSicaq").addEventListener("click", preencherSicaq);
   document.getElementById("documento").addEventListener("change", () => {
     limparCampos();
     ajustarCampos("");
@@ -371,6 +532,8 @@
 
   ajustarCampos("");
   checarServidor();
+  pingExtensao();
+  setInterval(() => { if (!extensaoPronta) pingExtensao(); }, 1500);
 </script>
 </body>
 </html>
