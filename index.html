@@ -4,217 +4,135 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Assistente SICAQ</title>
-
   <style>
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      font-family: Arial, sans-serif;
-      background: #f3f6f9;
-      color: #1f2937;
-    }
-
-    header {
-      background: #0867b2;
-      color: white;
-      padding: 28px 40px;
-    }
-
-    header h1 {
-      margin: 0 0 6px;
-      font-size: 30px;
-    }
-
-    header p {
-      margin: 0;
-      opacity: 0.9;
-    }
-
-    .container {
-      max-width: 1200px;
-      margin: 24px auto;
-      padding: 0 20px;
-    }
-
-    .tabs {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 18px;
-    }
-
-    .tab {
-      padding: 14px 26px;
-      border: 0;
-      cursor: pointer;
-      font-weight: bold;
-      background: #e5edf5;
-    }
-
-    .tab.active {
-      background: #0867b2;
-      color: white;
-    }
-
-    .card {
-      background: white;
-      border: 1px solid #d5dde5;
-      padding: 22px;
-      margin-bottom: 16px;
-      border-radius: 5px;
-    }
-
-    .upload {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-
-    button {
-      background: #0867b2;
-      color: white;
-      border: 0;
-      padding: 12px 22px;
-      font-weight: bold;
-      cursor: pointer;
-      border-radius: 3px;
-    }
-
-    .secondary {
-      background: #e9eff5;
-      color: #1f2937;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px 28px;
-      margin-top: 15px;
-    }
-
-    .campo label {
-      display: block;
-      font-size: 13px;
-      font-weight: bold;
-      margin-bottom: 5px;
-    }
-
-    .campo input {
-      width: 100%;
-      padding: 10px;
-      border: 1px solid #9da9b5;
-      border-radius: 3px;
-      background: #f1faf3;
-    }
-
-    .rodape {
-      display: flex;
-      justify-content: flex-end;
-      margin-top: 20px;
-    }
-
-    @media (max-width: 700px) {
-      .grid {
-        grid-template-columns: 1fr;
-      }
-    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Arial,sans-serif;background:#f3f6f9;color:#1f2937}
+    header{background:#0867b2;color:#fff;padding:28px 40px}
+    header h1{margin:0 0 6px;font-size:30px} header p{margin:0;opacity:.9}
+    .container{max-width:1200px;margin:24px auto;padding:0 20px}
+    .tabs{display:flex;gap:8px;margin-bottom:18px}.tab{padding:14px 26px;border:0;cursor:pointer;font-weight:bold;background:#e5edf5;color:#1f2937;border-radius:3px}.tab.active{background:#0867b2;color:#fff}
+    .card{background:#fff;border:1px solid #d5dde5;padding:22px;margin-bottom:16px;border-radius:5px}
+    .linha-topo{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.status-local{font-size:14px;font-weight:bold}.ok{color:#14833b}.erro{color:#b42318}.aguardando{color:#7a5d00}
+    .upload{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+    button{background:#0867b2;color:#fff;border:0;padding:12px 22px;font-weight:bold;cursor:pointer;border-radius:3px}button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#e9eff5;color:#1f2937}
+    .mensagem{margin-top:14px;padding:11px 12px;border-radius:4px;background:#eef4fb;display:none}.mensagem.errobox{background:#fff1f0;color:#8f1d17}.mensagem.okbox{background:#edf9f0;color:#126b34}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 28px;margin-top:15px}.campo label{display:block;font-size:13px;font-weight:bold;margin-bottom:5px}.campo input{width:100%;padding:10px;border:1px solid #9da9b5;border-radius:3px;background:#f1faf3}.campo.oculto{display:none}
+    .rodape{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:20px;flex-wrap:wrap}.tempo{font-size:13px;color:#5b6570}
+    .holerite{display:none}.aviso{font-size:14px;color:#5b6570}
+    @media(max-width:700px){.grid{grid-template-columns:1fr}header{padding:22px 20px}}
   </style>
 </head>
-
 <body>
-
 <header>
   <h1>ASSISTENTE SICAQ</h1>
   <p>Leitura inteligente de CNH, RG e CIN • preenchimento assistido</p>
 </header>
-
 <div class="container">
-
   <div class="tabs">
-    <button class="tab active">IDENTIFICAÇÃO</button>
-    <button class="tab">HOLERITE</button>
+    <button class="tab active" id="tabIdentificacao">IDENTIFICAÇÃO</button>
+    <button class="tab" id="tabHolerite">HOLERITE</button>
   </div>
 
-  <div class="card">
-    <h3>Documento de identificação</h3>
-
-    <div class="upload">
-      <input type="file" id="documento" accept=".pdf,.jpg,.jpeg,.png">
-      <button>LER DOCUMENTO</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <h3>Dados identificados</h3>
-
-    <div class="grid">
-
-      <div class="campo">
-        <label>Documento</label>
-        <input type="text">
+  <section id="painelIdentificacao">
+    <div class="card">
+      <div class="linha-topo">
+        <h3 style="margin:0">Documento de identificação</h3>
+        <div id="statusLocal" class="status-local aguardando">Verificando Assistente local...</div>
       </div>
-
-      <div class="campo">
-        <label>Nome</label>
-        <input type="text">
+      <div class="upload">
+        <input type="file" id="documento" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp">
+        <button id="btnLer">LER DOCUMENTO</button>
       </div>
-
-      <div class="campo">
-        <label>CPF</label>
-        <input type="text">
-      </div>
-
-      <div class="campo">
-        <label>RG</label>
-        <input type="text">
-      </div>
-
-      <div class="campo">
-        <label>UF Emissão</label>
-        <input type="text">
-      </div>
-
-      <div class="campo">
-        <label>Data Nascimento</label>
-        <input type="text">
-      </div>
-
-      <div class="campo">
-        <label>Sexo</label>
-        <input type="text">
-      </div>
-
-      <div class="campo">
-        <label>Nacionalidade</label>
-        <input type="text">
-      </div>
-
-      <div class="campo">
-        <label>Naturalidade</label>
-        <input type="text">
-      </div>
-
-      <div class="campo">
-        <label>Pai</label>
-        <input type="text">
-      </div>
-
-      <div class="campo">
-        <label>Mãe</label>
-        <input type="text">
-      </div>
-
+      <div id="mensagem" class="mensagem"></div>
     </div>
 
-    <div class="rodape">
-      <button>PREENCHER SICAQ</button>
+    <div class="card">
+      <div class="linha-topo"><h3 style="margin:0">Dados identificados</h3><strong id="tipoTopo"></strong></div>
+      <div class="grid" id="gridCampos">
+        <div class="campo" data-tipos="CNH RG CIN"><label>Documento</label><input id="documentoTipo" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>Nome</label><input id="nome" type="text"></div>
+        <div class="campo" data-tipos="RG CIN"><label>CPF</label><input id="cpf" type="text"></div>
+        <div class="campo" data-tipos="RG"><label>RG</label><input id="rg" type="text"></div>
+        <div class="campo" data-tipos="CNH"><label>Número CNH</label><input id="numeroCnh" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>UF Emissão</label><input id="ufEmissao" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>Data Nascimento</label><input id="dataNascimento" type="text"></div>
+        <div class="campo" data-tipos="CNH"><label>1ª Habilitação</label><input id="primeiraHabilitacao" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>Data Emissão</label><input id="dataEmissao" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>Validade</label><input id="validade" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>Sexo</label><input id="sexo" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>Nacionalidade</label><input id="nacionalidade" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>Naturalidade</label><input id="naturalidade" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>Pai</label><input id="pai" type="text"></div>
+        <div class="campo" data-tipos="CNH RG CIN"><label>Mãe</label><input id="mae" type="text"></div>
+      </div>
+      <div class="rodape">
+        <div id="tempo" class="tempo">Nenhum documento lido.</div>
+        <button id="btnPreencher" disabled title="Será conectado à V79 no próximo passo">PREENCHER SICAQ</button>
+      </div>
     </div>
-  </div>
+  </section>
 
+  <section id="painelHolerite" class="holerite">
+    <div class="card"><h3>Holerite</h3><p class="aviso">Vamos conectar esta aba depois que a leitura de CNH/RG/CIN estiver validada.</p></div>
+  </section>
 </div>
 
+<script>
+const BRIDGE='http://127.0.0.1:8767';
+const $=id=>document.getElementById(id);
+const statusLocal=$('statusLocal'), msg=$('mensagem'), btnLer=$('btnLer');
+
+function mostrarMensagem(texto,tipo=''){
+  msg.style.display='block'; msg.textContent=texto; msg.className='mensagem '+(tipo==='erro'?'errobox':tipo==='ok'?'okbox':'');
+}
+function limparMensagem(){msg.style.display='none';msg.textContent='';msg.className='mensagem'}
+function setCampo(id,valor){$(id).value=valor||''}
+function mostrarCampos(tipo){
+  tipo=(tipo||'').toUpperCase();
+  document.querySelectorAll('.campo').forEach(el=>{
+    const tipos=(el.dataset.tipos||'').split(' ');
+    el.classList.toggle('oculto',tipo && !tipos.includes(tipo));
+  });
+}
+function limparCampos(){['documentoTipo','nome','cpf','rg','numeroCnh','ufEmissao','dataNascimento','primeiraHabilitacao','dataEmissao','validade','sexo','nacionalidade','naturalidade','pai','mae'].forEach(id=>setCampo(id,''));$('tipoTopo').textContent='';$('tempo').textContent='Nenhum documento lido.';mostrarCampos('')}
+
+async function verificarLocal(){
+  try{
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),1800);
+    const r=await fetch(BRIDGE+'/health?site=1',{cache:'no-store',signal:ctl.signal}); clearTimeout(t);
+    const j=await r.json();
+    if(j.ok&&j.web_read){statusLocal.textContent='Assistente local conectado';statusLocal.className='status-local ok';return true}
+    throw new Error('versão sem leitura web');
+  }catch(e){statusLocal.textContent='Abra o Assistente V107 SITE no computador';statusLocal.className='status-local erro';return false}
+}
+
+btnLer.addEventListener('click',async()=>{
+  limparMensagem();
+  const arquivo=$('documento').files[0];
+  if(!arquivo){mostrarMensagem('Selecione um PDF ou uma imagem primeiro.','erro');return}
+  if(!(await verificarLocal())){mostrarMensagem('O site está funcionando, mas o Assistente V107 SITE não está aberto no computador.','erro');return}
+  btnLer.disabled=true; btnLer.textContent='LENDO...'; $('tempo').textContent='Enviando o documento para o leitor local...';
+  try{
+    const r=await fetch(BRIDGE+'/web/ler',{
+      method:'POST',
+      headers:{'Content-Type':arquivo.type||'application/octet-stream','X-File-Name':encodeURIComponent(arquivo.name),'X-File-Type':arquivo.type||''},
+      body:arquivo
+    });
+    const j=await r.json();
+    if(!r.ok||!j.ok) throw new Error(j.error||('HTTP '+r.status));
+    const d=j.dados||{}; const tipo=(d.documento||'').toUpperCase();
+    setCampo('documentoTipo',d.documento);setCampo('nome',d.nome);setCampo('cpf',d.cpf);setCampo('rg',d.rg);setCampo('numeroCnh',d.numero_cnh);setCampo('ufEmissao',d.uf);setCampo('dataNascimento',d.nascimento);setCampo('primeiraHabilitacao',d.primeira);setCampo('dataEmissao',d.emissao);setCampo('validade',d.validade);setCampo('sexo',d.sexo);setCampo('nacionalidade',d.nacionalidade);setCampo('naturalidade',d.naturalidade);setCampo('pai',d.filiacao1);setCampo('mae',d.filiacao2);
+    $('tipoTopo').textContent=tipo?('Tipo: '+tipo):''; mostrarCampos(tipo);
+    $('tempo').textContent=`Groq/Qwen: ${Number(j.tempo_api||0).toFixed(2)}s | Total: ${Number(j.tempo_total||0).toFixed(2)}s`;
+    mostrarMensagem('Leitura concluída. Confira os dados abaixo.','ok');
+  }catch(e){mostrarMensagem('Não consegui ler o documento: '+e.message,'erro');$('tempo').textContent='Falha na leitura.'}
+  finally{btnLer.disabled=false;btnLer.textContent='LER DOCUMENTO'}
+});
+
+$('tabIdentificacao').addEventListener('click',()=>{$('painelIdentificacao').style.display='block';$('painelHolerite').style.display='none';$('tabIdentificacao').classList.add('active');$('tabHolerite').classList.remove('active')});
+$('tabHolerite').addEventListener('click',()=>{$('painelIdentificacao').style.display='none';$('painelHolerite').style.display='block';$('tabHolerite').classList.add('active');$('tabIdentificacao').classList.remove('active')});
+
+limparCampos(); verificarLocal(); setInterval(verificarLocal,10000);
+</script>
 </body>
 </html>
