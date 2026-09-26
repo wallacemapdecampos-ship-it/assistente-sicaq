@@ -303,20 +303,26 @@ def _sem_acentos(txt):
 
 
 def _holerite_competencias_validas():
-    """Dois últimos meses fechados no fuso de São Paulo."""
+    """Mês atual + os 2 meses anteriores, no fuso de São Paulo."""
     agora = datetime.now(ZoneInfo("America/Sao_Paulo"))
-    primeiro_dia_mes = agora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    ultimo_mes_passado = primeiro_dia_mes - timedelta(days=1)
-    primeiro_mes_passado = ultimo_mes_passado.replace(day=1)
-    ultimo_mes_anterior = primeiro_mes_passado - timedelta(days=1)
-    return [
-        f"{ultimo_mes_passado.month:02d}/{ultimo_mes_passado.year:04d}",
-        f"{ultimo_mes_anterior.month:02d}/{ultimo_mes_anterior.year:04d}",
-    ]
+    competencias = []
+
+    ano = agora.year
+    mes = agora.month
+
+    for deslocamento in range(3):
+        m = mes - deslocamento
+        a = ano
+        while m <= 0:
+            m += 12
+            a -= 1
+        competencias.append(f"{m:02d}/{a:04d}")
+
+    return competencias
 
 
 def _holerite_prompt():
-    recente, anterior = _holerite_competencias_validas()
+    atual, anterior, retrasado = _holerite_competencias_validas()
     return f"""
 Leia este HOLERITE / CONTRACHEQUE brasileiro e devolva SOMENTE JSON válido.
 
@@ -345,11 +351,12 @@ Regras:
 - Não invente. Campo ilegível = vazio e inclua a chave em campos_incertos.
 
 REGRA DE PERÍODO DO SICAQ:
-- As únicas competências aceitas hoje são {recente} e {anterior}.
+- As únicas competências aceitas hoje são {atual}, {anterior} e {retrasado}.
 - Se houver mais de um holerite/página, examine TODAS as páginas.
-- Ignore holerites fora dessas duas competências.
-- Se encontrar {recente}, use {recente}.
-- Se não houver {recente}, mas houver {anterior}, use {anterior}.
+- Ignore holerites fora dessas três competências.
+- Se encontrar {atual}, use {atual}.
+- Se não houver {atual}, mas houver {anterior}, use {anterior}.
+- Se não houver {atual} nem {anterior}, mas houver {retrasado}, use {retrasado}.
 - Nunca misture valores de meses diferentes.
 - CNPJ, admissão, bruto, líquido, adiantamento e IRRF devem vir da MESMA
   página/competência escolhida.
@@ -541,7 +548,7 @@ def _normalizar_holerite(resultado):
         identificada = competencia or "não identificada"
         raise ValueError(
             f"HOLERITE_FORA_PERIODO|Competência identificada: {identificada}. "
-            f"Período aceito: {validas[0]} e {validas[1]}."
+            f"Período aceito: {validas[0]}, {validas[1]} e {validas[2]}."
         )
 
     bruta = _holerite_numero(resultado.get("bruta"))
