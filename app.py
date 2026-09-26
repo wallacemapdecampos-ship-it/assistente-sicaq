@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -59,8 +60,10 @@ Regras:
 - Se aparecer IIRGD/IRGD em SP, mantenha a sigla em orgao_emissor; não converta aqui.
 - CNH:
   * data_nascimento = campo de nascimento;
-  * data_emissao = campo 4a DATA EMISSÃO;
-  * validade = campo 4b VALIDADE;
+  * data_emissao = SOMENTE o campo 4a DATA EMISSÃO;
+  * validade = SOMENTE o campo 4b VALIDADE;
+  * ATENÇÃO: 4a DATA EMISSÃO e 4b VALIDADE ficam lado a lado. NÃO TROQUE OS DOIS.
+  * A DATA DE EMISSÃO deve ser anterior ou igual à VALIDADE.
   * numero_cnh = campo 5 Nº REGISTRO;
   * data_primeira_habilitacao = somente campo 1ª HABILITAÇÃO.
 - Se não estiver legível, deixe vazio e inclua a chave em campos_incertos.
@@ -215,7 +218,42 @@ def _groq_call(image_bytes: bytes):
     raise RuntimeError(str(last_error or "Falha na leitura Groq/Qwen."))
 
 
+
+def _parse_data_br(valor):
+    valor = str(valor or "").strip()
+    m = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", valor)
+    if not m:
+        return None
+    try:
+        from datetime import date
+        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    except Exception:
+        return None
+
+
+def _corrigir_datas_cnh(d):
+    """
+    Corrige a inversão comum entre 4a DATA EMISSÃO e 4b VALIDADE.
+    Em uma CNH, a emissão não pode ser posterior à validade.
+    """
+    r = dict(d or {})
+    tipo = str(r.get("tipo_documento") or "").strip().upper()
+    if tipo != "CNH":
+        return r
+
+    emissao_txt = str(r.get("data_emissao") or "").strip()
+    validade_txt = str(r.get("validade") or "").strip()
+    emissao = _parse_data_br(emissao_txt)
+    validade = _parse_data_br(validade_txt)
+
+    if emissao and validade and emissao > validade:
+        r["data_emissao"], r["validade"] = validade_txt, emissao_txt
+
+    return r
+
+
 def _normalizar_saida(d):
+    d = _corrigir_datas_cnh(d)
     d = dict(d or {})
     tipo = str(d.get("tipo_documento") or "").strip().upper()
     nacionalidade = str(d.get("nacionalidade") or "").strip().upper()
