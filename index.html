@@ -5,21 +5,114 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Assistente SICAQ</title>
   <style>
-    *{box-sizing:border-box}
-    body{margin:0;font-family:Arial,sans-serif;background:#f3f6f9;color:#1f2937}
-    header{background:#0867b2;color:#fff;padding:28px 40px}
-    header h1{margin:0 0 6px;font-size:30px} header p{margin:0;opacity:.9}
-    .container{max-width:1200px;margin:24px auto;padding:0 20px}
-    .tabs{display:flex;gap:8px;margin-bottom:18px}.tab{padding:14px 26px;border:0;cursor:pointer;font-weight:bold;background:#e5edf5;color:#1f2937;border-radius:3px}.tab.active{background:#0867b2;color:#fff}
-    .card{background:#fff;border:1px solid #d5dde5;padding:22px;margin-bottom:16px;border-radius:5px}
-    .linha-topo{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.status-local{font-size:14px;font-weight:bold}.ok{color:#14833b}.erro{color:#b42318}.aguardando{color:#7a5d00}
-    .upload{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
-    button{background:#0867b2;color:#fff;border:0;padding:12px 22px;font-weight:bold;cursor:pointer;border-radius:3px}button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#e9eff5;color:#1f2937}
-    .mensagem{margin-top:14px;padding:11px 12px;border-radius:4px;background:#eef4fb;display:none}.mensagem.errobox{background:#fff1f0;color:#8f1d17}.mensagem.okbox{background:#edf9f0;color:#126b34}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 28px;margin-top:15px}.campo label{display:block;font-size:13px;font-weight:bold;margin-bottom:5px}.campo input{width:100%;padding:10px;border:1px solid #9da9b5;border-radius:3px;background:#f1faf3}.campo.oculto{display:none}
-    .rodape{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:20px;flex-wrap:wrap}.tempo{font-size:13px;color:#5b6570}
-    .holerite{display:none}.aviso{font-size:14px;color:#5b6570}
-    @media(max-width:700px){.grid{grid-template-columns:1fr}header{padding:22px 20px}}
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f6f9;
+      color: #1f2937;
+    }
+    header {
+      background: #0867b2;
+      color: #fff;
+      padding: 28px 40px;
+    }
+    header h1 { margin: 0 0 6px; font-size: 30px; }
+    header p { margin: 0; opacity: .92; }
+    .container {
+      max-width: 1250px;
+      margin: 24px auto;
+      padding: 0 20px 40px;
+    }
+    .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+    .tab {
+      padding: 14px 26px;
+      border: 0;
+      font-weight: 700;
+      background: #e5edf5;
+      color: #1f2937;
+      border-radius: 3px;
+    }
+    .tab.active { background: #0867b2; color: white; }
+    .card {
+      background: white;
+      border: 1px solid #d5dde5;
+      padding: 22px;
+      margin-bottom: 16px;
+      border-radius: 6px;
+    }
+    .statusbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .status {
+      font-weight: 700;
+    }
+    .ok { color: #15803d; }
+    .warn { color: #b45309; }
+    .erro { color: #b91c1c; }
+    .muted { color: #64748b; }
+    .upload {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    button {
+      background: #0867b2;
+      color: white;
+      border: 0;
+      padding: 12px 22px;
+      font-weight: 700;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    button:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+    }
+    .secondary {
+      background: #e9eff5;
+      color: #1f2937;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px 28px;
+      margin-top: 15px;
+    }
+    .campo label {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+    .campo input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #9da9b5;
+      border-radius: 3px;
+      background: #f1faf3;
+      font-size: 15px;
+      text-transform: uppercase;
+    }
+    .rodape {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+    #mensagem {
+      margin-top: 12px;
+      font-weight: 700;
+    }
+    @media (max-width: 700px) {
+      .grid { grid-template-columns: 1fr; }
+      header { padding: 22px 20px; }
+    }
   </style>
 </head>
 <body>
@@ -27,112 +120,246 @@
   <h1>ASSISTENTE SICAQ</h1>
   <p>Leitura inteligente de CNH, RG e CIN • preenchimento assistido</p>
 </header>
+
 <div class="container">
   <div class="tabs">
-    <button class="tab active" id="tabIdentificacao">IDENTIFICAÇÃO</button>
-    <button class="tab" id="tabHolerite">HOLERITE</button>
+    <button class="tab active" type="button">IDENTIFICAÇÃO</button>
+    <button class="tab" type="button" disabled>HOLERITE</button>
   </div>
 
-  <section id="painelIdentificacao">
-    <div class="card">
-      <div class="linha-topo">
-        <h3 style="margin:0">Documento de identificação</h3>
-        <div id="statusLocal" class="status-local aguardando">Verificando Assistente local...</div>
-      </div>
-      <div class="upload">
-        <input type="file" id="documento" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp">
-        <button id="btnLer">LER DOCUMENTO</button>
-      </div>
-      <div id="mensagem" class="mensagem"></div>
+  <div class="card">
+    <div class="statusbar">
+      <h3 style="margin:0">Documento de identificação</h3>
+      <div id="statusServidor" class="status warn">Verificando servidor...</div>
     </div>
 
-    <div class="card">
-      <div class="linha-topo"><h3 style="margin:0">Dados identificados</h3><strong id="tipoTopo"></strong></div>
-      <div class="grid" id="gridCampos">
-        <div class="campo" data-tipos="CNH RG CIN"><label>Documento</label><input id="documentoTipo" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>Nome</label><input id="nome" type="text"></div>
-        <div class="campo" data-tipos="RG CIN"><label>CPF</label><input id="cpf" type="text"></div>
-        <div class="campo" data-tipos="RG"><label>RG</label><input id="rg" type="text"></div>
-        <div class="campo" data-tipos="CNH"><label>Número CNH</label><input id="numeroCnh" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>UF Emissão</label><input id="ufEmissao" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>Data Nascimento</label><input id="dataNascimento" type="text"></div>
-        <div class="campo" data-tipos="CNH"><label>1ª Habilitação</label><input id="primeiraHabilitacao" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>Data Emissão</label><input id="dataEmissao" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>Validade</label><input id="validade" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>Sexo</label><input id="sexo" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>Nacionalidade</label><input id="nacionalidade" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>Naturalidade</label><input id="naturalidade" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>Pai</label><input id="pai" type="text"></div>
-        <div class="campo" data-tipos="CNH RG CIN"><label>Mãe</label><input id="mae" type="text"></div>
+    <div class="upload">
+      <input type="file" id="documento" accept=".pdf,.jpg,.jpeg,.png,.webp">
+      <button id="btnLer" type="button" disabled>LER DOCUMENTO</button>
+    </div>
+
+    <div id="mensagem" class="muted">
+      Aguarde a conexão com o servidor.
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Dados identificados</h3>
+
+    <div class="grid">
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Documento</label>
+        <input id="documentoTipo" type="text">
       </div>
-      <div class="rodape">
-        <div id="tempo" class="tempo">Nenhum documento lido.</div>
-        <button id="btnPreencher" disabled title="Será conectado à V79 no próximo passo">PREENCHER SICAQ</button>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Nome</label>
+        <input id="nome" type="text">
+      </div>
+
+      <div class="campo" data-tipos="RG CIN">
+        <label>CPF</label>
+        <input id="cpf" type="text">
+      </div>
+
+      <div class="campo" data-tipos="RG">
+        <label>RG</label>
+        <input id="rg" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH">
+        <label>Número CNH</label>
+        <input id="numero_cnh" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>UF Emissão</label>
+        <input id="uf" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Data Nascimento</label>
+        <input id="nascimento" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH">
+        <label>1ª Habilitação</label>
+        <input id="primeira" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Data Emissão</label>
+        <input id="emissao" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Validade</label>
+        <input id="validade" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Sexo</label>
+        <input id="sexo" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Nacionalidade</label>
+        <input id="nacionalidade" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Naturalidade</label>
+        <input id="naturalidade" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Pai</label>
+        <input id="pai" type="text">
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label>Mãe</label>
+        <input id="mae" type="text">
       </div>
     </div>
-  </section>
 
-  <section id="painelHolerite" class="holerite">
-    <div class="card"><h3>Holerite</h3><p class="aviso">Vamos conectar esta aba depois que a leitura de CNH/RG/CIN estiver validada.</p></div>
-  </section>
+    <div class="rodape">
+      <button id="btnSicaq" type="button" disabled>PREENCHER SICAQ</button>
+    </div>
+  </div>
 </div>
 
 <script>
-const BRIDGE='http://127.0.0.1:8767';
-const $=id=>document.getElementById(id);
-const statusLocal=$('statusLocal'), msg=$('mensagem'), btnLer=$('btnLer');
+  const API = "https://assistente-sicaq.onrender.com";
 
-function mostrarMensagem(texto,tipo=''){
-  msg.style.display='block'; msg.textContent=texto; msg.className='mensagem '+(tipo==='erro'?'errobox':tipo==='ok'?'okbox':'');
-}
-function limparMensagem(){msg.style.display='none';msg.textContent='';msg.className='mensagem'}
-function setCampo(id,valor){$(id).value=valor||''}
-function mostrarCampos(tipo){
-  tipo=(tipo||'').toUpperCase();
-  document.querySelectorAll('.campo').forEach(el=>{
-    const tipos=(el.dataset.tipos||'').split(' ');
-    el.classList.toggle('oculto',tipo && !tipos.includes(tipo));
-  });
-}
-function limparCampos(){['documentoTipo','nome','cpf','rg','numeroCnh','ufEmissao','dataNascimento','primeiraHabilitacao','dataEmissao','validade','sexo','nacionalidade','naturalidade','pai','mae'].forEach(id=>setCampo(id,''));$('tipoTopo').textContent='';$('tempo').textContent='Nenhum documento lido.';mostrarCampos('')}
+  const ids = [
+    "documentoTipo","nome","cpf","rg","numero_cnh","uf","nascimento",
+    "primeira","emissao","validade","sexo","nacionalidade","naturalidade",
+    "pai","mae"
+  ];
 
-async function verificarLocal(){
-  try{
-    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),1800);
-    const r=await fetch(BRIDGE+'/health?site=1',{cache:'no-store',signal:ctl.signal}); clearTimeout(t);
-    const j=await r.json();
-    if(j.ok&&j.web_read){statusLocal.textContent='Assistente local conectado';statusLocal.className='status-local ok';return true}
-    throw new Error('versão sem leitura web');
-  }catch(e){statusLocal.textContent='Abra o Assistente V107 SITE no computador';statusLocal.className='status-local erro';return false}
-}
+  function setMensagem(texto, classe="muted") {
+    const el = document.getElementById("mensagem");
+    el.textContent = texto;
+    el.className = classe;
+  }
 
-btnLer.addEventListener('click',async()=>{
-  limparMensagem();
-  const arquivo=$('documento').files[0];
-  if(!arquivo){mostrarMensagem('Selecione um PDF ou uma imagem primeiro.','erro');return}
-  if(!(await verificarLocal())){mostrarMensagem('O site está funcionando, mas o Assistente V107 SITE não está aberto no computador.','erro');return}
-  btnLer.disabled=true; btnLer.textContent='LENDO...'; $('tempo').textContent='Enviando o documento para o leitor local...';
-  try{
-    const r=await fetch(BRIDGE+'/web/ler',{
-      method:'POST',
-      headers:{'Content-Type':arquivo.type||'application/octet-stream','X-File-Name':encodeURIComponent(arquivo.name),'X-File-Type':arquivo.type||''},
-      body:arquivo
+  function limparCampos() {
+    ids.forEach(id => document.getElementById(id).value = "");
+  }
+
+  function ajustarCampos(tipo) {
+    const t = (tipo || "").toUpperCase();
+    document.querySelectorAll(".campo[data-tipos]").forEach(el => {
+      const tipos = el.dataset.tipos.split(/\s+/);
+      el.style.display = (!t || tipos.includes(t)) ? "" : "none";
     });
-    const j=await r.json();
-    if(!r.ok||!j.ok) throw new Error(j.error||('HTTP '+r.status));
-    const d=j.dados||{}; const tipo=(d.documento||'').toUpperCase();
-    setCampo('documentoTipo',d.documento);setCampo('nome',d.nome);setCampo('cpf',d.cpf);setCampo('rg',d.rg);setCampo('numeroCnh',d.numero_cnh);setCampo('ufEmissao',d.uf);setCampo('dataNascimento',d.nascimento);setCampo('primeiraHabilitacao',d.primeira);setCampo('dataEmissao',d.emissao);setCampo('validade',d.validade);setCampo('sexo',d.sexo);setCampo('nacionalidade',d.nacionalidade);setCampo('naturalidade',d.naturalidade);setCampo('pai',d.filiacao1);setCampo('mae',d.filiacao2);
-    $('tipoTopo').textContent=tipo?('Tipo: '+tipo):''; mostrarCampos(tipo);
-    $('tempo').textContent=`Groq/Qwen: ${Number(j.tempo_api||0).toFixed(2)}s | Total: ${Number(j.tempo_total||0).toFixed(2)}s`;
-    mostrarMensagem('Leitura concluída. Confira os dados abaixo.','ok');
-  }catch(e){mostrarMensagem('Não consegui ler o documento: '+e.message,'erro');$('tempo').textContent='Falha na leitura.'}
-  finally{btnLer.disabled=false;btnLer.textContent='LER DOCUMENTO'}
-});
+  }
 
-$('tabIdentificacao').addEventListener('click',()=>{$('painelIdentificacao').style.display='block';$('painelHolerite').style.display='none';$('tabIdentificacao').classList.add('active');$('tabHolerite').classList.remove('active')});
-$('tabHolerite').addEventListener('click',()=>{$('painelIdentificacao').style.display='none';$('painelHolerite').style.display='block';$('tabHolerite').classList.add('active');$('tabIdentificacao').classList.remove('active')});
+  function preencher(d) {
+    const tipo = (d.documento || "").toUpperCase();
+    document.getElementById("documentoTipo").value = tipo;
+    document.getElementById("nome").value = d.nome || "";
+    document.getElementById("cpf").value = d.cpf || "";
+    document.getElementById("rg").value = d.rg || "";
+    document.getElementById("numero_cnh").value = d.numero_cnh || "";
+    document.getElementById("uf").value = d.uf || "";
+    document.getElementById("nascimento").value = d.nascimento || "";
+    document.getElementById("primeira").value = d.primeira || "";
+    document.getElementById("emissao").value = d.emissao || "";
+    document.getElementById("validade").value = d.validade || "";
+    document.getElementById("sexo").value = d.sexo || "";
+    document.getElementById("nacionalidade").value = d.nacionalidade || "";
+    document.getElementById("naturalidade").value = d.naturalidade || "";
+    document.getElementById("pai").value = d.filiacao1 || "";
+    document.getElementById("mae").value = d.filiacao2 || "";
+    ajustarCampos(tipo);
+  }
 
-limparCampos(); verificarLocal(); setInterval(verificarLocal,10000);
+  async function checarServidor() {
+    const status = document.getElementById("statusServidor");
+    const btn = document.getElementById("btnLer");
+    status.textContent = "Conectando ao servidor...";
+    status.className = "status warn";
+
+    try {
+      const resp = await fetch(API + "/health", { cache: "no-store" });
+      const data = await resp.json();
+
+      if (!resp.ok || !data.ok || !data.groq_configurada) {
+        throw new Error("Servidor ou Groq indisponível.");
+      }
+
+      status.textContent = "Servidor online • Groq/Qwen configurado";
+      status.className = "status ok";
+      btn.disabled = false;
+      setMensagem("Selecione um documento e clique em LER DOCUMENTO.", "muted");
+    } catch (e) {
+      status.textContent = "Servidor iniciando ou indisponível";
+      status.className = "status erro";
+      btn.disabled = true;
+      setMensagem("No plano gratuito do Render, a primeira conexão pode demorar até cerca de 1 minuto. Tentando novamente...", "warn");
+      setTimeout(checarServidor, 8000);
+    }
+  }
+
+  async function lerDocumento() {
+    const input = document.getElementById("documento");
+    const btn = document.getElementById("btnLer");
+
+    if (!input.files.length) {
+      setMensagem("Selecione um PDF ou imagem primeiro.", "erro");
+      return;
+    }
+
+    limparCampos();
+    ajustarCampos("");
+    btn.disabled = true;
+    btn.textContent = "LENDO...";
+    setMensagem("Enviando o documento para leitura. Aguarde...", "warn");
+
+    const form = new FormData();
+    form.append("file", input.files[0]);
+
+    const inicio = performance.now();
+
+    try {
+      const resp = await fetch(API + "/ler", {
+        method: "POST",
+        body: form
+      });
+
+      let data;
+      try {
+        data = await resp.json();
+      } catch {
+        throw new Error("Resposta inválida do servidor.");
+      }
+
+      if (!resp.ok || !data.ok) {
+        throw new Error(data.error || "Falha na leitura.");
+      }
+
+      preencher(data.dados || {});
+      const total = ((performance.now() - inicio) / 1000).toFixed(2);
+      const api = data.tempo_api ? ` • Groq/Qwen: ${data.tempo_api}s` : "";
+      setMensagem(`Leitura concluída em ${total}s${api}. Revise os dados antes de continuar.`, "ok");
+    } catch (e) {
+      setMensagem("Erro: " + (e.message || e), "erro");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "LER DOCUMENTO";
+    }
+  }
+
+  document.getElementById("btnLer").addEventListener("click", lerDocumento);
+  document.getElementById("documento").addEventListener("change", () => {
+    limparCampos();
+    ajustarCampos("");
+  });
+
+  ajustarCampos("");
+  checarServidor();
 </script>
 </body>
 </html>
