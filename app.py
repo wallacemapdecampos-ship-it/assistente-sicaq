@@ -108,6 +108,7 @@ def _guard():
 
 
 def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
+    """Modo rápido para CNH/RG/CIN."""
     ext = PathLikeSuffix(filename)
     is_pdf = ext == ".pdf" or mimetype == "application/pdf"
 
@@ -117,40 +118,50 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
             pages = []
             for i in range(min(2, len(doc))):
                 page = doc[i]
-                pix = page.get_pixmap(matrix=pymupdf.Matrix(2.2, 2.2), alpha=False)
-                img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(1.65, 1.65), alpha=False)
+                img = Image.open(io.BytesIO(pix.tobytes("jpeg"))).convert("RGB")
+
+                max_w = 1250
+                if img.width > max_w:
+                    scale = max_w / img.width
+                    img = img.resize(
+                        (max_w, max(1, int(img.height * scale))),
+                        Image.Resampling.LANCZOS,
+                    )
                 pages.append(img.copy())
+
             if not pages:
                 raise ValueError("PDF sem páginas válidas.")
-            max_w = max(im.width for im in pages)
-            resized = []
-            total_h = 0
-            for im in pages:
-                if im.width != max_w:
-                    scale = max_w / im.width
-                    im = im.resize((max_w, int(im.height * scale)))
-                resized.append(im)
-                total_h += im.height
-            canvas = Image.new("RGB", (max_w, total_h), "white")
-            y = 0
-            for im in resized:
-                canvas.paste(im, (0, y))
-                y += im.height
-            img = canvas
+
+            if len(pages) == 1:
+                img = pages[0]
+            else:
+                gap = 18
+                total_w = pages[0].width + pages[1].width + gap
+                max_h = max(p.height for p in pages)
+                canvas = Image.new("RGB", (total_w, max_h), "white")
+                x = 0
+                for p in pages:
+                    y = (max_h - p.height) // 2
+                    canvas.paste(p, (x, y))
+                    x += p.width + gap
+                img = canvas
         finally:
             doc.close()
     else:
         img = Image.open(io.BytesIO(data)).convert("RGB")
 
-    max_side = 2200
+    max_side = 1900
     scale = min(1.0, max_side / max(img.width, img.height))
     if scale < 1.0:
-        img = img.resize((max(1, int(img.width * scale)), max(1, int(img.height * scale))))
+        img = img.resize(
+            (max(1, int(img.width * scale)), max(1, int(img.height * scale))),
+            Image.Resampling.LANCZOS,
+        )
 
     out = io.BytesIO()
-    img.save(out, format="JPEG", quality=90, optimize=True)
+    img.save(out, format="JPEG", quality=84)
     return out.getvalue()
-
 
 def PathLikeSuffix(name: str) -> str:
     name = (name or "").lower().strip()
@@ -167,7 +178,6 @@ def _groq_call(image_bytes: bytes):
     models = [
         os.getenv("GROQ_MODEL", "").strip(),
         "qwen/qwen3.8-27b",
-        "qwen/qwen3.6-27b",
     ]
     models = [m for i, m in enumerate(models) if m and m not in models[:i]]
 
@@ -182,9 +192,9 @@ def _groq_call(image_bytes: bytes):
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                 ],
             }],
-            "temperature": 0.1,
+            "temperature": 0.0,
             "top_p": 0.8,
-            "max_completion_tokens": 600,
+            "max_completion_tokens": 420,
             "stream": False,
             "reasoning_effort": "none",
             "response_format": {"type": "json_object"},
@@ -492,7 +502,6 @@ def _groq_holerite_call(data, filename, mimetype):
     models = [
         os.getenv("GROQ_MODEL", "").strip(),
         "qwen/qwen3.8-27b",
-        "qwen/qwen3.6-27b",
     ]
     models = [m for i, m in enumerate(models) if m and m not in models[:i]]
 
@@ -638,13 +647,17 @@ def ler():
 
     start = time.perf_counter()
     try:
+        t_preparo = time.perf_counter()
         image_bytes = _to_jpeg(data, f.filename or "", f.mimetype or "")
+        tempo_preparo = time.perf_counter() - t_preparo
+
         dados_raw, modelo, tempo_api = _groq_call(image_bytes)
         dados = _normalizar_saida(dados_raw)
         return jsonify({
             "ok": True,
             "dados": dados,
             "modelo": modelo,
+            "tempo_preparo": round(tempo_preparo, 3),
             "tempo_api": round(tempo_api, 3),
             "tempo_total": round(time.perf_counter() - start, 3),
         })
