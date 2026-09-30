@@ -151,8 +151,9 @@
     </div>
 
     <div class="upload">
-      <input type="file" id="documento" accept=".pdf,.jpg,.jpeg,.png,.webp">
+      <input type="file" id="documento" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
       <button id="btnLer" type="button" disabled>LER DOCUMENTO</button>
+      <span class="muted" style="font-size:13px;">Pode selecionar 1 ou 2 arquivos (ex.: frente + verso do RG)</span>
     </div>
 
     <div id="mensagem" class="muted">
@@ -582,10 +583,11 @@
       }
       const validas = data.holerite_competencias || [];
       const nota = document.getElementById("notaHolerite");
-      if (nota && validas.length >= 2) {
+      if (nota && validas.length >= 3) {
         nota.textContent =
           "Regra: Bruta = Total de Proventos. Líquida = Líquido a Receber + somente Adiantamento Salarial. " +
-          "Empréstimos/consignados NÃO são somados. Período aceito: " + validas[0] + " e " + validas[1] + ".";
+          "Empréstimos/consignados NÃO são somados. Período aceito: " +
+          validas[0] + ", " + validas[1] + " e " + validas[2] + ".";
       }
     } catch (e) {
       status.textContent = "Servidor iniciando ou indisponível";
@@ -608,7 +610,13 @@
     const btn = document.getElementById("btnLer");
 
     if (!input.files.length) {
-      setMensagem("Selecione um PDF ou imagem primeiro.", "erro");
+      setMensagem("Selecione 1 ou 2 arquivos do documento.", "erro");
+      return;
+    }
+
+    if (input.files.length > 2) {
+      setMensagem("Selecione no máximo 2 arquivos do mesmo documento.", "erro");
+      input.value = "";
       return;
     }
 
@@ -616,10 +624,19 @@
     ajustarCampos("");
     btn.disabled = true;
     btn.textContent = "LENDO...";
-    setMensagem("Enviando o documento para leitura. Aguarde...", "warn");
+
+    const qtd = input.files.length;
+    setMensagem(
+      qtd === 2
+        ? "Lendo frente + verso do documento. Aguarde..."
+        : "Enviando o documento para leitura. Aguarde...",
+      "warn"
+    );
 
     const form = new FormData();
-    form.append("file", input.files[0]);
+    for (const arquivo of input.files) {
+      form.append("files", arquivo);
+    }
 
     const inicio = performance.now();
 
@@ -643,7 +660,11 @@
       preencher(data.dados || {});
       const total = ((performance.now() - inicio) / 1000).toFixed(2);
       const api = data.tempo_api ? ` • Groq/Qwen: ${data.tempo_api}s` : "";
-      setMensagem(`Leitura concluída em ${total}s${api}. Revise os dados antes de continuar.`, "ok");
+      const qtd = data.arquivos_lidos || input.files.length || 1;
+      setMensagem(
+        `Leitura concluída (${qtd} arquivo${qtd > 1 ? "s" : ""}) em ${total}s${api}. Revise os dados antes de continuar.`,
+        "ok"
+      );
     } catch (e) {
       setMensagem("Erro: " + (e.message || e), "erro");
     } finally {
@@ -654,9 +675,19 @@
 
   document.getElementById("btnLer").addEventListener("click", lerDocumento);
   document.getElementById("btnSicaq").addEventListener("click", preencherSicaq);
-  document.getElementById("documento").addEventListener("change", () => {
+  document.getElementById("documento").addEventListener("change", (event) => {
     limparCampos();
     ajustarCampos("");
+
+    const qtd = event.target.files.length;
+    if (qtd > 2) {
+      setMensagem("Selecione no máximo 2 arquivos do mesmo documento.", "erro");
+      event.target.value = "";
+    } else if (qtd === 2) {
+      setMensagem("2 arquivos selecionados: vou tratar como frente + verso do mesmo documento.", "muted");
+    } else if (qtd === 1) {
+      setMensagem("1 arquivo selecionado. Clique em LER DOCUMENTO.", "muted");
+    }
   });
 
 
