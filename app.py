@@ -16,7 +16,7 @@ from PIL import Image
 import pymupdf
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 15 * 1024 * 1024  # 15 MB
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # até 2 arquivos
 
 ALLOWED_ORIGIN = os.getenv(
     "ALLOWED_ORIGIN",
@@ -162,6 +162,69 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
     out = io.BytesIO()
     img.save(out, format="JPEG", quality=84)
     return out.getvalue()
+
+
+def _combinar_arquivos_identificacao(arquivos):
+    """
+    Recebe 1 ou 2 arquivos (PDF/imagem) do MESMO documento.
+    Ex.: frente + verso do RG em arquivos separados.
+    """
+    imagens = []
+
+    for item in arquivos[:2]:
+        data = item["data"]
+        filename = item["filename"]
+        mimetype = item["mimetype"]
+
+        jpeg = _to_jpeg(data, filename, mimetype)
+        img = Image.open(io.BytesIO(jpeg)).convert("RGB")
+
+        # Cada parte fica leve antes de montar a imagem final.
+        max_w = 1450
+        if img.width > max_w:
+            escala = max_w / img.width
+            img = img.resize(
+                (max_w, max(1, int(img.height * escala))),
+                Image.Resampling.LANCZOS,
+            )
+        imagens.append(img.copy())
+
+    if not imagens:
+        raise ValueError("Nenhum arquivo válido recebido.")
+
+    if len(imagens) == 1:
+        out = io.BytesIO()
+        imagens[0].save(out, format="JPEG", quality=84)
+        return out.getvalue()
+
+    # Frente e verso ficam um abaixo do outro para preservar a resolução.
+    margem = 16
+    largura = max(img.width for img in imagens)
+    altura = margem + sum(img.height + margem for img in imagens)
+
+    canvas = Image.new("RGB", (largura + margem * 2, altura), "white")
+    y = margem
+    for img in imagens:
+        x = margem + (largura - img.width) // 2
+        canvas.paste(img, (x, y))
+        y += img.height + margem
+
+    # Limita a imagem final sem reduzir demais cada lado do RG.
+    max_side = 2400
+    escala = min(1.0, max_side / max(canvas.width, canvas.height))
+    if escala < 1.0:
+        canvas = canvas.resize(
+            (
+                max(1, int(canvas.width * escala)),
+                max(1, int(canvas.height * escala)),
+            ),
+            Image.Resampling.LANCZOS,
+        )
+
+    out = io.BytesIO()
+    canvas.save(out, format="JPEG", quality=84)
+    return out.getvalue()
+
 
 def PathLikeSuffix(name: str) -> str:
     name = (name or "").lower().strip()
@@ -637,26 +700,52 @@ def health():
 
 @app.post("/ler")
 def ler():
-    if "file" not in request.files:
+    # Novo formato: "files" pode conter 1 ou 2 arquivos.
+    recebidos = request.files.getlist("files")
+
+    # Compatibilidade com a versão anterior do site.
+    if not recebidos and "file" in request.files:
+        recebidos = [request.files["file"]]
+
+    recebidos = [f for f in recebidos if f and (f.filename or "").strip()]
+
+    if not recebidos:
         return jsonify({"ok": False, "error": "Arquivo não enviado."}), 400
 
-    f = request.files["file"]
-    data = f.read()
-    if not data:
+    if len(recebidos) > 2:
+        return jsonify({
+            "ok": False,
+            "error": "Selecione no máximo 2 arquivos do mesmo documento."
+        }), 400
+
+    arquivos = []
+    for f in recebidos:
+        data = f.read()
+        if not data:
+            continue
+        arquivos.append({
+            "data": data,
+            "filename": f.filename or "",
+            "mimetype": f.mimetype or "",
+        })
+
+    if not arquivos:
         return jsonify({"ok": False, "error": "Arquivo vazio."}), 400
 
     start = time.perf_counter()
     try:
         t_preparo = time.perf_counter()
-        image_bytes = _to_jpeg(data, f.filename or "", f.mimetype or "")
+        image_bytes = _combinar_arquivos_identificacao(arquivos)
         tempo_preparo = time.perf_counter() - t_preparo
 
         dados_raw, modelo, tempo_api = _groq_call(image_bytes)
         dados = _normalizar_saida(dados_raw)
+
         return jsonify({
             "ok": True,
             "dados": dados,
             "modelo": modelo,
+            "arquivos_lidos": len(arquivos),
             "tempo_preparo": round(tempo_preparo, 3),
             "tempo_api": round(tempo_api, 3),
             "tempo_total": round(time.perf_counter() - start, 3),
