@@ -372,9 +372,32 @@
   function ajustarCampos(tipo) {
     const t = (tipo || "").toUpperCase().trim();
 
+    const ordemCNH = {
+      documentoTipo: 1,
+      nome: 2,
+      numero_cnh: 3,
+      uf: 4,
+      nascimento: 5,
+      emissao: 6,
+      validade: 7,
+      primeira: 8,
+      sexo: 9,
+      nacionalidade: 10,
+      naturalidade: 11,
+      pai: 12,
+      mae: 13
+    };
+
     document.querySelectorAll(".campo[data-tipos]").forEach(el => {
       const tipos = el.dataset.tipos.split(/\s+/);
       el.style.display = (t && tipos.includes(t)) ? "" : "none";
+
+      const input = el.querySelector("input");
+      if (t === "CNH" && input) {
+        el.style.order = String(ordemCNH[input.id] || 50);
+      } else {
+        el.style.order = "";
+      }
     });
 
     const titulo = document.getElementById("tipoDetectado");
