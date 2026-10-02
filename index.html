@@ -81,9 +81,15 @@
     }
     .grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 14px 28px;
       margin-top: 15px;
+    }
+    .campo {
+      grid-column: span 3;
+    }
+    .campo.cnh-terco {
+      grid-column: span 2;
     }
     .campo label {
       display: block;
@@ -127,6 +133,7 @@
     }
     @media (max-width: 700px) {
       .grid { grid-template-columns: 1fr; }
+      .campo, .campo.cnh-terco { grid-column: span 1; }
       header { padding: 22px 20px; }
     }
   </style>
@@ -201,17 +208,17 @@
         <input id="nascimento" type="text">
       </div>
 
-      <div class="campo" data-tipos="CNH">
+      <div class="campo cnh-terco" data-tipos="CNH">
         <label>1ª Habilitação</label>
         <input id="primeira" type="text">
       </div>
 
-      <div class="campo" data-tipos="CNH RG CIN">
-        <label>Data Emissão</label>
+      <div class="campo cnh-terco" data-tipos="CNH RG CIN">
+        <label>Emissão</label>
         <input id="emissao" type="text">
       </div>
 
-      <div class="campo" data-tipos="CNH RG CIN">
+      <div class="campo cnh-terco" data-tipos="CNH RG CIN">
         <label>Validade</label>
         <input id="validade" type="text">
       </div>
@@ -378,9 +385,9 @@
       numero_cnh: 3,
       uf: 4,
       nascimento: 5,
-      emissao: 6,
-      validade: 7,
-      primeira: 8,
+      primeira: 6,
+      emissao: 7,
+      validade: 8,
       sexo: 9,
       nacionalidade: 10,
       naturalidade: 11,
