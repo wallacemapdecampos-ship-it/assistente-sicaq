@@ -91,6 +91,9 @@
     .campo.cnh-terco {
       grid-column: span 2;
     }
+    .campo.cnh-stack {
+      grid-column: span 6;
+    }
     .campo label {
       display: block;
       font-size: 13px;
@@ -133,7 +136,7 @@
     }
     @media (max-width: 700px) {
       .grid { grid-template-columns: 1fr; }
-      .campo, .campo.cnh-terco { grid-column: span 1; }
+      .campo, .campo.cnh-terco, .campo.cnh-stack { grid-column: span 1; }
       header { padding: 22px 20px; }
     }
   </style>
@@ -208,17 +211,17 @@
         <input id="nascimento" type="text">
       </div>
 
-      <div class="campo cnh-terco" data-tipos="CNH">
+      <div class="campo cnh-stack" data-tipos="CNH">
         <label>1ª Habilitação</label>
         <input id="primeira" type="text">
       </div>
 
-      <div class="campo cnh-terco" data-tipos="CNH RG CIN">
+      <div class="campo cnh-stack" data-tipos="CNH RG CIN">
         <label>Emissão</label>
         <input id="emissao" type="text">
       </div>
 
-      <div class="campo cnh-terco" data-tipos="CNH RG CIN">
+      <div class="campo cnh-stack" data-tipos="CNH RG CIN">
         <label>Validade</label>
         <input id="validade" type="text">
       </div>
