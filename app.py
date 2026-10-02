@@ -60,14 +60,19 @@ Regras:
 - sexo: MASCULINO ou FEMININO quando explicitamente identificável.
 - órgão/UF: SSP-SP => orgao_emissor SSP e uf_emissao SP.
 - Se aparecer IIRGD/IRGD em SP, mantenha a sigla em orgao_emissor; não converta aqui.
-- CNH:
-  * data_nascimento = campo de nascimento;
-  * data_emissao = SOMENTE o campo 4a DATA EMISSÃO;
-  * validade = SOMENTE o campo 4b VALIDADE;
-  * ATENÇÃO: 4a DATA EMISSÃO e 4b VALIDADE ficam lado a lado. NÃO TROQUE OS DOIS.
-  * A DATA DE EMISSÃO deve ser anterior ou igual à VALIDADE.
-  * numero_cnh = campo 5 Nº REGISTRO;
-  * data_primeira_habilitacao = somente campo 1ª HABILITAÇÃO.
+- CNH: leia SEMPRE pelos RÓTULOS OFICIAIS, nunca apenas pela posição:
+  * data_nascimento = somente a DATA do campo 3 "DATA, LOCAL E UF DE NASCIMENTO";
+  * data_emissao = somente o campo 4a "DATA EMISSÃO";
+  * validade = somente o campo 4b "VALIDADE";
+  * numero_cnh = somente o campo 5 "Nº REGISTRO", normalmente com 11 dígitos.
+    IGNORE número vertical, número do espelho, código de segurança, RENACH e outros números;
+  * data_primeira_habilitacao = somente o valor ao lado do texto explícito
+    "1ª HABILITAÇÃO" / "PRIMEIRA HABILITAÇÃO".
+    NUNCA use a validade nem datas da tabela de categorias como 1ª habilitação;
+  * NÃO TROQUE 1ª HABILITAÇÃO, DATA EMISSÃO e VALIDADE entre si;
+  * antes de responder, confira novamente Nº REGISTRO, 1ª HABILITAÇÃO,
+    DATA EMISSÃO e VALIDADE pelos respectivos rótulos;
+  * se um desses campos não estiver claramente legível, deixe vazio em vez de adivinhar.
 - Se não estiver legível, deixe vazio e inclua a chave em campos_incertos.
 """.strip()
 
@@ -108,7 +113,11 @@ def _guard():
 
 
 def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
-    """Modo rápido para CNH/RG/CIN."""
+    """
+    Prioriza precisão de leitura para CNH/RG/CIN.
+    O Render continua comprimindo o resultado, mas sem reduzir demais
+    os números pequenos da CNH.
+    """
     ext = PathLikeSuffix(filename)
     is_pdf = ext == ".pdf" or mimetype == "application/pdf"
 
@@ -118,16 +127,11 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
             pages = []
             for i in range(min(2, len(doc))):
                 page = doc[i]
-                pix = page.get_pixmap(matrix=pymupdf.Matrix(1.65, 1.65), alpha=False)
-                img = Image.open(io.BytesIO(pix.tobytes("jpeg"))).convert("RGB")
-
-                max_w = 1250
-                if img.width > max_w:
-                    scale = max_w / img.width
-                    img = img.resize(
-                        (max_w, max(1, int(img.height * scale))),
-                        Image.Resampling.LANCZOS,
-                    )
+                pix = page.get_pixmap(
+                    matrix=pymupdf.Matrix(2.2, 2.2),
+                    alpha=False
+                )
+                img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
                 pages.append(img.copy())
 
             if not pages:
@@ -136,9 +140,10 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
             if len(pages) == 1:
                 img = pages[0]
             else:
+                # Mantém as páginas lado a lado para não esmagar o texto verticalmente.
                 gap = 18
-                total_w = pages[0].width + pages[1].width + gap
                 max_h = max(p.height for p in pages)
+                total_w = sum(p.width for p in pages) + gap * (len(pages) - 1)
                 canvas = Image.new("RGB", (total_w, max_h), "white")
                 x = 0
                 for p in pages:
@@ -151,16 +156,19 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
     else:
         img = Image.open(io.BytesIO(data)).convert("RGB")
 
-    max_side = 1900
+    max_side = 2800
     scale = min(1.0, max_side / max(img.width, img.height))
     if scale < 1.0:
         img = img.resize(
-            (max(1, int(img.width * scale)), max(1, int(img.height * scale))),
+            (
+                max(1, int(img.width * scale)),
+                max(1, int(img.height * scale)),
+            ),
             Image.Resampling.LANCZOS,
         )
 
     out = io.BytesIO()
-    img.save(out, format="JPEG", quality=84)
+    img.save(out, format="JPEG", quality=91)
     return out.getvalue()
 
 
@@ -180,7 +188,7 @@ def _combinar_arquivos_identificacao(arquivos):
         img = Image.open(io.BytesIO(jpeg)).convert("RGB")
 
         # Cada parte fica leve antes de montar a imagem final.
-        max_w = 1450
+        max_w = 1650
         if img.width > max_w:
             escala = max_w / img.width
             img = img.resize(
@@ -194,7 +202,7 @@ def _combinar_arquivos_identificacao(arquivos):
 
     if len(imagens) == 1:
         out = io.BytesIO()
-        imagens[0].save(out, format="JPEG", quality=84)
+        imagens[0].save(out, format="JPEG", quality=91)
         return out.getvalue()
 
     # Frente e verso ficam um abaixo do outro para preservar a resolução.
@@ -222,7 +230,7 @@ def _combinar_arquivos_identificacao(arquivos):
         )
 
     out = io.BytesIO()
-    canvas.save(out, format="JPEG", quality=84)
+    canvas.save(out, format="JPEG", quality=91)
     return out.getvalue()
 
 
@@ -294,6 +302,204 @@ def _groq_call(image_bytes: bytes):
 
 
 
+
+PROMPT_CNH_CRITICOS = """
+Esta imagem é uma CNH brasileira. Leia SOMENTE os 4 campos críticos abaixo
+pelos RÓTULOS impressos e responda SOMENTE JSON:
+
+numero_cnh, data_primeira_habilitacao, data_emissao, validade
+
+REGRAS OBRIGATÓRIAS:
+- numero_cnh = SOMENTE o campo 5 "Nº REGISTRO". Normalmente possui 11 dígitos.
+  Ignore números verticais, espelho, segurança, RENACH, CPF e identidade.
+- data_primeira_habilitacao = SOMENTE o valor ao lado do rótulo
+  "1ª HABILITAÇÃO" / "PRIMEIRA HABILITAÇÃO".
+- data_emissao = SOMENTE o campo 4a "DATA EMISSÃO".
+- validade = SOMENTE o campo 4b "VALIDADE".
+- NÃO use datas da tabela de categorias.
+- NÃO copie a VALIDADE para 1ª HABILITAÇÃO.
+- NÃO troque DATA EMISSÃO com 1ª HABILITAÇÃO.
+- Confira cada valor uma segunda vez antes de responder.
+- Datas em DD/MM/AAAA.
+- Se um valor não puder ser confirmado pelo rótulo, devolva vazio.
+""".strip()
+
+
+def _tirar_acentos(valor):
+    texto = str(valor or "")
+    return "".join(
+        c for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _texto_pdf_arquivos(arquivos):
+    partes = []
+    for item in arquivos:
+        ext = PathLikeSuffix(item.get("filename", ""))
+        mime = item.get("mimetype", "")
+        if ext != ".pdf" and mime != "application/pdf":
+            continue
+        try:
+            doc = pymupdf.open(stream=item["data"], filetype="pdf")
+            try:
+                for i in range(min(len(doc), 4)):
+                    txt = doc[i].get_text("text") or ""
+                    if txt.strip():
+                        partes.append(txt)
+            finally:
+                doc.close()
+        except Exception:
+            pass
+    return "\n".join(partes)[:12000]
+
+
+def _groq_cnh_criticos(image_bytes: bytes, texto_pdf: str = ""):
+    key = os.getenv("GROQ_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("GROQ_API_KEY não configurada no Render.")
+
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    instrucao = PROMPT_CNH_CRITICOS
+    if texto_pdf.strip():
+        instrucao += (
+            "\n\nTEXTO EXTRAÍDO DO PDF PARA CONFERÊNCIA DOS RÓTULOS:\n"
+            + texto_pdf
+        )
+
+    models = [
+        os.getenv("GROQ_MODEL", "").strip(),
+        "qwen/qwen3.8-27b",
+    ]
+    models = [m for i, m in enumerate(models) if m and m not in models[:i]]
+
+    ultimo_erro = None
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": instrucao},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/jpeg;base64,{b64}"
+                    }},
+                ],
+            }],
+            "temperature": 0.0,
+            "top_p": 0.8,
+            "max_completion_tokens": 180,
+            "stream": False,
+            "reasoning_effort": "none",
+            "response_format": {"type": "json_object"},
+        }
+
+        req = urllib.request.Request(
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Assistente-SICAQ-CNH-Criticos/1.0",
+            },
+            method="POST",
+        )
+
+        try:
+            t0 = time.perf_counter()
+            with urllib.request.urlopen(req, timeout=35) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            tempo = time.perf_counter() - t0
+            conteudo = body["choices"][0]["message"]["content"]
+            dados = json.loads(conteudo)
+            return dados, tempo
+        except urllib.error.HTTPError as e:
+            detalhe = e.read().decode("utf-8", errors="replace")
+            ultimo_erro = RuntimeError(f"Groq HTTP {e.code}: {detalhe}")
+            if e.code not in (400, 404):
+                break
+        except Exception as e:
+            ultimo_erro = e
+            break
+
+    raise RuntimeError(str(ultimo_erro or "Falha na conferência da CNH."))
+
+
+def _mesclar_cnh_criticos(resultado, criticos):
+    r = dict(resultado or {})
+    c = dict(criticos or {})
+
+    # Nº Registro de CNH é validado como 11 dígitos.
+    numero = re.sub(r"\D", "", str(c.get("numero_cnh") or ""))
+    if len(numero) == 11:
+        r["numero_cnh"] = numero
+
+    for chave in (
+        "data_primeira_habilitacao",
+        "data_emissao",
+        "validade",
+    ):
+        valor = str(c.get(chave) or "").strip()
+        if _parse_data_br(valor):
+            r[chave] = valor
+
+    return r
+
+
+def _validar_cnh_final(resultado):
+    r = dict(resultado or {})
+    if str(r.get("tipo_documento") or "").strip().upper() != "CNH":
+        return r
+
+    incertos = [str(x) for x in (r.get("campos_incertos") or [])]
+
+    numero = re.sub(r"\D", "", str(r.get("numero_cnh") or ""))
+    if len(numero) == 11:
+        r["numero_cnh"] = numero
+    else:
+        r["numero_cnh"] = ""
+        incertos.append("numero_cnh")
+
+    nasc = _parse_data_br(r.get("data_nascimento"))
+    primeira = _parse_data_br(r.get("data_primeira_habilitacao"))
+    emissao = _parse_data_br(r.get("data_emissao"))
+    validade = _parse_data_br(r.get("validade"))
+
+    # Emissão e validade invertidas: corrige.
+    if emissao and validade and emissao > validade:
+        r["data_emissao"], r["validade"] = (
+            r.get("validade", ""),
+            r.get("data_emissao", ""),
+        )
+        emissao, validade = validade, emissao
+
+    # 1ª habilitação não pode ser a validade nem ficar após a emissão.
+    if (
+        primeira
+        and validade
+        and r.get("data_primeira_habilitacao") == r.get("validade")
+    ):
+        r["data_primeira_habilitacao"] = ""
+        primeira = None
+        incertos.append("data_primeira_habilitacao")
+
+    if primeira and emissao and primeira > emissao:
+        r["data_primeira_habilitacao"] = ""
+        primeira = None
+        incertos.append("data_primeira_habilitacao")
+
+    if nasc:
+        if primeira and primeira <= nasc:
+            r["data_primeira_habilitacao"] = ""
+            incertos.append("data_primeira_habilitacao")
+        if emissao and emissao <= nasc:
+            r["data_emissao"] = ""
+            incertos.append("data_emissao")
+
+    r["campos_incertos"] = sorted(set(incertos))
+    return r
+
+
 def _parse_data_br(valor):
     valor = str(valor or "").strip()
     m = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", valor)
@@ -335,13 +541,15 @@ def _normalizar_saida(d):
     if nacionalidade.startswith("BRASILEIR"):
         nacionalidade = "BRASILEIRA"
 
-    nat_mun = str(d.get("naturalidade_municipio") or "").strip().upper()
+    nat_mun = _tirar_acentos(
+        str(d.get("naturalidade_municipio") or "").strip().upper()
+    )
     nat_uf = str(d.get("naturalidade_uf") or "").strip().upper()
     naturalidade = f"{nat_mun}/{nat_uf}" if nat_mun and nat_uf else nat_mun
 
     return {
         "documento": tipo,
-        "nome": str(d.get("nome") or "").strip().upper(),
+        "nome": _tirar_acentos(str(d.get("nome") or "").strip().upper()),
         "cpf": "".join(c for c in str(d.get("cpf") or "") if c.isdigit()),
         "rg": "".join(c for c in str(d.get("rg") or "").upper() if c.isalnum()),
         "numero_cnh": "".join(c for c in str(d.get("numero_cnh") or "") if c.isdigit()),
@@ -354,8 +562,8 @@ def _normalizar_saida(d):
         "sexo": str(d.get("sexo") or "").strip().upper(),
         "nacionalidade": nacionalidade or "BRASILEIRA",
         "naturalidade": naturalidade,
-        "filiacao1": str(d.get("filiacao_1") or "").strip().upper(),
-        "filiacao2": str(d.get("filiacao_2") or "").strip().upper(),
+        "filiacao1": _tirar_acentos(str(d.get("filiacao_1") or "").strip().upper()),
+        "filiacao2": _tirar_acentos(str(d.get("filiacao_2") or "").strip().upper()),
         "modelo_documento": str(d.get("modelo_documento") or "").strip().upper(),
         "campos_incertos": d.get("campos_incertos") or [],
     }
@@ -739,6 +947,22 @@ def ler():
         tempo_preparo = time.perf_counter() - t_preparo
 
         dados_raw, modelo, tempo_api = _groq_call(image_bytes)
+
+        tempo_conferencia_cnh = 0.0
+        if str(dados_raw.get("tipo_documento") or "").strip().upper() == "CNH":
+            try:
+                texto_pdf = _texto_pdf_arquivos(arquivos)
+                criticos, tempo_conferencia_cnh = _groq_cnh_criticos(
+                    image_bytes,
+                    texto_pdf,
+                )
+                dados_raw = _mesclar_cnh_criticos(dados_raw, criticos)
+            except Exception:
+                # Se a segunda conferência falhar, mantém a leitura principal.
+                pass
+
+            dados_raw = _validar_cnh_final(dados_raw)
+
         dados = _normalizar_saida(dados_raw)
 
         return jsonify({
@@ -748,6 +972,7 @@ def ler():
             "arquivos_lidos": len(arquivos),
             "tempo_preparo": round(tempo_preparo, 3),
             "tempo_api": round(tempo_api, 3),
+            "tempo_conferencia_cnh": round(tempo_conferencia_cnh, 3),
             "tempo_total": round(time.perf_counter() - start, 3),
         })
     except Exception as e:
