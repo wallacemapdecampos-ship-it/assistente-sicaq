@@ -336,6 +336,7 @@ REGRAS OBRIGATÓRIAS:
 
 
 def _tirar_acentos(valor):
+    import unicodedata
     texto = str(valor or "")
     return "".join(
         c for c in unicodedata.normalize("NFD", texto)
