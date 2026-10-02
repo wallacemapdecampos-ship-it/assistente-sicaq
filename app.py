@@ -290,6 +290,16 @@ def _groq_call(image_bytes: bytes):
             return dados, model, elapsed
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
+            if e.code == 429:
+                espera = ""
+                m = re.search(r"try again in\s+([0-9.]+)s", detail, re.I)
+                if m:
+                    espera = f" Aguarde cerca de {float(m.group(1)):.0f} segundos e tente novamente."
+                last_error = RuntimeError(
+                    "Limite gratuito do Groq atingido temporariamente." + espera
+                )
+                break
+
             last_error = RuntimeError(f"Groq HTTP {e.code}: {detail}")
             # Tenta o próximo modelo apenas em erros de modelo/404/400.
             if e.code not in (400, 404):
@@ -948,19 +958,9 @@ def ler():
 
         dados_raw, modelo, tempo_api = _groq_call(image_bytes)
 
-        tempo_conferencia_cnh = 0.0
+        # CNH: uma única chamada ao Groq para não estourar o limite gratuito.
+        # A conferência final é feita localmente, sem consumir tokens.
         if str(dados_raw.get("tipo_documento") or "").strip().upper() == "CNH":
-            try:
-                texto_pdf = _texto_pdf_arquivos(arquivos)
-                criticos, tempo_conferencia_cnh = _groq_cnh_criticos(
-                    image_bytes,
-                    texto_pdf,
-                )
-                dados_raw = _mesclar_cnh_criticos(dados_raw, criticos)
-            except Exception:
-                # Se a segunda conferência falhar, mantém a leitura principal.
-                pass
-
             dados_raw = _validar_cnh_final(dados_raw)
 
         dados = _normalizar_saida(dados_raw)
@@ -972,7 +972,6 @@ def ler():
             "arquivos_lidos": len(arquivos),
             "tempo_preparo": round(tempo_preparo, 3),
             "tempo_api": round(tempo_api, 3),
-            "tempo_conferencia_cnh": round(tempo_conferencia_cnh, 3),
             "tempo_total": round(time.perf_counter() - start, 3),
         })
     except Exception as e:
