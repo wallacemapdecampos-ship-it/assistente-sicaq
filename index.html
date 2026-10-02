@@ -91,9 +91,6 @@
     .campo.cnh-terco {
       grid-column: span 2;
     }
-    .campo.cnh-stack {
-      grid-column: span 6;
-    }
     .campo label {
       display: block;
       font-size: 13px;
@@ -136,7 +133,7 @@
     }
     @media (max-width: 700px) {
       .grid { grid-template-columns: 1fr; }
-      .campo, .campo.cnh-terco, .campo.cnh-stack { grid-column: span 1; }
+      .campo, .campo.cnh-terco { grid-column: span 1; }
       header { padding: 22px 20px; }
     }
   </style>
@@ -211,17 +208,17 @@
         <input id="nascimento" type="text">
       </div>
 
-      <div class="campo cnh-stack" data-tipos="CNH">
+      <div class="campo" data-tipos="CNH">
         <label>1ª Habilitação</label>
         <input id="primeira" type="text">
       </div>
 
-      <div class="campo cnh-stack" data-tipos="CNH RG CIN">
+      <div class="campo" data-tipos="CNH RG CIN">
         <label>Emissão</label>
         <input id="emissao" type="text">
       </div>
 
-      <div class="campo cnh-stack" data-tipos="CNH RG CIN">
+      <div class="campo" data-tipos="CNH RG CIN">
         <label>Validade</label>
         <input id="validade" type="text">
       </div>
@@ -388,12 +385,12 @@
       numero_cnh: 3,
       uf: 4,
       nascimento: 5,
-      primeira: 6,
-      emissao: 7,
-      validade: 8,
-      sexo: 9,
-      nacionalidade: 10,
-      naturalidade: 11,
+      sexo: 6,
+      primeira: 7,
+      nacionalidade: 8,
+      emissao: 9,
+      naturalidade: 10,
+      validade: 11,
       pai: 12,
       mae: 13
     };
