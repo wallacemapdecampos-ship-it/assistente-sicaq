@@ -762,24 +762,49 @@ def _imagem_holerite(data, filename, mimetype):
         doc.close()
 
 
-def _groq_holerite_call(data, filename, mimetype):
+def _groq_holerite_call(arquivos):
+    """
+    Lê 1 ou 2 arquivos de holerite na mesma chamada.
+    Se houver dois meses diferentes, o prompt escolhe a competência
+    válida mais recente. Nunca soma valores de meses distintos.
+    """
     key = os.getenv("GROQ_API_KEY", "").strip()
     if not key:
         raise RuntimeError("GROQ_API_KEY não configurada no Render.")
 
-    texto_pdf = ""
-    if PathLikeSuffix(filename) == ".pdf" or mimetype == "application/pdf":
-        texto_pdf = _pdf_texto_holerite(data)
+    conteudo = [
+        {"type": "text", "text": _holerite_prompt()}
+    ]
 
-    if len(texto_pdf) >= 120:
-        conteudo = _holerite_prompt() + "\n\nTEXTO EXTRAÍDO DO HOLERITE:\n" + texto_pdf[:18000]
-    else:
-        imagem = _imagem_holerite(data, filename, mimetype)
-        b64 = base64.b64encode(imagem).decode("ascii")
-        conteudo = [
-            {"type": "text", "text": _holerite_prompt()},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-        ]
+    for idx, item in enumerate(arquivos[:2], start=1):
+        data = item["data"]
+        filename = item["filename"]
+        mimetype = item["mimetype"]
+
+        texto_pdf = ""
+        if PathLikeSuffix(filename) == ".pdf" or mimetype == "application/pdf":
+            texto_pdf = _pdf_texto_holerite(data)
+
+        if len(texto_pdf) >= 120:
+            # Limita cada arquivo para não desperdiçar tokens no plano gratuito.
+            conteudo.append({
+                "type": "text",
+                "text": (
+                    f"\n\n===== HOLERITE / ARQUIVO {idx}: {filename} =====\n"
+                    + texto_pdf[:9000]
+                ),
+            })
+        else:
+            imagem = _imagem_holerite(data, filename, mimetype)
+            b64 = base64.b64encode(imagem).decode("ascii")
+            conteudo.append({
+                "type": "text",
+                "text": f"\n\n===== HOLERITE / ARQUIVO {idx}: {filename} =====",
+            })
+            conteudo.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+            })
 
     models = [
         os.getenv("GROQ_MODEL", "").strip(),
@@ -799,16 +824,18 @@ def _groq_holerite_call(data, filename, mimetype):
             "reasoning_effort": "none",
             "response_format": {"type": "json_object"},
         }
+
         req = urllib.request.Request(
             "https://api.groq.com/openai/v1/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
-                "User-Agent": "Assistente-SICAQ-Holerite-Web/1.0",
+                "User-Agent": "Assistente-SICAQ-Holerite-Web/1.1",
             },
             method="POST",
         )
+
         try:
             t0 = time.perf_counter()
             with urllib.request.urlopen(req, timeout=35) as resp:
@@ -817,11 +844,24 @@ def _groq_holerite_call(data, filename, mimetype):
             content = body["choices"][0]["message"]["content"]
             dados = json.loads(content)
             return dados, model, elapsed
+
         except urllib.error.HTTPError as e:
             detalhe = e.read().decode("utf-8", errors="replace")
+
+            if e.code == 429:
+                espera = ""
+                m = re.search(r"try again in\s+([0-9.]+)s", detalhe, re.I)
+                if m:
+                    espera = f" Aguarde cerca de {float(m.group(1)):.0f} segundos e tente novamente."
+                ultimo = RuntimeError(
+                    "Limite gratuito do Groq atingido temporariamente." + espera
+                )
+                break
+
             ultimo = RuntimeError(f"Groq HTTP {e.code}: {detalhe}")
             if e.code not in (400, 404):
                 break
+
         except Exception as e:
             ultimo = e
             break
@@ -869,30 +909,53 @@ def _normalizar_holerite(resultado):
 
 @app.post("/ler-holerite")
 def ler_holerite():
-    if "file" not in request.files:
+    recebidos = request.files.getlist("files")
+
+    # Compatibilidade com a versão anterior.
+    if not recebidos and "file" in request.files:
+        recebidos = [request.files["file"]]
+
+    recebidos = [f for f in recebidos if f and (f.filename or "").strip()]
+
+    if not recebidos:
         return jsonify({"ok": False, "error": "Holerite não enviado."}), 400
 
-    f = request.files["file"]
-    data = f.read()
-    if not data:
+    if len(recebidos) > 2:
+        return jsonify({
+            "ok": False,
+            "error": "Selecione no máximo 2 arquivos de holerite."
+        }), 400
+
+    arquivos = []
+    for f in recebidos:
+        data = f.read()
+        if not data:
+            continue
+        arquivos.append({
+            "data": data,
+            "filename": f.filename or "",
+            "mimetype": f.mimetype or "",
+        })
+
+    if not arquivos:
         return jsonify({"ok": False, "error": "Arquivo vazio."}), 400
 
     inicio = time.perf_counter()
+
     try:
-        resultado, modelo, tempo_api = _groq_holerite_call(
-            data,
-            f.filename or "",
-            f.mimetype or "",
-        )
+        resultado, modelo, tempo_api = _groq_holerite_call(arquivos)
         dados = _normalizar_holerite(resultado)
+
         return jsonify({
             "ok": True,
             "dados": dados,
             "modelo": modelo,
+            "arquivos_lidos": len(arquivos),
             "tempo_api": round(tempo_api, 3),
             "tempo_total": round(time.perf_counter() - inicio, 3),
             "competencias_validas": _holerite_competencias_validas(),
         })
+
     except ValueError as e:
         txt = str(e)
         if txt.startswith("HOLERITE_FORA_PERIODO|"):
@@ -903,6 +966,7 @@ def ler_holerite():
                 "competencias_validas": _holerite_competencias_validas(),
             }), 422
         return jsonify({"ok": False, "error": txt}), 400
+
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
