@@ -264,8 +264,9 @@
       </div>
 
       <div class="upload">
-        <input type="file" id="holeriteArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp">
+        <input type="file" id="holeriteArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
         <button id="btnLerHolerite" type="button" disabled>LER HOLERITE</button>
+        <span class="muted" style="font-size:13px;">Pode selecionar 1 ou 2 arquivos de holerite</span>
       </div>
 
       <div id="mensagemHolerite" class="muted">
@@ -774,17 +775,33 @@
     const btn = document.getElementById("btnLerHolerite");
 
     if (!input.files.length) {
-      setMensagemHolerite("Selecione um holerite PDF ou imagem primeiro.", "erro");
+      setMensagemHolerite("Selecione 1 ou 2 arquivos de holerite.", "erro");
+      return;
+    }
+
+    if (input.files.length > 2) {
+      setMensagemHolerite("Selecione no máximo 2 arquivos de holerite.", "erro");
+      input.value = "";
       return;
     }
 
     limparHolerite();
     btn.disabled = true;
     btn.textContent = "LENDO...";
-    setMensagemHolerite("Qwen analisando o holerite...", "warn");
+
+    const qtd = input.files.length;
+    setMensagemHolerite(
+      qtd === 2
+        ? "Qwen analisando os 2 arquivos de holerite..."
+        : "Qwen analisando o holerite...",
+      "warn"
+    );
 
     const form = new FormData();
-    form.append("file", input.files[0]);
+    for (const arquivo of input.files) {
+      form.append("files", arquivo);
+    }
+
     const inicio = performance.now();
 
     try {
@@ -810,8 +827,9 @@
       preencherHolerite(data.dados || {});
       const total = ((performance.now() - inicio) / 1000).toFixed(2);
       const api = data.tempo_api ? ` • Groq/Qwen: ${data.tempo_api}s` : "";
+      const qtdLidos = data.arquivos_lidos || input.files.length || 1;
       setMensagemHolerite(
-        `Holerite lido e renda calculada em ${total}s${api}. Revise os valores.`,
+        `${qtdLidos} arquivo${qtdLidos > 1 ? "s" : ""} de holerite lido${qtdLidos > 1 ? "s" : ""} em ${total}s${api}. Revise os valores.`,
         "ok"
       );
     } catch (e) {
@@ -825,9 +843,25 @@
   document.getElementById("tabIdentificacao").addEventListener("click", () => mostrarAba("identificacao"));
   document.getElementById("tabHolerite").addEventListener("click", () => mostrarAba("holerite"));
   document.getElementById("btnLerHolerite").addEventListener("click", lerHolerite);
-  document.getElementById("holeriteArquivo").addEventListener("change", () => {
+  document.getElementById("holeriteArquivo").addEventListener("change", (event) => {
     limparHolerite();
-    setMensagemHolerite("Holerite selecionado. Clique em LER HOLERITE.", "muted");
+
+    const qtd = event.target.files.length;
+
+    if (qtd > 2) {
+      setMensagemHolerite("Selecione no máximo 2 arquivos de holerite.", "erro");
+      event.target.value = "";
+      return;
+    }
+
+    if (qtd === 2) {
+      setMensagemHolerite(
+        "2 arquivos selecionados. O sistema vai analisar os dois juntos e usar a competência válida mais recente.",
+        "muted"
+      );
+    } else if (qtd === 1) {
+      setMensagemHolerite("Holerite selecionado. Clique em LER HOLERITE.", "muted");
+    }
   });
 
   ajustarCampos("");
