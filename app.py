@@ -4,10 +4,11 @@ import json
 import os
 import re
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from collections import defaultdict, deque
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request
@@ -28,6 +29,10 @@ CORS(
     resources={r"/*": {"origins": [ALLOWED_ORIGIN]}},
     supports_credentials=False,
 )
+
+class GroqLimite(RuntimeError):
+    """Limite temporário de tokens da Groq (HTTP 429)."""
+
 
 RATE_WINDOW = 60
 RATE_MAX = 20
@@ -56,7 +61,7 @@ Regras:
 - RG novo/CIN: CPF é o identificador principal.
 - data_emissao: use DATA DE EXPEDIÇÃO ou DATA DE EMISSÃO; nunca nascimento.
 - validade: somente se houver VALIDADE explicitamente impressa.
-- naturalidade_municipio: somente cidade; naturalidade_uf: UF.
+- naturalidade_municipio: somente o nome COMPLETO da cidade, sem abreviações e sem UF; naturalidade_uf: UF separada. Exemplos: 'S.ROQUE - SP' => cidade 'SAO ROQUE', UF 'SP'; 'S PAULO' ou 'S. PAULO' => 'SAO PAULO'. Nunca devolva 'S.ROQUE', 'S PAULO' ou 'CIDADE - SP' como nome final da cidade.
 - sexo: MASCULINO ou FEMININO quando explicitamente identificável.
 - órgão/UF: SSP-SP => orgao_emissor SSP e uf_emissao SP.
 - Se aparecer IIRGD/IRGD em SP, mantenha a sigla em orgao_emissor; não converta aqui.
@@ -295,7 +300,7 @@ def _groq_call(image_bytes: bytes):
                 m = re.search(r"try again in\s+([0-9.]+)s", detail, re.I)
                 if m:
                     espera = f" Aguarde cerca de {float(m.group(1)):.0f} segundos e tente novamente."
-                last_error = RuntimeError(
+                last_error = GroqLimite(
                     "Limite gratuito do Groq atingido temporariamente." + espera
                 )
                 break
@@ -308,6 +313,8 @@ def _groq_call(image_bytes: bytes):
             last_error = e
             break
 
+    if isinstance(last_error, GroqLimite):
+        raise last_error
     raise RuntimeError(str(last_error or "Falha na leitura Groq/Qwen."))
 
 
@@ -336,7 +343,6 @@ REGRAS OBRIGATÓRIAS:
 
 
 def _tirar_acentos(valor):
-    import unicodedata
     texto = str(valor or "")
     return "".join(
         c for c in unicodedata.normalize("NFD", texto)
@@ -458,6 +464,12 @@ def _mesclar_cnh_criticos(resultado, criticos):
 
 
 def _validar_cnh_final(resultado):
+    """
+    Confere localmente (sem gastar tokens) as 3 datas da CNH.
+    Ordem esperada: 1ª habilitação <= emissão < validade.
+    Só mexe nas datas quando a ordem lógica está violada; CNH lida corretamente
+    não é alterada.
+    """
     r = dict(resultado or {})
     if str(r.get("tipo_documento") or "").strip().upper() != "CNH":
         return r
@@ -471,56 +483,89 @@ def _validar_cnh_final(resultado):
         r["numero_cnh"] = ""
         incertos.append("numero_cnh")
 
+    # Formato único DD/MM/AAAA
+    for chave in ("data_nascimento", "data_primeira_habilitacao",
+                  "data_emissao", "validade"):
+        r[chave] = _formatar_data_br(r.get(chave))
+
     nasc = _parse_data_br(r.get("data_nascimento"))
     primeira = _parse_data_br(r.get("data_primeira_habilitacao"))
     emissao = _parse_data_br(r.get("data_emissao"))
     validade = _parse_data_br(r.get("validade"))
 
-    # Emissão e validade invertidas: corrige.
+    LIMITE_VALIDADE_DIAS = 11 * 366  # CNH vale 1, 3, 5 ou 10 anos
+
+    # 1) Emissão e validade invertidas: emissão nunca é posterior à validade.
     if emissao and validade and emissao > validade:
-        r["data_emissao"], r["validade"] = (
-            r.get("validade", ""),
-            r.get("data_emissao", ""),
-        )
+        r["data_emissao"], r["validade"] = r["validade"], r["data_emissao"]
         emissao, validade = validade, emissao
 
-    # 1ª habilitação não pode ser a validade nem ficar após a emissão.
-    if (
-        primeira
-        and validade
-        and r.get("data_primeira_habilitacao") == r.get("validade")
-    ):
+    # 2) 1ª habilitação copiada da validade.
+    if primeira and validade and primeira == validade:
         r["data_primeira_habilitacao"] = ""
         primeira = None
         incertos.append("data_primeira_habilitacao")
 
+    # 3) 1ª habilitação depois da emissão.
     if primeira and emissao and primeira > emissao:
-        r["data_primeira_habilitacao"] = ""
-        primeira = None
-        incertos.append("data_primeira_habilitacao")
+        troca_plausivel = (
+            validade
+            and primeira < validade
+            and (validade - primeira).days <= LIMITE_VALIDADE_DIAS
+        )
+        if troca_plausivel:
+            # Provável troca entre 1ª habilitação e emissão: reordena e avisa.
+            r["data_primeira_habilitacao"], r["data_emissao"] = (
+                r["data_emissao"], r["data_primeira_habilitacao"]
+            )
+            primeira, emissao = emissao, primeira
+            incertos += ["data_primeira_habilitacao", "data_emissao"]
+        else:
+            r["data_primeira_habilitacao"] = ""
+            primeira = None
+            incertos.append("data_primeira_habilitacao")
 
+    # 4) Intervalo emissão -> validade fora do normal: apenas avisa.
+    if emissao and validade:
+        dias = (validade - emissao).days
+        if dias <= 0 or dias > LIMITE_VALIDADE_DIAS:
+            incertos += ["data_emissao", "validade"]
+
+    # 5) Coerência com a data de nascimento.
     if nasc:
         if primeira and primeira <= nasc:
             r["data_primeira_habilitacao"] = ""
+            primeira = None
             incertos.append("data_primeira_habilitacao")
         if emissao and emissao <= nasc:
             r["data_emissao"] = ""
+            emissao = None
             incertos.append("data_emissao")
+        if primeira and (primeira - nasc).days < 18 * 365:
+            incertos.append("data_primeira_habilitacao")  # CNH exige 18 anos
 
     r["campos_incertos"] = sorted(set(incertos))
     return r
 
 
 def _parse_data_br(valor):
+    """Aceita DD/MM/AAAA, DD-MM-AAAA e DD.MM.AAAA. Devolve date ou None."""
     valor = str(valor or "").strip()
-    m = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", valor)
+    m = re.fullmatch(r"(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{4})", valor)
     if not m:
         return None
     try:
-        from datetime import date
         return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
     except Exception:
         return None
+
+
+def _formatar_data_br(valor):
+    """Padroniza para DD/MM/AAAA quando for uma data válida; senão mantém o texto."""
+    d = _parse_data_br(valor)
+    if d:
+        return f"{d.day:02d}/{d.month:02d}/{d.year:04d}"
+    return str(valor or "").strip()
 
 
 def _corrigir_datas_cnh(d):
@@ -544,6 +589,47 @@ def _corrigir_datas_cnh(d):
     return r
 
 
+
+def _normalizar_municipio_naturalidade(valor):
+    """Expande abreviações comuns de naturalidade e devolve somente o município."""
+    texto = _tirar_acentos(str(valor or "").strip().upper())
+
+    # Remove sufixo de UF quando o OCR mistura a UF no campo da cidade.
+    texto = re.sub(r"\s*[-/]\s*[A-Z]{2}\s*$", "", texto)
+    texto = re.sub(r"^(S|STA|STO)\s*\.\s*", r"\1 ", texto)
+    texto = re.sub(r"\s+", " ", texto).strip(" .,-")
+    texto = re.sub(r"\s+", " ", texto)
+
+    equivalencias = {
+        "S PAULO": "SAO PAULO",
+        "S ROQUE": "SAO ROQUE",
+        "S JOSE DOS CAMPOS": "SAO JOSE DOS CAMPOS",
+        "S JOSE DO RIO PRETO": "SAO JOSE DO RIO PRETO",
+        "S JOSE DO RIO PARDO": "SAO JOSE DO RIO PARDO",
+        "S BERNARDO DO CAMPO": "SAO BERNARDO DO CAMPO",
+        "S CAETANO DO SUL": "SAO CAETANO DO SUL",
+        "S CARLOS": "SAO CARLOS",
+        "S VICENTE": "SAO VICENTE",
+        "S SEBASTIAO": "SAO SEBASTIAO",
+        "S JOAQUIM DA BARRA": "SAO JOAQUIM DA BARRA",
+        "S PEDRO": "SAO PEDRO",
+        "S MANUEL": "SAO MANUEL",
+        "S MIGUEL ARCANJO": "SAO MIGUEL ARCANJO",
+        "S SIMAO": "SAO SIMAO",
+        "S BENTO DO SAPUCAI": "SAO BENTO DO SAPUCAI",
+        "S JOAO DA BOA VISTA": "SAO JOAO DA BOA VISTA",
+        "S JOSE": "SAO JOSE",
+    }
+
+    if texto in equivalencias:
+        return equivalencias[texto]
+
+    # Regras gerais para abreviações no início do nome do município.
+    texto = re.sub(r"^S\s+(?=[A-Z])", "SAO ", texto)
+    texto = re.sub(r"^STA\.?\s+(?=[A-Z])", "SANTA ", texto)
+    texto = re.sub(r"^STO\.?\s+(?=[A-Z])", "SANTO ", texto)
+    return texto
+
 def _normalizar_saida(d):
     d = _corrigir_datas_cnh(d)
     d = dict(d or {})
@@ -552,11 +638,18 @@ def _normalizar_saida(d):
     if nacionalidade.startswith("BRASILEIR"):
         nacionalidade = "BRASILEIRA"
 
-    nat_mun = _tirar_acentos(
-        str(d.get("naturalidade_municipio") or "").strip().upper()
+    nat_mun = _normalizar_municipio_naturalidade(
+        d.get("naturalidade_municipio") or ""
     )
-    nat_uf = str(d.get("naturalidade_uf") or "").strip().upper()
-    naturalidade = f"{nat_mun}/{nat_uf}" if nat_mun and nat_uf else nat_mun
+    nat_uf = _tirar_acentos(str(d.get("naturalidade_uf") or "").strip().upper())[:2]
+
+    sexo = _tirar_acentos(str(d.get("sexo") or "").strip().upper())
+    if sexo in ("M", "MASC", "MASCULINO"):
+        sexo = "MASCULINO"
+    elif sexo in ("F", "FEM", "FEMININO"):
+        sexo = "FEMININO"
+    # O campo do SICAQ deve receber apenas o nome da cidade, sem UF.
+    naturalidade = nat_mun
 
     return {
         "documento": tipo,
@@ -564,15 +657,16 @@ def _normalizar_saida(d):
         "cpf": "".join(c for c in str(d.get("cpf") or "") if c.isdigit()),
         "rg": "".join(c for c in str(d.get("rg") or "").upper() if c.isalnum()),
         "numero_cnh": "".join(c for c in str(d.get("numero_cnh") or "") if c.isdigit()),
-        "orgao_emissor": str(d.get("orgao_emissor") or "").strip().upper(),
-        "uf": str(d.get("uf_emissao") or "").strip().upper(),
-        "nascimento": str(d.get("data_nascimento") or "").strip(),
-        "primeira": str(d.get("data_primeira_habilitacao") or "").strip(),
-        "emissao": str(d.get("data_emissao") or "").strip(),
-        "validade": str(d.get("validade") or "").strip(),
-        "sexo": str(d.get("sexo") or "").strip().upper(),
+        "orgao_emissor": _tirar_acentos(str(d.get("orgao_emissor") or "").strip().upper()),
+        "uf": _tirar_acentos(str(d.get("uf_emissao") or "").strip().upper()),
+        "nascimento": _formatar_data_br(d.get("data_nascimento")),
+        "primeira": _formatar_data_br(d.get("data_primeira_habilitacao")),
+        "emissao": _formatar_data_br(d.get("data_emissao")),
+        "validade": _formatar_data_br(d.get("validade")),
+        "sexo": sexo,
         "nacionalidade": nacionalidade or "BRASILEIRA",
         "naturalidade": naturalidade,
+        "naturalidade_uf": nat_uf,
         "filiacao1": _tirar_acentos(str(d.get("filiacao_1") or "").strip().upper()),
         "filiacao2": _tirar_acentos(str(d.get("filiacao_2") or "").strip().upper()),
         "modelo_documento": str(d.get("modelo_documento") or "").strip().upper(),
@@ -586,7 +680,6 @@ def _normalizar_saida(d):
 # ============================================================
 
 def _sem_acentos(txt):
-    import unicodedata
     txt = str(txt or "")
     return "".join(
         c for c in unicodedata.normalize("NFD", txt)
@@ -701,6 +794,18 @@ def _holerite_valor(valor):
     return f"{float(valor or 0):.2f}".replace(".", ",")
 
 
+def _compactar_texto_holerite(texto, limite=5000):
+    """Remove linhas vazias/espaços repetidos e limita o tamanho (início + fim),
+    para economizar tokens no limite gratuito da Groq."""
+    linhas = [re.sub(r"[ \t]+", " ", l).strip() for l in str(texto or "").splitlines()]
+    texto = "\n".join(l for l in linhas if l)
+    if len(texto) <= limite:
+        return texto
+    inicio = int(limite * 0.55)
+    fim = limite - inicio
+    return texto[:inicio] + "\n[...]\n" + texto[-fim:]
+
+
 def _pdf_texto_holerite(data):
     try:
         doc = pymupdf.open(stream=data, filetype="pdf")
@@ -785,13 +890,14 @@ def _groq_holerite_call(arquivos):
         if PathLikeSuffix(filename) == ".pdf" or mimetype == "application/pdf":
             texto_pdf = _pdf_texto_holerite(data)
 
+        texto_pdf = _compactar_texto_holerite(texto_pdf, 20000)
         if len(texto_pdf) >= 120:
             # Limita cada arquivo para não desperdiçar tokens no plano gratuito.
             conteudo.append({
                 "type": "text",
                 "text": (
                     f"\n\n===== HOLERITE / ARQUIVO {idx}: {filename} =====\n"
-                    + texto_pdf[:9000]
+                    + _compactar_texto_holerite(texto_pdf)
                 ),
             })
         else:
@@ -853,7 +959,7 @@ def _groq_holerite_call(arquivos):
                 m = re.search(r"try again in\s+([0-9.]+)s", detalhe, re.I)
                 if m:
                     espera = f" Aguarde cerca de {float(m.group(1)):.0f} segundos e tente novamente."
-                ultimo = RuntimeError(
+                ultimo = GroqLimite(
                     "Limite gratuito do Groq atingido temporariamente." + espera
                 )
                 break
@@ -866,6 +972,8 @@ def _groq_holerite_call(arquivos):
             ultimo = e
             break
 
+    if isinstance(ultimo, GroqLimite):
+        raise ultimo
     raise RuntimeError(str(ultimo or "Falha na leitura do holerite."))
 
 
@@ -967,6 +1075,9 @@ def ler_holerite():
             }), 422
         return jsonify({"ok": False, "error": txt}), 400
 
+    except GroqLimite as e:
+        return jsonify({"ok": False, "error": str(e)}), 429
+
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -1039,6 +1150,8 @@ def ler():
             "tempo_api": round(tempo_api, 3),
             "tempo_total": round(time.perf_counter() - start, 3),
         })
+    except GroqLimite as e:
+        return jsonify({"ok": False, "error": str(e)}), 429
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
