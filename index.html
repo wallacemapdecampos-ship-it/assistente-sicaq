@@ -603,7 +603,14 @@
       aguardandoSicaq = false;
       document.getElementById("btnSicaq").textContent = "PREENCHER SICAQ";
       atualizarBotaoSicaq();
-      setMensagem("A extensão não aceitou o comando: " + (msg.error || "erro desconhecido"), "erro");
+      const erroExt = String(msg.error || "");
+      // Extensão recarregada/atualizada com esta página aberta: a ligação
+      // antiga deixa de existir até a página ser recarregada.
+      if (/sendMessage|context invalidated|runtime/i.test(erroExt)) {
+        setMensagem("A extensão foi atualizada ou recarregada. Aperte Ctrl+F5 nesta página (e F5 na página do SICAQ) e clique em PREENCHER SICAQ de novo.", "erro");
+      } else {
+        setMensagem("A extensão não aceitou o comando: " + (erroExt || "erro desconhecido"), "erro");
+      }
       return;
     }
 
