@@ -445,9 +445,17 @@ def _pdf_area_documento(page):
         return None, None
 
 
+# Recorte do PDF digital (só os painéis do cartão) DESLIGADO: no teste real,
+# a imagem alta e estreita fez a IA errar uma letra da filiação, enquanto a
+# página inteira lia certo. Mantido o envio da página inteira, já validado.
+RECORTE_PDF_DIGITAL = False
+
+
 def _pdf_pagina_para_imagem(page):
     """Renderiza a página. Devolve (imagem, pode_recortar_como_foto)."""
-    clip, zoom = _pdf_area_documento(page)
+    clip, zoom = (
+        _pdf_area_documento(page) if RECORTE_PDF_DIGITAL else (None, None)
+    )
     if clip is not None:
         try:
             pix = page.get_pixmap(
