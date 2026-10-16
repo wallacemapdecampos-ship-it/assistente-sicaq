@@ -13,8 +13,18 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 import pymupdf
+
+# Recorte automático do documento em fotos (opcional: se o OpenCV não
+# estiver disponível, o servidor segue funcionando sem o recorte).
+try:
+    import numpy as np
+    import cv2
+    cv2.setNumThreads(1)
+except Exception:  # pragma: no cover
+    np = None
+    cv2 = None
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # até 2 arquivos
@@ -43,11 +53,16 @@ Leia o documento brasileiro e responda SOMENTE JSON válido com estas chaves:
 tipo_documento, modelo_documento, nome, cpf, rg, data_nascimento, numero_cnh,
 orgao_emissor, uf_emissao, data_primeira_habilitacao, data_emissao, validade,
 sexo, nacionalidade, naturalidade_municipio, naturalidade_uf, filiacao_1,
-filiacao_2, campos_incertos.
+filiacao_2, mrz, campos_incertos.
 
 Regras:
 - tipo_documento: CNH, RG ou CIN. modelo_documento: ANTIGO, NOVO ou vazio.
+- A imagem pode ser FOTO de celular: o documento pode estar pequeno, inclinado,
+  girado ou com reflexo. Leia só o documento e ignore o fundo.
 - Não invente dados.
+- mrz: se existir a zona de leitura mecânica (linhas com muitos '<', no verso
+  da CNH nova ou da CIN), copie essas linhas exatamente, separadas por \\n.
+  Se não existir, devolva vazio.
 - Leia todas as páginas/imagens como partes do MESMO documento.
 - Nome: copie exatamente.
 - RG/CIN: procure CPF, REGISTRO GERAL/RG, FILIAÇÃO, NASCIMENTO, SEXO,
@@ -117,11 +132,355 @@ def _guard():
     return None
 
 
+# ============================================================
+# PREPARO DA IMAGEM (precisão de leitura)
+# A Groq cobra o mesmo número de tokens por imagem, seja qual for o
+# tamanho (o Qwen reduz tudo para a mesma resolução). Por isso, quanto
+# mais a imagem for "só o documento", maiores ficam as letras para a IA.
+# ============================================================
+
+ALVO_LADO_DOCUMENTO = 1600
+
+
+def _abrir_imagem(data: bytes) -> Image.Image:
+    """Abre a imagem respeitando a rotação gravada pelo celular (EXIF)."""
+    img = Image.open(io.BytesIO(data))
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+    return img.convert("RGB")
+
+
+def _ordenar_cantos(pts):
+    """Ordena 4 pontos: sup-esq, sup-dir, inf-dir, inf-esq."""
+    pts = np.asarray(pts, dtype=np.float32).reshape(4, 2)
+    # Ordena pelo ângulo em volta do centro (funciona mesmo girado a 45°)
+    # e começa pelo canto mais próximo do topo-esquerdo.
+    centro = pts.mean(axis=0)
+    angulos = np.arctan2(pts[:, 1] - centro[1], pts[:, 0] - centro[0])
+    pts = pts[np.argsort(angulos)]
+    inicio = int(np.argmin(pts.sum(axis=1)))
+    return np.roll(pts, -inicio, axis=0).astype(np.float32)
+
+
+def _quad_de_contorno(contorno, preenchimento_min=0.85):
+    peri = cv2.arcLength(contorno, True)
+    if peri <= 0:
+        return None
+    aprox = cv2.approxPolyDP(contorno, 0.02 * peri, True)
+    if len(aprox) == 4 and cv2.isContourConvex(aprox):
+        return aprox.reshape(4, 2).astype(np.float32)
+    # Cartões têm cantos arredondados: aceita um contorno "quase retângulo".
+    rect = cv2.minAreaRect(contorno)
+    rw, rh = rect[1]
+    if rw * rh <= 0:
+        return None
+    if cv2.contourArea(contorno) / (rw * rh) >= preenchimento_min:
+        return cv2.boxPoints(rect).astype(np.float32)
+    return None
+
+
+def _medidas_quad(q):
+    q = _ordenar_cantos(q)
+    larg = max(np.linalg.norm(q[1] - q[0]), np.linalg.norm(q[2] - q[3]))
+    alt = max(np.linalg.norm(q[3] - q[0]), np.linalg.norm(q[2] - q[1]))
+    return float(larg), float(alt)
+
+
+def _iou_caixas(a, b):
+    ax0, ay0 = a.min(axis=0)
+    ax1, ay1 = a.max(axis=0)
+    bx0, by0 = b.min(axis=0)
+    bx1, by1 = b.max(axis=0)
+    ix = max(0.0, min(ax1, bx1) - max(ax0, bx0))
+    iy = max(0.0, min(ay1, by1) - max(ay0, by0))
+    inter = ix * iy
+    uni = (ax1 - ax0) * (ay1 - ay0) + (bx1 - bx0) * (by1 - by0) - inter
+    return inter / uni if uni > 0 else 0.0
+
+
+def _mapa_texto(cinza):
+    """Pixels com cara de letra/número (escuro no claro e claro no escuro)."""
+    k = max(9, int(min(cinza.shape) / 40)) | 1
+    nucleo = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
+    escuro = cv2.morphologyEx(cinza, cv2.MORPH_BLACKHAT, nucleo)
+    claro = cv2.morphologyEx(cinza, cv2.MORPH_TOPHAT, nucleo)
+    _, texto = cv2.threshold(cv2.max(escuro, claro), 40, 255, cv2.THRESH_BINARY)
+    return texto
+
+
+def _texto_fica_dentro(quad, texto):
+    """
+    Garante que o recorte não deixa texto do documento de fora:
+    a densidade de "letras" fora do quadrilátero tem de ser bem menor
+    que a de dentro.
+    """
+    mascara = np.zeros(texto.shape, np.uint8)
+    cv2.fillConvexPoly(mascara, _ordenar_cantos(quad).astype(np.int32), 255)
+    dentro = mascara > 0
+    area_in = int(dentro.sum())
+    area_out = int(dentro.size - area_in)
+    if area_in == 0:
+        return False
+    tx = texto > 0
+    dens_in = tx[dentro].sum() / area_in
+    if dens_in < 0.01:
+        return False
+    if area_out == 0:
+        return True
+    dens_out = tx[~dentro].sum() / area_out
+    return dens_out <= 0.35 * dens_in
+
+
+def _localizar_documento(img: Image.Image):
+    """
+    Procura o contorno do documento na foto.
+    Devolve (4 cantos na escala da imagem original, fração da área) ou None.
+    Critérios conservadores: na dúvida, não recorta.
+    """
+    W, H = img.size
+    escala = min(1.0, 1000.0 / max(W, H))
+    peq = img if escala >= 1.0 else img.resize(
+        (max(1, int(W * escala)), max(1, int(H * escala))),
+        Image.Resampling.BILINEAR,
+    )
+    cinza = np.asarray(peq.convert("L"))
+    h, w = cinza.shape
+    area_total = float(w * h)
+    suave = cv2.GaussianBlur(cinza, (5, 5), 0)
+    med = float(np.median(suave))
+    texto = _mapa_texto(suave)
+
+    mascaras = []
+    # 1) Bordas do cartão.
+    for lo, hi in (
+        (int(max(0, 0.66 * med)), int(min(255, 1.33 * med))),
+        (30, 90),
+        (60, 180),
+    ):
+        bordas = cv2.Canny(suave, lo, hi)
+        bordas = cv2.dilate(bordas, np.ones((3, 3), np.uint8), iterations=2)
+        bordas = cv2.morphologyEx(bordas, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+        mascaras.append(bordas)
+    # 2) Documento mais claro/escuro ou mais colorido que o fundo.
+    sat = cv2.GaussianBlur(
+        cv2.cvtColor(np.asarray(peq), cv2.COLOR_RGB2HSV)[:, :, 1], (5, 5), 0
+    )
+    for canal in (suave, sat):
+        _, otsu = cv2.threshold(canal, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        for m in (otsu, 255 - otsu):
+            m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+            m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+            mascaras.append(m)
+    # 3) Mancha de texto (útil quando a borda do cartão quase não aparece).
+    k = max(15, int(min(h, w) / 25)) | 1
+    mancha = cv2.morphologyEx(texto, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+    mancha = cv2.morphologyEx(mancha, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
+
+    candidatos = []
+    # A mancha de texto é irregular (foto 3x4, campos vazios): aceita menos
+    # preenchimento; as travas de proporção e de "texto dentro" seguem valendo.
+    for m, preench in [(x, 0.85) for x in mascaras] + [(mancha, 0.6)]:
+        contornos, _ = cv2.findContours(m, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        for c in sorted(contornos, key=cv2.contourArea, reverse=True)[:12]:
+            q = _quad_de_contorno(c, preench)
+            if q is None:
+                continue
+            area = float(cv2.contourArea(_ordenar_cantos(q)))
+            frac = area / area_total
+            # Documento já grande na foto: o ganho é pequeno e o risco de
+            # cortar um pedaço não compensa.
+            if not (0.03 <= frac <= 0.6):
+                continue
+            larg, alt = _medidas_quad(q)
+            if min(larg, alt) < 30:
+                continue
+            razao = max(larg, alt) / min(larg, alt)
+            # Cartão/painel de documento (~1,4 a 1,6) ou dois painéis lado a lado.
+            if not (1.2 <= razao <= 1.95 or 2.5 <= razao <= 3.6):
+                continue
+            if any(_iou_caixas(q, c2) > 0.9 for _, c2 in candidatos):
+                continue
+            candidatos.append((area, q))
+
+    if not candidatos:
+        return None
+
+    candidatos.sort(key=lambda x: x[0], reverse=True)
+
+    # Frente e verso lado a lado: junta dois painéis parecidos e vizinhos.
+    def _juntar(area, melhor):
+        larg, alt = _medidas_quad(melhor)
+        centro = melhor.mean(axis=0)
+        for area2, q2 in candidatos:
+            if q2 is melhor or not (0.6 <= area2 / area <= 1.6):
+                continue
+            if _iou_caixas(melhor, q2) > 0.2:
+                continue
+            if np.linalg.norm(q2.mean(axis=0) - centro) > 1.5 * max(larg, alt):
+                continue
+            juntos = cv2.boxPoints(
+                cv2.minAreaRect(np.vstack([melhor, q2]))
+            ).astype(np.float32)
+            area_j = float(cv2.contourArea(_ordenar_cantos(juntos)))
+            if area_j / area_total <= 0.7:
+                return area_j, juntos
+        return area, melhor
+
+    for area, q in candidatos:
+        area, q = _juntar(area, q)
+        if _texto_fica_dentro(q, texto):
+            return q / escala, area / area_total
+    return None
+
+
+def _recortar_documento(img: Image.Image):
+    """
+    Recorta e endireita o documento quando ele está pequeno/inclinado na foto.
+    Se não tiver certeza, devolve a imagem original.
+    """
+    if cv2 is None or np is None:
+        return img, "sem_opencv"
+    try:
+        achado = _localizar_documento(img)
+        if not achado:
+            return img, "sem_recorte"
+        quad, frac = achado
+        quad = _ordenar_cantos(quad)
+
+        # Margem de segurança para não cortar a borda do documento.
+        centro = quad.mean(axis=0)
+        quad = centro + (quad - centro) * 1.05
+        quad[:, 0] = np.clip(quad[:, 0], 0, img.width - 1)
+        quad[:, 1] = np.clip(quad[:, 1], 0, img.height - 1)
+
+        larg, alt = _medidas_quad(quad)
+        larg, alt = int(round(larg)), int(round(alt))
+        if larg < 60 or alt < 60:
+            return img, "sem_recorte"
+        destino = np.array(
+            [[0, 0], [larg - 1, 0], [larg - 1, alt - 1], [0, alt - 1]],
+            dtype=np.float32,
+        )
+        matriz = cv2.getPerspectiveTransform(quad.astype(np.float32), destino)
+        arr = cv2.warpPerspective(
+            np.asarray(img), matriz, (larg, alt),
+            flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE,
+        )
+        recorte = Image.fromarray(arr)
+
+        # Recorte "vazio" (ex.: folha em branco): descarta.
+        if float(np.asarray(recorte.convert("L")).std()) < 18:
+            return img, "sem_recorte"
+
+        # Documento pequeno na foto: amplia com qualidade e realça as letras.
+        maior = max(recorte.size)
+        if maior < ALVO_LADO_DOCUMENTO:
+            fator = ALVO_LADO_DOCUMENTO / maior
+            recorte = recorte.resize(
+                (int(recorte.width * fator), int(recorte.height * fator)),
+                Image.Resampling.LANCZOS,
+            )
+            if fator >= 1.3:
+                recorte = recorte.filter(
+                    ImageFilter.UnsharpMask(radius=1.2, percent=70, threshold=2)
+                )
+        return recorte, f"recortado({frac:.0%})"
+    except Exception:
+        return img, "erro_recorte"
+
+
+def _pdf_area_documento(page):
+    """
+    PDF digital (ex.: CNH exportada do app): o cartão vem como imagens
+    coloridas grandes e o resto da página é cabeçalho/QR code.
+    Devolve (retângulo só com o cartão, zoom ideal) ou (None, None).
+    """
+    try:
+        pagina = page.rect
+        area_pag = pagina.width * pagina.height
+        imagens = []
+        for info in page.get_image_info():
+            larg_px = int(info.get("width") or 0)
+            alt_px = int(info.get("height") or 0)
+            comps = int(info.get("colorspace") or 0)
+            bpc = int(info.get("bpc") or 0)
+            if larg_px < 600 or alt_px < 350 or comps < 3 or bpc < 8:
+                continue
+            caixa = pymupdf.Rect(info["bbox"]) & pagina
+            if caixa.is_empty or caixa.width < 50 or caixa.height < 30:
+                continue
+            razao = max(caixa.width, caixa.height) / min(caixa.width, caixa.height)
+            if not (1.2 <= razao <= 1.95):
+                continue
+            imagens.append((caixa, larg_px))
+        if not imagens:
+            return None, None
+
+        uniao = pymupdf.Rect(imagens[0][0])
+        for caixa, _ in imagens[1:]:
+            uniao |= caixa
+        frac = (uniao.width * uniao.height) / area_pag
+        if not (0.08 <= frac <= 0.8):
+            return None, None
+
+        # Se houver dado do cliente (data, CPF) escrito FORA das imagens,
+        # não recorta, para não perder informação.
+        for bloco in page.get_text("blocks"):
+            caixa_txt = pymupdf.Rect(bloco[:4])
+            if caixa_txt.intersects(uniao):
+                continue
+            texto = str(bloco[4] or "")
+            if re.search(r"\d{2}/\d{2}/\d{4}|\d{3}\.?\d{3}\.?\d{3}-?\d{2}", texto):
+                return None, None
+
+        uniao = (uniao + (-6, -6, 6, 6)) & pagina
+        zoom = max(lp / cx.width for cx, lp in imagens)
+        zoom = min(4.5, max(2.2, zoom))
+        return uniao, zoom
+    except Exception:
+        return None, None
+
+
+def _pdf_pagina_para_imagem(page):
+    """Renderiza a página. Devolve (imagem, pode_recortar_como_foto)."""
+    clip, zoom = _pdf_area_documento(page)
+    if clip is not None:
+        try:
+            pix = page.get_pixmap(
+                matrix=pymupdf.Matrix(zoom, zoom), clip=clip, alpha=False
+            )
+            img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+            return img.copy(), False
+        except Exception:
+            pass
+
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(2.2, 2.2), alpha=False)
+    img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB").copy()
+
+    # PDF escaneado (uma foto/scan ocupando a página, sem texto digital):
+    # trata como foto e tenta recortar o documento.
+    pode_recortar = False
+    try:
+        texto = (page.get_text("text") or "").strip()
+        area_pag = page.rect.width * page.rect.height
+        grandes = [
+            i for i in page.get_image_info()
+            if (pymupdf.Rect(i["bbox"]) & page.rect).get_area() >= 0.6 * area_pag
+        ]
+        pode_recortar = len(texto) < 50 and len(grandes) >= 1
+    except Exception:
+        pode_recortar = False
+    return img, pode_recortar
+
+
 def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
     """
-    Prioriza precisão de leitura para CNH/RG/CIN.
-    O Render continua comprimindo o resultado, mas sem reduzir demais
-    os números pequenos da CNH.
+    Prioriza precisão de leitura para CNH/RG/CIN:
+    - foto: corrige a rotação do celular e recorta/endireita o documento;
+    - PDF digital: usa só a área do cartão (sem cabeçalho e QR code);
+    - PDF escaneado: tratado como foto.
     """
     ext = PathLikeSuffix(filename)
     is_pdf = ext == ".pdf" or mimetype == "application/pdf"
@@ -131,13 +490,10 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
         try:
             pages = []
             for i in range(min(2, len(doc))):
-                page = doc[i]
-                pix = page.get_pixmap(
-                    matrix=pymupdf.Matrix(2.2, 2.2),
-                    alpha=False
-                )
-                img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
-                pages.append(img.copy())
+                img, pode_recortar = _pdf_pagina_para_imagem(doc[i])
+                if pode_recortar:
+                    img, _ = _recortar_documento(img)
+                pages.append(img)
 
             if not pages:
                 raise ValueError("PDF sem páginas válidas.")
@@ -159,7 +515,8 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
         finally:
             doc.close()
     else:
-        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img = _abrir_imagem(data)
+        img, _ = _recortar_documento(img)
 
     max_side = 2800
     scale = min(1.0, max_side / max(img.width, img.height))
@@ -270,7 +627,7 @@ def _groq_call(image_bytes: bytes):
             }],
             "temperature": 0.0,
             "top_p": 0.8,
-            "max_completion_tokens": 420,
+            "max_completion_tokens": 560,
             "stream": False,
             "reasoning_effort": "none",
             "response_format": {"type": "json_object"},
@@ -558,6 +915,83 @@ def _parse_data_br(valor):
         return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
     except Exception:
         return None
+
+
+def _mrz_digito(campo):
+    """Dígito verificador padrão ICAO 9303 (pesos 7, 3, 1)."""
+    pesos = (7, 3, 1)
+    total = 0
+    for i, ch in enumerate(campo):
+        if ch.isdigit():
+            v = int(ch)
+        elif "A" <= ch <= "Z":
+            v = ord(ch) - 55
+        else:
+            v = 0
+        total += v * pesos[i % 3]
+    return str(total % 10)
+
+
+def _datas_mrz(texto):
+    """
+    Lê nascimento e validade da linha MRZ (CNH nova / CIN), ex.:
+    0306045F3112168BRA<<<<<<<<<<<6 -> nasc 04/06/2003, validade 16/12/2031.
+    Só devolve a data cujo dígito verificador confere.
+    """
+    bruto = str(texto or "").upper()
+    if "<" not in bruto:
+        return {}
+    limpo = re.sub(r"[^0-9A-Z<\n]", "", bruto.replace(" ", ""))
+    achados = {}
+    for linha in [limpo.replace("\n", "")] + limpo.split("\n"):
+        m = re.search(r"([0-9O]{6})([0-9O])([MFX<])([0-9O]{6})([0-9O])", linha)
+        if not m:
+            continue
+        nasc, dv_nasc, _sexo, venc, dv_venc = (
+            g.replace("O", "0") for g in m.groups()
+        )
+        hoje = date.today()
+        if _mrz_digito(nasc) == dv_nasc:
+            aa, mm, dd = int(nasc[:2]), int(nasc[2:4]), int(nasc[4:])
+            ano = 2000 + aa if aa <= hoje.year % 100 else 1900 + aa
+            try:
+                achados["data_nascimento"] = date(ano, mm, dd)
+            except ValueError:
+                pass
+        if _mrz_digito(venc) == dv_venc:
+            aa, mm, dd = int(venc[:2]), int(venc[2:4]), int(venc[4:])
+            try:
+                achados["validade"] = date(2000 + aa, mm, dd)
+            except ValueError:
+                pass
+        if achados:
+            break
+    return achados
+
+
+def _aplicar_mrz(resultado):
+    """
+    Confere nascimento e validade com a MRZ (sem chamada extra à Groq).
+    Se a MRZ tiver dígito verificador válido, ela prevalece sobre a leitura
+    do campo impresso. O sexo NÃO é alterado.
+    """
+    r = dict(resultado or {})
+    datas = _datas_mrz(r.get("mrz"))
+    for chave, valor in datas.items():
+        lido = _parse_data_br(r.get(chave))
+        if lido == valor:
+            continue
+        # Validade verdadeira lida no campo de EMISSÃO: as duas foram
+        # trocadas pela IA; devolve a emissão para o lugar certo.
+        if (
+            chave == "validade"
+            and lido
+            and _parse_data_br(r.get("data_emissao")) == valor
+        ):
+            r["data_emissao"] = f"{lido.day:02d}/{lido.month:02d}/{lido.year:04d}"
+        r[chave] = f"{valor.day:02d}/{valor.month:02d}/{valor.year:04d}"
+        print(f"[MRZ] {chave} conferido e ajustado pela MRZ", flush=True)
+    return r
 
 
 def _formatar_data_br(valor):
@@ -1191,6 +1625,9 @@ def ler():
         tempo_preparo = time.perf_counter() - t_preparo
 
         dados_raw, modelo, tempo_api = _groq_call(image_bytes)
+
+        # Confere nascimento/validade pela MRZ (rodapé '<<<'), quando houver.
+        dados_raw = _aplicar_mrz(dados_raw)
 
         # CNH: uma única chamada ao Groq para não estourar o limite gratuito.
         # A conferência final é feita localmente, sem consumir tokens.
