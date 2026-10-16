@@ -97,7 +97,7 @@
       font-weight: 700;
       margin-bottom: 5px;
     }
-    .campo input {
+    .campo input, .campo select {
       width: 100%;
       padding: 10px;
       border: 1px solid #9da9b5;
@@ -201,6 +201,18 @@
       <div class="campo" data-tipos="CNH RG CIN">
         <label>UF Emissão</label>
         <input id="uf" type="text">
+      </div>
+
+      <div class="campo" data-tipos="RG CIN">
+        <label>Órgão Emissor</label>
+        <select id="orgao">
+          <option value=""></option>
+          <option>SECRETARIA DE SEGURANÇA PÚBLICA</option>
+          <option>POLÍCIA CIVIL</option>
+          <option>SECRETARIA DEFESA SOCIAL</option>
+          <option>SECRETARIA DE ESTADO DA CASA CIVIL</option>
+          <option>OUTRO TIPO DE ÓRGÃO EMISSOR</option>
+        </select>
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
@@ -356,7 +368,7 @@
   const ids = [
     "documentoTipo","nome","cpf","rg","numero_cnh","uf","nascimento",
     "primeira","emissao","validade","sexo","nacionalidade","naturalidade",
-    "pai","mae"
+    "pai","mae","orgao"
   ];
 
   function setMensagem(texto, classe="muted") {
@@ -388,7 +400,7 @@
     data_primeira_habilitacao: "primeira", data_emissao: "emissao",
     validade: "validade", sexo: "sexo", nacionalidade: "nacionalidade",
     naturalidade_municipio: "naturalidade", naturalidade_uf: "naturalidade",
-    filiacao_1: "pai", filiacao_2: "mae"
+    filiacao_1: "pai", filiacao_2: "mae", orgao_emissor: "orgao"
   };
 
   function destacarIncertos(lista) {
@@ -463,6 +475,7 @@
     document.getElementById("naturalidade").value = d.naturalidade || "";
     document.getElementById("pai").value = d.filiacao1 || "";
     document.getElementById("mae").value = d.filiacao2 || "";
+    document.getElementById("orgao").value = d.orgao_sicaq || "";
     ajustarCampos(tipo);
     atualizarBotaoSicaq();
   }
@@ -528,9 +541,11 @@
       grau_instrucao: "ENSINO MÉDIO COMPLETO",
       tipo_documento: tipoSicaq,
       tipo_documento_origem: tipoOrigem,
+      // RG/CIN: envia o texto exato da opção do SICAQ escolhida na tela.
       orgao_emissor: tipoOrigem === "CNH"
         ? "ÓRGÃO DE TRÂNSITO"
-        : String((ultimoDados && ultimoDados.orgao_emissor) || "").toUpperCase(),
+        : (document.getElementById("orgao").value ||
+           String((ultimoDados && ultimoDados.orgao_emissor) || "").toUpperCase()),
       uf_emissao: (document.getElementById("uf").value || "").toUpperCase(),
       numero_cnh: document.getElementById("numero_cnh").value || "",
       data_primeira_habilitacao: document.getElementById("primeira").value || "",
@@ -737,8 +752,10 @@
 
   // Ao corrigir um campo amarelo, o destaque sai.
   ids.forEach(id => {
-    document.getElementById(id).addEventListener("input", (event) => {
-      event.target.classList.remove("destaque");
+    ["input", "change"].forEach(evento => {
+      document.getElementById(id).addEventListener(evento, (event) => {
+        event.target.classList.remove("destaque");
+      });
     });
   });
 

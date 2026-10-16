@@ -82,6 +82,8 @@ Regras:
 - sexo: MASCULINO ou FEMININO quando explicitamente identificável.
 - órgão/UF: SSP-SP => orgao_emissor SSP e uf_emissao SP.
 - Se aparecer IIRGD/IRGD em SP, mantenha a sigla em orgao_emissor; não converta aqui.
+- orgao_emissor: copie a sigla/nome do órgão exatamente como impresso
+  (ex.: SSP, IIRGD, SESP, SDS, SEDS, PC, PCMG, IFP, DETRAN, IGP, CASA CIVIL).
 - CNH: leia SEMPRE pelos RÓTULOS OFICIAIS, nunca apenas pela posição:
   * data_nascimento = somente a DATA do campo 3 "DATA, LOCAL E UF DE NASCIMENTO";
   * data_emissao = somente o campo 4a "DATA EMISSÃO";
@@ -1178,6 +1180,70 @@ def _normalizar_municipio_naturalidade(valor):
     texto = re.sub(r"^STO\.?\s+(?=[A-Z])", "SANTO ", texto)
     return texto
 
+# Opções do campo "Órgão Emissor" do SICAQ para RG/CIN (texto exato da lista).
+ORGAO_SSP = "SECRETARIA DE SEGURANÇA PÚBLICA"
+ORGAO_PC = "POLÍCIA CIVIL"
+ORGAO_SDS = "SECRETARIA DEFESA SOCIAL"
+ORGAO_CASA_CIVIL = "SECRETARIA DE ESTADO DA CASA CIVIL"
+ORGAO_OUTRO = "OUTRO TIPO DE ÓRGÃO EMISSOR"
+
+
+def _orgao_sicaq(orgao_bruto):
+    """
+    Converte o órgão expedidor lido no RG/CIN para a opção exata do SICAQ.
+    Devolve (opção, certeza). Sem certeza, o site mostra o campo em amarelo.
+    """
+    t = _tirar_acentos(str(orgao_bruto or "")).upper()
+    t = re.sub(r"[^A-Z0-9 /\-]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    # Tira a UF do final: SSP/SP, SSP-SP, SSP SP, PCMG -> PC.
+    sem_uf = re.sub(r"[\s/\-]+(" + "|".join(sorted(UFS_BR)) + r")$", "", t).strip()
+    s = sem_uf.replace(" ", "")
+    if not s:
+        return "", False
+
+    def tem(*termos):
+        return any(x in t for x in termos)
+
+    # Casa Civil
+    if tem("CASA CIVIL"):
+        return ORGAO_CASA_CIVIL, True
+    if s in ("SCC", "SECC", "SECCIVIL", "SECASACIVIL"):
+        return ORGAO_CASA_CIVIL, False
+    # Defesa Social (PE: SDS; MG: SEDS). SSPDS (CE) tem as duas palavras.
+    if s.startswith("SSPDS") or tem("SEGURANCA PUBLICA E DEFESA SOCIAL"):
+        return ORGAO_SSP, False
+    if s in ("SDS", "SEDS") or tem("DEFESA SOCIAL"):
+        return ORGAO_SDS, True
+    # Segurança Pública (inclui IIRGD/IRGD de SP e Instituto de Identificação).
+    if (
+        s.startswith(("SSP", "SESP", "SESEG", "SEJUSP", "SESDEC", "SSPTC"))
+        or s in ("IIRGD", "IRGD", "II", "IIPR", "IISP")
+        or tem("SEGURANCA PUBLICA", "INSTITUTO DE IDENTIFICACAO", "RICARDO GUMBLETON")
+    ):
+        return ORGAO_SSP, True
+    # Polícia Civil (PC, PCMG, PC/GO, PCIVIL, DGPC...).
+    if (
+        re.fullmatch(r"PC([A-Z]{2})?", s)
+        or s.startswith(("PCIVIL", "DGPC", "DPC"))
+        or tem("POLICIA CIVIL")
+    ):
+        return ORGAO_PC, True
+    if s in ("IFP", "DIC", "IPF"):
+        return ORGAO_PC, False
+    # Outros emissores (trânsito, perícia, forças armadas, conselhos, PF).
+    if s.startswith("DETRAN") or tem("TRANSITO"):
+        return ORGAO_OUTRO, True
+    if s.startswith(("MEX", "EB", "MAER", "COMAER", "MMA", "MD", "DPF", "PF", "OAB", "CR", "CO", "MTE")) or tem(
+        "EXERCITO", "MARINHA", "AERONAUTICA", "POLICIA FEDERAL", "CONSELHO", "ORDEM DOS ADVOGADOS"
+    ):
+        return ORGAO_OUTRO, True
+    if s.startswith(("IGP", "ITEP", "IPC")):
+        return ORGAO_OUTRO, False
+    # Sigla desconhecida: a opção mais comum, marcada para conferir.
+    return ORGAO_SSP, False
+
+
 def _normalizar_saida(d):
     d = _corrigir_datas_cnh(d)
     d = dict(d or {})
@@ -1211,6 +1277,13 @@ def _normalizar_saida(d):
         if nat_mun and "naturalidade_uf" not in incertos:
             incertos.append("naturalidade_uf")
 
+    # Órgão emissor do RG/CIN já no texto exato da opção do SICAQ.
+    orgao_sicaq = ""
+    if tipo in ("RG", "CIN"):
+        orgao_sicaq, certeza = _orgao_sicaq(d.get("orgao_emissor"))
+        if not certeza and "orgao_emissor" not in incertos:
+            incertos.append("orgao_emissor")
+
     return {
         "documento": tipo,
         "nome": _tirar_acentos(str(d.get("nome") or "").strip().upper()),
@@ -1218,6 +1291,7 @@ def _normalizar_saida(d):
         "rg": "".join(c for c in str(d.get("rg") or "").upper() if c.isalnum()),
         "numero_cnh": "".join(c for c in str(d.get("numero_cnh") or "") if c.isdigit()),
         "orgao_emissor": _tirar_acentos(str(d.get("orgao_emissor") or "").strip().upper()),
+        "orgao_sicaq": orgao_sicaq,
         "uf": _tirar_acentos(str(d.get("uf_emissao") or "").strip().upper()),
         "nascimento": _formatar_data_br(d.get("data_nascimento")),
         "primeira": _formatar_data_br(d.get("data_primeira_habilitacao")),
