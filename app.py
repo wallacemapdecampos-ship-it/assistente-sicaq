@@ -1876,6 +1876,141 @@ def ler_holerite():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# ============================================================
+# PIS / PASEP / NIS / NIT (extrato do FGTS, Carteira de Trabalho Digital,
+# Cartão Cidadão ou qualquer documento com o número escrito)
+# ============================================================
+
+PROMPT_PIS = """
+Encontre no documento o número do PIS/PASEP (também chamado NIS ou NIT).
+Ele tem 11 dígitos e costuma aparecer como 123.45678.90-1, perto de
+"PIS", "PASEP", "PIS/PASEP", "NIS" ou "NIT".
+Não confunda com CPF, CTPS, título de eleitor, conta, matrícula ou CNPJ.
+Responda SOMENTE JSON: {"pis": "somente dígitos ou vazio", "nome": "nome do titular, se aparecer"}.
+""".strip()
+
+
+def _pis_valido(pis):
+    """Confere o dígito verificador do PIS/PASEP/NIS (pesos 3,2,9,8,7,6,5,4,3,2)."""
+    p = re.sub(r"\D", "", str(pis or ""))
+    if len(p) != 11 or len(set(p)) == 1:
+        return False
+    pesos = (3, 2, 9, 8, 7, 6, 5, 4, 3, 2)
+    resto = 11 - sum(int(p[i]) * pesos[i] for i in range(10)) % 11
+    dv = 0 if resto in (10, 11) else resto
+    return dv == int(p[10])
+
+
+def _pis_do_texto(texto):
+    """
+    Acha o PIS no texto de um PDF digital (ex.: extrato do FGTS) sem usar a IA.
+    Só aceita número válido perto das palavras PIS/PASEP/NIS/NIT.
+    """
+    t = _tirar_acentos(str(texto or "")).upper()
+    numero = r"(\d{3}[.\s]?\d{5}[.\s]?\d{2}[\-.\s]?\d)"
+    achados = []
+    for m in re.finditer(r"\b(PIS|PASEP|NIS|NIT)\b", t):
+        trecho = t[m.end(): m.end() + 80]
+        n = re.search(numero, trecho)
+        if n:
+            digitos = re.sub(r"\D", "", n.group(1))
+            if _pis_valido(digitos) and digitos not in achados:
+                achados.append(digitos)
+    # Um único número válido: certeza. Vários diferentes: deixa para a IA.
+    return achados[0] if len(achados) == 1 else ""
+
+
+def _groq_json_imagem(prompt, image_bytes, max_tokens=120):
+    """Chamada curta à Groq: uma imagem + instrução, resposta em JSON."""
+    key = os.getenv("GROQ_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("GROQ_API_KEY não configurada no Render.")
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    model = os.getenv("GROQ_MODEL", "").strip() or "qwen/qwen3.8-27b"
+    payload = {
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ],
+        }],
+        "temperature": 0.0,
+        "max_completion_tokens": max_tokens,
+        "stream": False,
+        "reasoning_effort": "none",
+        "response_format": {"type": "json_object"},
+    }
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Assistente-SICAQ-PIS/1.0",
+        },
+        method="POST",
+    )
+    try:
+        t0 = time.perf_counter()
+        with urllib.request.urlopen(req, timeout=35) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        return json.loads(body["choices"][0]["message"]["content"]), time.perf_counter() - t0
+    except urllib.error.HTTPError as e:
+        detalhe = e.read().decode("utf-8", errors="replace")
+        if e.code == 429:
+            espera = ""
+            m = re.search(r"try again in\s+([0-9.]+)s", detalhe, re.I)
+            if m:
+                espera = f" Aguarde cerca de {float(m.group(1)):.0f} segundos e tente novamente."
+            raise GroqLimite("Limite gratuito do Groq atingido temporariamente." + espera)
+        raise RuntimeError(f"Groq HTTP {e.code}: {detalhe}")
+
+
+@app.post("/ler-pis")
+def ler_pis():
+    arquivo = request.files.get("file") or (request.files.getlist("files") or [None])[0]
+    if not arquivo or not (arquivo.filename or "").strip():
+        return jsonify({"ok": False, "error": "Arquivo do PIS não enviado."}), 400
+    data = arquivo.read()
+    if not data:
+        return jsonify({"ok": False, "error": "Arquivo vazio."}), 400
+    nome_arq = arquivo.filename or ""
+    mime = arquivo.mimetype or ""
+    inicio = time.perf_counter()
+
+    try:
+        # 1) PDF digital (ex.: extrato do FGTS): lê o texto, sem gastar IA.
+        if PathLikeSuffix(nome_arq) == ".pdf" or mime == "application/pdf":
+            texto = _pdf_texto_holerite(data)
+            pis = _pis_do_texto(texto)
+            if pis:
+                print("[PIS] encontrado no texto do PDF (sem IA)", flush=True)
+                return jsonify({
+                    "ok": True, "pis": pis, "valido": True, "nome": "",
+                    "fonte": "texto", "tempo_total": round(time.perf_counter() - inicio, 3),
+                })
+
+        # 2) Foto/print ou PDF escaneado: leitura curta da IA.
+        imagem = _combinar_arquivos_identificacao(
+            [{"data": data, "filename": nome_arq, "mimetype": mime}]
+        )
+        resultado, tempo_api = _groq_json_imagem(PROMPT_PIS, imagem)
+        pis = re.sub(r"\D", "", str(resultado.get("pis") or ""))
+        nome = _tirar_acentos(str(resultado.get("nome") or "").strip().upper())
+        print(f"[PIS] lido pela IA; valido={_pis_valido(pis)}", flush=True)
+        return jsonify({
+            "ok": True, "pis": pis, "valido": _pis_valido(pis), "nome": nome,
+            "fonte": "ia", "tempo_api": round(tempo_api, 3),
+            "tempo_total": round(time.perf_counter() - inicio, 3),
+        })
+    except GroqLimite as e:
+        return jsonify({"ok": False, "error": str(e)}), 429
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.get("/health")
 def health():
     return jsonify({

@@ -88,6 +88,17 @@
     .campo {
       grid-column: span 3;
     }
+    .pisbar {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d5dde5;
+    }
+    .pisbar label { font-size: 13px; font-weight: 700; }
+    .pisbar #pis {
+      padding: 8px 10px; border: 1px solid #9da9b5; border-radius: 3px;
+      background: #f1faf3; font-size: 15px; width: 170px;
+    }
+    .pisbar button { padding: 9px 16px; }
+    #msgPis { font-size: 13px; font-weight: 700; }
     .nat { display: flex; gap: 8px; }
     .nat #natUf { flex: 0 0 86px; width: 86px; }
     .nat #naturalidade { flex: 1 1 auto; min-width: 0; }
@@ -168,6 +179,14 @@
 
     <div id="mensagem" class="muted">
       Aguarde a conexão com o servidor.
+    </div>
+
+    <div class="pisbar">
+      <label for="pis">PIS/NIS (opcional)</label>
+      <input type="file" id="pisArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp">
+      <button id="btnLerPis" type="button" class="secondary">LER PIS</button>
+      <input id="pis" type="text" inputmode="numeric" maxlength="14" placeholder="ou digite o PIS">
+      <span id="msgPis" class="muted">Extrato do FGTS, Carteira de Trabalho Digital ou documento com o nº do PIS.</span>
     </div>
   </div>
 
@@ -526,6 +545,87 @@
     return saida.join(" ");
   }
 
+  // ---------- PIS/NIS (opcional) ----------
+  function pisDigitos() {
+    return String(document.getElementById("pis").value || "").replace(/\D/g, "");
+  }
+
+  function pisValido(valor) {
+    const p = String(valor || "").replace(/\D/g, "");
+    if (p.length !== 11 || /^(\d)\1+$/.test(p)) return false;
+    const pesos = [3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    let soma = 0;
+    for (let i = 0; i < 10; i++) soma += Number(p[i]) * pesos[i];
+    const resto = 11 - (soma % 11);
+    const dv = (resto === 10 || resto === 11) ? 0 : resto;
+    return dv === Number(p[10]);
+  }
+
+  function setMsgPis(texto, classe = "muted") {
+    const el = document.getElementById("msgPis");
+    el.textContent = texto;
+    el.className = classe;
+  }
+
+  function limparPis() {
+    const campo = document.getElementById("pis");
+    campo.value = "";
+    campo.classList.remove("destaque");
+    document.getElementById("pisArquivo").value = "";
+    setMsgPis("Extrato do FGTS, Carteira de Trabalho Digital ou documento com o nº do PIS.");
+  }
+
+  // Compara o nome do documento do PIS com o da identidade (1º e último nome).
+  function mesmoTitular(nomePis, nomeDoc) {
+    const partes = (x) => semAcentos(x).toUpperCase().replace(/[^A-Z ]/g, " ").split(/\s+/).filter(Boolean);
+    const a = partes(nomePis), b = partes(nomeDoc);
+    if (!a.length || !b.length) return true;
+    return a[0] === b[0] && a[a.length - 1] === b[b.length - 1];
+  }
+
+  async function lerPis() {
+    const input = document.getElementById("pisArquivo");
+    const btn = document.getElementById("btnLerPis");
+    const campo = document.getElementById("pis");
+    if (!input.files.length) {
+      setMsgPis("Escolha o arquivo do PIS (extrato do FGTS, print da Carteira de Trabalho...).", "erro");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "LENDO...";
+    setMsgPis("Procurando o número do PIS...", "warn");
+    const form = new FormData();
+    form.append("file", input.files[0]);
+    try {
+      const resp = await fetch(API + "/ler-pis", { method: "POST", body: form });
+      let data;
+      try { data = await resp.json(); } catch { throw new Error("Resposta inválida do servidor."); }
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Falha na leitura do PIS.");
+      campo.value = data.pis || "";
+      campo.classList.remove("destaque");
+      const nomeDoc = document.getElementById("nome").value || "";
+      if (!data.pis) {
+        campo.classList.add("destaque");
+        setMsgPis("Não encontrei o número do PIS nesse arquivo. Digite manualmente, se tiver.", "erro");
+      } else if (!data.valido) {
+        campo.classList.add("destaque");
+        setMsgPis("O PIS lido não confere (dígito verificador). Confira no documento e corrija.", "erro");
+      } else if (data.nome && nomeDoc && !mesmoTitular(data.nome, nomeDoc)) {
+        campo.classList.add("destaque");
+        setMsgPis(`Atenção: o PIS é de ${data.nome}, nome diferente do documento lido.`, "warn");
+      } else {
+        setMsgPis(data.fonte === "texto"
+          ? "PIS encontrado no PDF (sem usar a IA)."
+          : "PIS lido. Confira antes de preencher.", "ok");
+      }
+    } catch (e) {
+      setMsgPis("Erro: " + (e.message || e), "erro");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "LER PIS";
+    }
+  }
+
   // ---------- Naturalidade: UF + município (lista oficial do IBGE) ----------
   const UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG",
                "PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
@@ -626,6 +726,7 @@
       data_emissao: document.getElementById("emissao").value || "",
       validade: document.getElementById("validade").value || "",
       numero_identidade: numeroIdentidade,
+      pis: pisValido(pisDigitos()) ? pisDigitos() : "",
       checkboxes: [
         "Movimentação de Conta de Depósito/Poupança",
         "Empréstimos/Financiamentos",
@@ -643,6 +744,12 @@
     const tipo = (document.getElementById("documentoTipo").value || "").trim();
     if (!tipo) {
       setMensagem("Leia um documento antes de preencher o SICAQ.", "erro");
+      return;
+    }
+    // PIS é opcional, mas se estiver preenchido precisa ser válido.
+    if (pisDigitos() && !pisValido(pisDigitos())) {
+      document.getElementById("pis").classList.add("destaque");
+      setMensagem("O PIS/NIS informado não é válido. Corrija ou apague o campo PIS antes de preencher.", "erro");
       return;
     }
 
@@ -849,10 +956,20 @@
     atualizarBotaoSicaq();
   });
 
+  document.getElementById("btnLerPis").addEventListener("click", lerPis);
+  document.getElementById("pis").addEventListener("input", (event) => {
+    event.target.classList.remove("destaque");
+    const d = pisDigitos();
+    if (d.length === 11) {
+      setMsgPis(pisValido(d) ? "PIS válido." : "PIS não confere (dígito verificador).", pisValido(d) ? "ok" : "erro");
+    }
+  });
+
   document.getElementById("btnLer").addEventListener("click", lerDocumento);
   document.getElementById("btnSicaq").addEventListener("click", preencherSicaq);
   document.getElementById("documento").addEventListener("change", (event) => {
     limparCampos();
+    limparPis();
     ajustarCampos("");
 
     const qtd = event.target.files.length;
