@@ -178,7 +178,12 @@
     <div class="grid">
       <div class="campo" data-tipos="CNH RG CIN">
         <label>Documento</label>
-        <input id="documentoTipo" type="text">
+        <select id="documentoTipo">
+          <option value=""></option>
+          <option>CNH</option>
+          <option>RG</option>
+          <option>CIN</option>
+        </select>
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
@@ -411,7 +416,8 @@
     data_primeira_habilitacao: "primeira", data_emissao: "emissao",
     validade: "validade", sexo: "sexo", nacionalidade: "nacionalidade",
     naturalidade_municipio: "naturalidade", naturalidade_uf: "natUf",
-    filiacao_1: "pai", filiacao_2: "mae", orgao_emissor: "orgao"
+    filiacao_1: "pai", filiacao_2: "mae", orgao_emissor: "orgao",
+    tipo_documento: "documentoTipo"
   };
 
   function destacarIncertos(lista) {
@@ -448,7 +454,7 @@
 
     document.querySelectorAll(".campo[data-tipos]").forEach(el => {
       const tipos = el.dataset.tipos.split(/\s+/);
-      el.style.display = (t && tipos.includes(t)) ? "" : "none";
+      el.style.display = (t === "TODOS" || (t && tipos.includes(t))) ? "" : "none";
 
       const input = el.querySelector("input, select");
       if (t === "CNH" && input) {
@@ -460,7 +466,9 @@
 
     const titulo = document.getElementById("tipoDetectado");
     if (t) {
-      titulo.textContent = "Tipo identificado pelo Qwen: " + t;
+      titulo.textContent = t === "TODOS"
+        ? "Tipo do documento não identificado: escolha CNH, RG ou CIN no campo Documento."
+        : "Tipo identificado pelo Qwen: " + t;
       titulo.style.display = "block";
     } else {
       titulo.textContent = "";
@@ -471,7 +479,8 @@
   function preencher(d) {
     ultimoDados = {...(d || {})};
     const tipo = (d.documento || "").toUpperCase();
-    document.getElementById("documentoTipo").value = tipo;
+    const tipoOk = ["CNH", "RG", "CIN"].includes(tipo);
+    document.getElementById("documentoTipo").value = tipoOk ? tipo : "";
     document.getElementById("nome").value = d.nome || "";
     document.getElementById("cpf").value = d.cpf || "";
     document.getElementById("rg").value = d.rg || "";
@@ -495,7 +504,7 @@
     document.getElementById("pai").value = d.filiacao1 || "";
     document.getElementById("mae").value = d.filiacao2 || "";
     document.getElementById("orgao").value = d.orgao_sicaq || "";
-    ajustarCampos(tipo);
+    ajustarCampos(tipoOk ? tipo : "TODOS");
     atualizarBotaoSicaq();
   }
 
@@ -828,6 +837,15 @@
         event.target.classList.remove("destaque");
       });
     });
+  });
+
+  document.getElementById("documentoTipo").addEventListener("change", (event) => {
+    ajustarCampos(event.target.value || "TODOS");
+    if (event.target.value) {
+      document.getElementById("tipoDetectado").textContent =
+        "Tipo escolhido manualmente: " + event.target.value;
+    }
+    atualizarBotaoSicaq();
   });
 
   document.getElementById("btnLer").addEventListener("click", lerDocumento);

@@ -1043,6 +1043,36 @@ def _aplicar_mrz(resultado):
     return r
 
 
+def _tipo_documento(d):
+    """
+    Padroniza o tipo para CNH, RG ou CIN.
+    Devolve (tipo, deduzido): deduzido=True quando veio dos campos lidos,
+    e não do tipo informado pela IA.
+    """
+    t = _tirar_acentos(str(d.get("tipo_documento") or "")).upper()
+    t = re.sub(r"[^A-Z ]", " ", t)
+    palavras = set(t.split())
+    if "CNH" in palavras or "HABILITACAO" in t or "DRIVER" in t:
+        return "CNH", False
+    if "CIN" in palavras or "IDENTIDADE NACIONAL" in t:
+        return "CIN", False
+    if palavras & {"RG", "IDENTIDADE", "REGISTRO"} or "REGISTRO GERAL" in t:
+        return "RG", False
+
+    # A IA não informou um tipo conhecido: deduz pelos campos.
+    numero_cnh = re.sub(r"\D", "", str(d.get("numero_cnh") or ""))
+    if len(numero_cnh) == 11 or str(d.get("data_primeira_habilitacao") or "").strip():
+        return "CNH", True
+    modelo = str(d.get("modelo_documento") or "").strip().upper()
+    cpf = re.sub(r"\D", "", str(d.get("cpf") or ""))
+    rg = re.sub(r"[^0-9A-Za-z]", "", str(d.get("rg") or ""))
+    if modelo.startswith("NOV") and len(cpf) == 11:
+        return "CIN", True
+    if rg or len(cpf) == 11:
+        return "RG", True
+    return "", True
+
+
 def _cnh_registro_valido(numero):
     """
     Confere os 2 dígitos verificadores do Nº de registro da CNH (11 dígitos),
@@ -1880,6 +1910,15 @@ def ler():
         tempo_preparo = time.perf_counter() - t_preparo
 
         dados_raw, modelo, tempo_api = _groq_call(image_bytes)
+
+        # Tipo do documento sempre como CNH, RG ou CIN (ou vazio se não der).
+        tipo_lido = str(dados_raw.get("tipo_documento") or "")
+        tipo, deduzido = _tipo_documento(dados_raw)
+        dados_raw["tipo_documento"] = tipo
+        if deduzido or not tipo:
+            dados_raw["campos_incertos"] = list(dados_raw.get("campos_incertos") or []) + ["tipo_documento"]
+        # Só o rótulo do tipo vai para o log (nenhum dado pessoal).
+        print(f"[LER] tipo lido={tipo_lido[:40]!r} -> {tipo or 'NAO IDENTIFICADO'}", flush=True)
 
         # Confere nascimento/validade pela MRZ (rodapé '<<<'), quando houver.
         dados_raw = _aplicar_mrz(dados_raw)
