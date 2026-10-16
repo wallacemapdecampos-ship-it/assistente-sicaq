@@ -88,6 +88,9 @@
     .campo {
       grid-column: span 3;
     }
+    .nat { display: flex; gap: 8px; }
+    .nat #natUf { flex: 0 0 86px; width: 86px; }
+    .nat #naturalidade { flex: 1 1 auto; min-width: 0; }
     .campo.cnh-terco {
       grid-column: span 2;
     }
@@ -247,7 +250,10 @@
 
       <div class="campo" data-tipos="CNH RG CIN">
         <label>Naturalidade</label>
-        <input id="naturalidade" type="text">
+        <div class="nat">
+          <select id="natUf" aria-label="UF de nascimento"></select>
+          <select id="naturalidade" aria-label="Município de nascimento"></select>
+        </div>
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
@@ -368,7 +374,7 @@
   const ids = [
     "documentoTipo","nome","cpf","rg","numero_cnh","uf","nascimento",
     "primeira","emissao","validade","sexo","nacionalidade","naturalidade",
-    "pai","mae","orgao"
+    "pai","mae","orgao","natUf"
   ];
 
   function setMensagem(texto, classe="muted") {
@@ -389,6 +395,7 @@
       el.value = "";
       el.classList.remove("destaque");
     });
+    montarCidades("", "");
     ultimoDados = null;
     atualizarBotaoSicaq();
   }
@@ -399,7 +406,7 @@
     uf_emissao: "uf", data_nascimento: "nascimento",
     data_primeira_habilitacao: "primeira", data_emissao: "emissao",
     validade: "validade", sexo: "sexo", nacionalidade: "nacionalidade",
-    naturalidade_municipio: "naturalidade", naturalidade_uf: "naturalidade",
+    naturalidade_municipio: "naturalidade", naturalidade_uf: "natUf",
     filiacao_1: "pai", filiacao_2: "mae", orgao_emissor: "orgao"
   };
 
@@ -429,7 +436,7 @@
       primeira: 7,
       nacionalidade: 8,
       emissao: 9,
-      naturalidade: 10,
+      natUf: 10,
       validade: 11,
       pai: 12,
       mae: 13
@@ -439,7 +446,7 @@
       const tipos = el.dataset.tipos.split(/\s+/);
       el.style.display = (t && tipos.includes(t)) ? "" : "none";
 
-      const input = el.querySelector("input");
+      const input = el.querySelector("input, select");
       if (t === "CNH" && input) {
         el.style.order = String(ordemCNH[input.id] || 50);
       } else {
@@ -472,7 +479,9 @@
     document.getElementById("validade").value = d.validade || "";
     document.getElementById("sexo").value = d.sexo || "";
     document.getElementById("nacionalidade").value = d.nacionalidade || "";
-    document.getElementById("naturalidade").value = d.naturalidade || "";
+    const natLida = separarNaturalidade(d.naturalidade || "");
+    document.getElementById("natUf").value = UFS.includes(natLida.uf) ? natLida.uf : "";
+    montarCidades(document.getElementById("natUf").value, natLida.municipio);
     document.getElementById("pai").value = d.filiacao1 || "";
     document.getElementById("mae").value = d.filiacao2 || "";
     document.getElementById("orgao").value = d.orgao_sicaq || "";
@@ -498,6 +507,47 @@
     return saida.join(" ");
   }
 
+  // ---------- Naturalidade: UF + município (lista oficial do IBGE) ----------
+  const UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG",
+               "PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
+  let MUNICIPIOS = null;
+
+  function novaOpcao(valor, texto) {
+    const o = document.createElement("option");
+    o.value = valor;
+    o.textContent = texto === undefined ? valor : texto;
+    return o;
+  }
+
+  function montarUfs() {
+    const sel = document.getElementById("natUf");
+    sel.innerHTML = "";
+    sel.append(novaOpcao("", ""));
+    UFS.forEach(uf => sel.append(novaOpcao(uf)));
+  }
+
+  function montarCidades(uf, cidade) {
+    const sel = document.getElementById("naturalidade");
+    const lista = (MUNICIPIOS && MUNICIPIOS[uf]) || [];
+    const alvo = String(cidade || "").toUpperCase().trim();
+    sel.innerHTML = "";
+    sel.append(novaOpcao("", ""));
+    // Cidade lida que não está na lista: fica no topo para conferir.
+    if (alvo && !lista.includes(alvo)) sel.append(novaOpcao(alvo));
+    lista.forEach(c => sel.append(novaOpcao(c)));
+    sel.value = alvo;
+  }
+
+  async function carregarMunicipios() {
+    try {
+      const resp = await fetch("municipios.json", { cache: "force-cache" });
+      if (resp.ok) MUNICIPIOS = await resp.json();
+    } catch (_) {}
+    // Se um documento já foi lido, refaz a lista mantendo a cidade escolhida.
+    const uf = document.getElementById("natUf").value;
+    if (uf) montarCidades(uf, document.getElementById("naturalidade").value);
+  }
+
   function separarNaturalidade(valor) {
     const v = String(valor || "").trim().toUpperCase();
     if (!v) return { municipio: "", uf: "" };
@@ -511,7 +561,11 @@
 
   function montarPayloadSicaq() {
     const tipoOrigem = (document.getElementById("documentoTipo").value || "").trim().toUpperCase();
-    const nat = separarNaturalidade(document.getElementById("naturalidade").value);
+    // Naturalidade: UF e município escolhidos nas caixas (lista oficial do IBGE).
+    const nat = {
+      uf: document.getElementById("natUf").value || "",
+      municipio: document.getElementById("naturalidade").value || ""
+    };
     const modelo = String((ultimoDados && ultimoDados.modelo_documento) || "").toUpperCase();
     const cpf = (document.getElementById("cpf").value || "").replace(/\D/g, "");
     const rg = (document.getElementById("rg").value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -926,6 +980,12 @@
     }
   });
 
+  montarUfs();
+  montarCidades("", "");
+  document.getElementById("natUf").addEventListener("change", (event) => {
+    montarCidades(event.target.value, "");
+  });
+  carregarMunicipios();
   ajustarCampos("");
   checarServidor();
   pingExtensao();

@@ -1180,6 +1180,74 @@ def _normalizar_municipio_naturalidade(valor):
     texto = re.sub(r"^STO\.?\s+(?=[A-Z])", "SANTO ", texto)
     return texto
 
+# ============================================================
+# MUNICÍPIOS OFICIAIS (IBGE) — municipios.json, o mesmo usado pelo site
+# ============================================================
+_MUNICIPIOS = None
+
+
+def _chave_cidade(nome):
+    """Forma de comparação: sem acento, maiúscula, sem apóstrofo/hífen."""
+    t = _tirar_acentos(str(nome or "")).upper()
+    t = re.sub(r"[^A-Z0-9 ]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _municipios():
+    """{UF: {chave: NOME OFICIAL}} carregado uma vez."""
+    global _MUNICIPIOS
+    if _MUNICIPIOS is None:
+        try:
+            caminho = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "municipios.json"
+            )
+            with open(caminho, encoding="utf-8") as f:
+                dados = json.load(f)
+            _MUNICIPIOS = {
+                uf: {_chave_cidade(n): n for n in lista}
+                for uf, lista in dados.items() if uf in UFS_BR
+            }
+        except Exception:
+            _MUNICIPIOS = {}
+    return _MUNICIPIOS
+
+
+def _municipio_oficial(nome, uf):
+    """
+    Confere a cidade lida com a lista oficial do estado.
+    Devolve (nome_oficial, uf, certeza):
+    - achou igual: nome oficial, certeza;
+    - parecido (erro de leitura/abreviação): corrige, mas sem certeza;
+    - sem UF: procura no Brasil todo; se a cidade só existe em um estado,
+      usa esse estado, sem certeza;
+    - não achou: mantém o lido, sem certeza.
+    """
+    base = _municipios()
+    if not base or not nome:
+        return nome, uf, True
+    chave = _chave_cidade(nome)
+
+    if uf in base:
+        cidades = base[uf]
+        if chave in cidades:
+            return cidades[chave], uf, True
+        import difflib
+        notas = sorted(
+            ((difflib.SequenceMatcher(None, chave, c).ratio(), c) for c in cidades),
+            reverse=True,
+        )
+        if notas and notas[0][0] >= 0.85 and (
+            len(notas) == 1 or notas[0][0] - notas[1][0] >= 0.03
+        ):
+            return cidades[notas[0][1]], uf, False
+        return nome, uf, False
+
+    achados = [(u, c[chave]) for u, c in base.items() if chave in c]
+    if len(achados) == 1:
+        return achados[0][1], achados[0][0], False
+    return nome, uf, False
+
+
 # Opções do campo "Órgão Emissor" do SICAQ para RG/CIN (texto exato da lista).
 ORGAO_SSP = "SECRETARIA DE SEGURANÇA PÚBLICA"
 ORGAO_PC = "POLÍCIA CIVIL"
@@ -1270,6 +1338,17 @@ def _normalizar_saida(d):
     # O site separa pela barra e envia à extensão o município (sem UF)
     # e a UF em campos próprios, como o SICAQ exige.
     incertos = list(d.get("campos_incertos") or [])
+
+    # Confere a cidade com a lista oficial do IBGE (a mesma da caixa do site).
+    if nat_mun:
+        uf_lida = nat_uf
+        nat_mun, nat_uf, certeza = _municipio_oficial(nat_mun, nat_uf)
+        nat_uf = nat_uf or ""
+        if not certeza and "naturalidade_municipio" not in incertos:
+            incertos.append("naturalidade_municipio")
+        if nat_uf and not uf_lida and "naturalidade_uf" not in incertos:
+            incertos.append("naturalidade_uf")  # UF deduzida pela cidade
+
     if nat_mun and nat_uf:
         naturalidade = f"{nat_mun}/{nat_uf}"
     else:
