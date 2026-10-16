@@ -472,24 +472,36 @@ def _pdf_pagina_para_imagem(page):
     pix = page.get_pixmap(matrix=pymupdf.Matrix(2.2, 2.2), alpha=False)
     img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB").copy()
 
-    # PDF escaneado (uma foto/scan ocupando a página, sem texto digital):
-    # trata como foto e tenta recortar o documento.
+    # PDF de foto/scan (uma imagem ocupando a página): trata como foto e tenta
+    # recortar o documento. Vale mesmo com camada de texto escondida (OCR de
+    # aplicativos de digitalização). PDFs digitais (CNH/CIN do gov.br) têm
+    # várias imagens pequenas e não entram aqui.
     pode_recortar = False
     try:
-        texto = (page.get_text("text") or "").strip()
         area_pag = page.rect.width * page.rect.height
         grandes = [
             i for i in page.get_image_info()
             if (pymupdf.Rect(i["bbox"]) & page.rect).get_area() >= 0.6 * area_pag
         ]
-        pode_recortar = len(texto) < 50 and len(grandes) >= 1
+        pode_recortar = len(grandes) >= 1
     except Exception:
         pode_recortar = False
     return img, pode_recortar
 
 
 def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
+    img, _ = _preparar_imagem(data, filename, mimetype)
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=91)
+    return out.getvalue()
+
+
+def _preparar_imagem(data: bytes, filename: str, mimetype: str):
     """
+    Devolve (imagem, em_pe). em_pe=True quando o documento recortado ficou
+    mais alto que largo: CNH, RG e CIN são "deitados" (paisagem), então ele
+    foi fotografado de lado e precisa ser girado.
+
     Prioriza precisão de leitura para CNH/RG/CIN:
     - foto: corrige a rotação do celular e recorta/endireita o documento;
     - PDF digital: usa só a área do cartão (sem cabeçalho e QR code);
@@ -498,6 +510,7 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
     ext = PathLikeSuffix(filename)
     is_pdf = ext == ".pdf" or mimetype == "application/pdf"
 
+    em_pe = False
     if is_pdf:
         doc = pymupdf.open(stream=data, filetype="pdf")
         try:
@@ -505,8 +518,12 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
             for i in range(min(2, len(doc))):
                 img, pode_recortar = _pdf_pagina_para_imagem(doc[i])
                 if pode_recortar:
-                    img, _ = _recortar_documento(img)
+                    img, info = _recortar_documento(img)
+                    if info.startswith("recortado") and img.height > 1.15 * img.width:
+                        em_pe = True
                 pages.append(img)
+            if len(pages) > 1:
+                em_pe = False
 
             if not pages:
                 raise ValueError("PDF sem páginas válidas.")
@@ -529,7 +546,8 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
             doc.close()
     else:
         img = _abrir_imagem(data)
-        img, _ = _recortar_documento(img)
+        img, info = _recortar_documento(img)
+        em_pe = info.startswith("recortado") and img.height > 1.15 * img.width
 
     max_side = 2800
     scale = min(1.0, max_side / max(img.width, img.height))
@@ -541,10 +559,41 @@ def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
             ),
             Image.Resampling.LANCZOS,
         )
+    return img, em_pe
 
+
+def _jpeg_para_ia(img):
+    """Mesmo tamanho/qualidade usados no envio de 1 arquivo."""
+    max_w = 1650
+    if img.width > max_w:
+        img = img.resize(
+            (max_w, max(1, int(img.height * max_w / img.width))),
+            Image.Resampling.LANCZOS,
+        )
     out = io.BytesIO()
-    img.save(out, format="JPEG", quality=91)
+    img.convert("RGB").save(out, format="JPEG", quality=91)
     return out.getvalue()
+
+
+def _imagens_para_ia(arquivos):
+    """
+    Lista de imagens para a IA.
+    - Normal: 1 imagem (1 ou 2 arquivos combinados).
+    - Documento fotografado de lado (1 arquivo): 2 imagens, giradas para um
+      lado e para o outro; a IA lê a que estiver na posição certa.
+      Custa 1 imagem a mais (2.048 tokens) só nesses casos.
+    """
+    if len(arquivos) == 1:
+        a = arquivos[0]
+        img, em_pe = _preparar_imagem(a["data"], a["filename"], a["mimetype"])
+        if em_pe:
+            print("[LER] documento de lado: enviando 2 orientações", flush=True)
+            return [
+                _jpeg_para_ia(img.rotate(-90, expand=True)),
+                _jpeg_para_ia(img.rotate(90, expand=True)),
+            ]
+        return [_jpeg_para_ia(img)]
+    return [_combinar_arquivos_identificacao(arquivos)]
 
 
 def _combinar_arquivos_identificacao(arquivos):
@@ -615,12 +664,24 @@ def PathLikeSuffix(name: str) -> str:
     return name[dot:] if dot >= 0 else ""
 
 
-def _groq_call(image_bytes: bytes):
+def _groq_call(image_bytes):
+    """image_bytes: uma imagem (bytes) ou uma lista com 1 ou 2 imagens."""
     key = os.getenv("GROQ_API_KEY", "").strip()
     if not key:
         raise RuntimeError("GROQ_API_KEY não configurada no Render.")
 
-    b64 = base64.b64encode(image_bytes).decode("ascii")
+    imagens = image_bytes if isinstance(image_bytes, list) else [image_bytes]
+    conteudo = [{"type": "text", "text": PROMPT}]
+    if len(imagens) > 1:
+        conteudo.append({"type": "text", "text": (
+            "ATENÇÃO: as 2 imagens a seguir são o MESMO documento, giradas em "
+            "sentidos opostos (uma delas está de cabeça para baixo). Leia os "
+            "dados na imagem em que o texto está na posição normal de leitura."
+        )})
+    for img in imagens:
+        conteudo.append({"type": "image_url", "image_url": {
+            "url": "data:image/jpeg;base64," + base64.b64encode(img).decode("ascii")
+        }})
     models = [
         os.getenv("GROQ_MODEL", "").strip(),
         "qwen/qwen3.8-27b",
@@ -631,13 +692,7 @@ def _groq_call(image_bytes: bytes):
     for model in models:
         payload = {
             "model": model,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": PROMPT},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                ],
-            }],
+            "messages": [{"role": "user", "content": conteudo}],
             "temperature": 0.0,
             "top_p": 0.8,
             "max_completion_tokens": 560,
@@ -1064,7 +1119,13 @@ def _tipo_documento(d):
     t = _tirar_acentos(str(d.get("tipo_documento") or "")).upper()
     t = re.sub(r"[^A-Z ]", " ", t)
     palavras = set(t.split())
+    numero_cnh = re.sub(r"\D", "", str(d.get("numero_cnh") or ""))
+    rg = re.sub(r"[^0-9A-Za-z]", "", str(d.get("rg") or ""))
+    tem_dados_cnh = len(numero_cnh) == 11 or bool(str(d.get("data_primeira_habilitacao") or "").strip())
     if "CNH" in palavras or "HABILITACAO" in t or "DRIVER" in t:
+        # "CNH" sem nenhum dado de CNH, mas com número de RG: é RG.
+        if not tem_dados_cnh and rg:
+            return "RG", True
         return "CNH", False
     if "CIN" in palavras or "IDENTIDADE NACIONAL" in t:
         return "CIN", False
@@ -1072,12 +1133,10 @@ def _tipo_documento(d):
         return "RG", False
 
     # A IA não informou um tipo conhecido: deduz pelos campos.
-    numero_cnh = re.sub(r"\D", "", str(d.get("numero_cnh") or ""))
-    if len(numero_cnh) == 11 or str(d.get("data_primeira_habilitacao") or "").strip():
+    if tem_dados_cnh:
         return "CNH", True
     modelo = str(d.get("modelo_documento") or "").strip().upper()
     cpf = re.sub(r"\D", "", str(d.get("cpf") or ""))
-    rg = re.sub(r"[^0-9A-Za-z]", "", str(d.get("rg") or ""))
     if modelo.startswith("NOV") and len(cpf) == 11:
         return "CIN", True
     if rg or len(cpf) == 11:
@@ -2058,7 +2117,7 @@ def ler():
     start = time.perf_counter()
     try:
         t_preparo = time.perf_counter()
-        image_bytes = _combinar_arquivos_identificacao(arquivos)
+        image_bytes = _imagens_para_ia(arquivos)
         tempo_preparo = time.perf_counter() - t_preparo
 
         dados_raw, modelo, tempo_api = _groq_call(image_bytes)
@@ -2071,6 +2130,14 @@ def ler():
             dados_raw["campos_incertos"] = list(dados_raw.get("campos_incertos") or []) + ["tipo_documento"]
         # Só o rótulo do tipo vai para o log (nenhum dado pessoal).
         print(f"[LER] tipo lido={tipo_lido[:40]!r} -> {tipo or 'NAO IDENTIFICADO'}", flush=True)
+
+        # RG/CIN: validade igual à emissão é cópia errada (RG antigo nem tem).
+        if tipo in ("RG", "CIN"):
+            emissao_d = _parse_data_br(dados_raw.get("data_emissao"))
+            if emissao_d and _parse_data_br(dados_raw.get("validade")) == emissao_d:
+                dados_raw["validade"] = ""
+                if tipo == "CIN":
+                    dados_raw["campos_incertos"] = list(dados_raw.get("campos_incertos") or []) + ["validade"]
 
         # Confere nascimento/validade pela MRZ (rodapé '<<<'), quando houver.
         dados_raw = _aplicar_mrz(dados_raw)
