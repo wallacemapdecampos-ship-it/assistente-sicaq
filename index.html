@@ -240,7 +240,11 @@
 
       <div class="campo" data-tipos="CNH RG CIN">
         <label>Sexo</label>
-        <input id="sexo" type="text">
+        <select id="sexo">
+          <option value=""></option>
+          <option>MASCULINO</option>
+          <option>FEMININO</option>
+        </select>
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
@@ -477,7 +481,13 @@
     document.getElementById("primeira").value = d.primeira || "";
     document.getElementById("emissao").value = d.emissao || "";
     document.getElementById("validade").value = d.validade || "";
-    document.getElementById("sexo").value = d.sexo || "";
+    // Sexo: só MASCULINO/FEMININO; outro valor fica vazio e em amarelo.
+    const sexoLido = String(d.sexo || "").toUpperCase().trim();
+    const sexoOk = sexoLido === "MASCULINO" || sexoLido === "FEMININO";
+    document.getElementById("sexo").value = sexoOk ? sexoLido : "";
+    if (!sexoOk) {
+      d.campos_incertos = (d.campos_incertos || []).concat(["sexo"]);
+    }
     document.getElementById("nacionalidade").value = d.nacionalidade || "";
     const natLida = separarNaturalidade(d.naturalidade || "");
     document.getElementById("natUf").value = UFS.includes(natLida.uf) ? natLida.uf : "";
