@@ -372,9 +372,36 @@
   }
 
   function limparCampos() {
-    ids.forEach(id => document.getElementById(id).value = "");
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      el.value = "";
+      el.classList.remove("destaque");
+    });
     ultimoDados = null;
     atualizarBotaoSicaq();
+  }
+
+  // Campos que o servidor marcou como duvidosos -> campo da tela.
+  const campoIncerto = {
+    nome: "nome", cpf: "cpf", rg: "rg", numero_cnh: "numero_cnh",
+    uf_emissao: "uf", data_nascimento: "nascimento",
+    data_primeira_habilitacao: "primeira", data_emissao: "emissao",
+    validade: "validade", sexo: "sexo", nacionalidade: "nacionalidade",
+    naturalidade_municipio: "naturalidade", naturalidade_uf: "naturalidade",
+    filiacao_1: "pai", filiacao_2: "mae"
+  };
+
+  function destacarIncertos(lista) {
+    let qtd = 0;
+    (lista || []).forEach(chave => {
+      const id = campoIncerto[String(chave)];
+      const el = id && document.getElementById(id);
+      if (el && !el.classList.contains("destaque")) {
+        el.classList.add("destaque");
+        qtd++;
+      }
+    });
+    return qtd;
   }
 
   function ajustarCampos(tipo) {
@@ -689,12 +716,16 @@
       }
 
       preencher(data.dados || {});
+      const duvidosos = destacarIncertos((data.dados || {}).campos_incertos);
       const total = ((performance.now() - inicio) / 1000).toFixed(2);
       const api = data.tempo_api ? ` • Groq/Qwen: ${data.tempo_api}s` : "";
       const qtd = data.arquivos_lidos || input.files.length || 1;
       setMensagem(
-        `Leitura concluída (${qtd} arquivo${qtd > 1 ? "s" : ""}) em ${total}s${api}. Revise os dados antes de continuar.`,
-        "ok"
+        `Leitura concluída (${qtd} arquivo${qtd > 1 ? "s" : ""}) em ${total}s${api}. ` +
+        (duvidosos
+          ? `Confira no documento o${duvidosos > 1 ? "s campos" : " campo"} em amarelo antes de continuar.`
+          : "Revise os dados antes de continuar."),
+        duvidosos ? "warn" : "ok"
       );
     } catch (e) {
       setMensagem("Erro: " + (e.message || e), "erro");
@@ -703,6 +734,13 @@
       btn.textContent = "LER DOCUMENTO";
     }
   }
+
+  // Ao corrigir um campo amarelo, o destaque sai.
+  ids.forEach(id => {
+    document.getElementById(id).addEventListener("input", (event) => {
+      event.target.classList.remove("destaque");
+    });
+  });
 
   document.getElementById("btnLer").addEventListener("click", lerDocumento);
   document.getElementById("btnSicaq").addEventListener("click", preencherSicaq);

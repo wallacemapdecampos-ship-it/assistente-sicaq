@@ -846,6 +846,10 @@ def _validar_cnh_final(resultado):
     numero = re.sub(r"\D", "", str(r.get("numero_cnh") or ""))
     if len(numero) == 11:
         r["numero_cnh"] = numero
+        # Dígitos verificadores não conferem: provável dígito mal lido.
+        # Mantém o valor, mas marca para o usuário conferir.
+        if not _cnh_registro_valido(numero):
+            incertos.append("numero_cnh")
     else:
         r["numero_cnh"] = ""
         incertos.append("numero_cnh")
@@ -1001,7 +1005,61 @@ def _aplicar_mrz(resultado):
             r["data_emissao"] = f"{lido.day:02d}/{lido.month:02d}/{lido.year:04d}"
         r[chave] = f"{valor.day:02d}/{valor.month:02d}/{valor.year:04d}"
         print(f"[MRZ] {chave} conferido e ajustado pela MRZ", flush=True)
+
+    # Nº de registro da CNH (campo 5) também está na 1ª linha da MRZ.
+    if str(r.get("tipo_documento") or "").strip().upper() == "CNH":
+        numero_mrz = _numero_cnh_mrz(r.get("mrz"))
+        lido = re.sub(r"\D", "", str(r.get("numero_cnh") or ""))
+        if numero_mrz and numero_mrz != lido:
+            r["numero_cnh"] = numero_mrz
+            print("[MRZ] numero_cnh conferido e ajustado pela MRZ", flush=True)
     return r
+
+
+def _cnh_registro_valido(numero):
+    """
+    Confere os 2 dígitos verificadores do Nº de registro da CNH (11 dígitos),
+    pelo cálculo oficial do Renach.
+    """
+    numero = re.sub(r"\D", "", str(numero or ""))
+    if len(numero) != 11 or len(set(numero)) == 1:
+        return False
+    base = [int(c) for c in numero[:9]]
+    dv1 = sum(base[i] * (9 - i) for i in range(9)) % 11
+    desconto = 0
+    if dv1 >= 10:
+        dv1, desconto = 0, 2
+    dv2 = sum(base[i] * (1 + i) for i in range(9)) % 11 - desconto
+    if dv2 < 0:
+        dv2 += 11
+    if dv2 >= 10:
+        dv2 = 0
+    return numero[9:] == f"{dv1}{dv2}"
+
+
+def _numero_cnh_mrz(texto):
+    """
+    Lê o Nº de registro da CNH na 1ª linha da MRZ, ex.:
+    I<BRA066038085<440<<<<<<<<<<<< -> 066038085 + 44 = 06603808544.
+    Só devolve se o dígito da MRZ E os dígitos da CNH conferirem.
+    """
+    bruto = re.sub(r"[^0-9A-Z<\n]", "", str(texto or "").upper().replace(" ", ""))
+    for linha in [bruto.replace("\n", "")] + bruto.split("\n"):
+        m = re.search(r"I.BRA([0-9O]{9})([0-9O<])([0-9O]*)", linha)
+        if not m:
+            continue
+        inicio, dv, resto = (g.replace("O", "0") for g in m.groups())
+        if dv == "<":
+            # Número com mais de 9 dígitos: continua no campo opcional,
+            # e o último dígito dessa continuação é o verificador.
+            if len(resto) < 2:
+                continue
+            numero, dv = inicio + resto[:-1], resto[-1]
+        else:
+            numero = inicio
+        if _mrz_digito(numero) == dv and _cnh_registro_valido(numero):
+            return numero
+    return ""
 
 
 def _formatar_data_br(valor):
