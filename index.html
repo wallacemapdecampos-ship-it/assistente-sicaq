@@ -191,7 +191,7 @@
         <input id="nome" type="text">
       </div>
 
-      <div class="campo" data-tipos="CNH RG CIN">
+      <div class="campo" data-tipos="RG CIN">
         <label>CPF</label>
         <input id="cpf" type="text">
       </div>
@@ -449,8 +449,7 @@
       natUf: 10,
       validade: 11,
       pai: 12,
-      mae: 13,
-      cpf: 14   // CNH: só para consulta (não vai para o SICAQ)
+      mae: 13
     };
 
     document.querySelectorAll(".campo[data-tipos]").forEach(el => {

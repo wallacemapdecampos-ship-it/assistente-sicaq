@@ -89,7 +89,6 @@ Regras:
   * data_nascimento = somente a DATA do campo 3 "DATA, LOCAL E UF DE NASCIMENTO";
   * data_emissao = somente o campo 4a "DATA EMISSÃO";
   * validade = somente o campo 4b "VALIDADE";
-  * cpf = campo 4d "CPF" (somente dígitos);
   * numero_cnh = somente o campo 5 "Nº REGISTRO", normalmente com 11 dígitos.
     IGNORE número vertical, número do espelho, código de segurança, RENACH e outros números;
   * data_primeira_habilitacao = somente o valor ao lado do texto explícito
