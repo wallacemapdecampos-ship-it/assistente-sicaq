@@ -77,6 +77,7 @@ Regras:
 - RG antigo: mantenha o número do Registro Geral em rg.
 - RG novo/CIN: CPF é o identificador principal.
 - data_emissao: use DATA DE EXPEDIÇÃO ou DATA DE EMISSÃO; nunca nascimento.
+- Todas as datas em DD/MM/AAAA, com o mês em número (ex.: 04/MAR/1994 => 04/03/1994).
 - validade: somente se houver VALIDADE explicitamente impressa.
 - naturalidade_municipio: somente o nome COMPLETO da cidade, sem abreviações e sem UF; naturalidade_uf: SIGLA de 2 letras da UF de NASCIMENTO impressa junto da cidade (não use a UF de emissão do documento). Exemplos: 'S.ROQUE - SP' => cidade 'SAO ROQUE', UF 'SP'; 'S PAULO' ou 'S. PAULO' => 'SAO PAULO'. Nunca devolva 'S.ROQUE', 'S PAULO' ou 'CIDADE - SP' como nome final da cidade.
 - sexo: MASCULINO ou FEMININO quando explicitamente identificável.
@@ -921,14 +922,38 @@ def _validar_cnh_final(resultado):
     return r
 
 
+MESES_TEXTO = {
+    "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4, "MAIO": 5,
+    "JUNHO": 6, "JULHO": 7, "AGOSTO": 8, "SETEMBRO": 9, "OUTUBRO": 10,
+    "NOVEMBRO": 11, "DEZEMBRO": 12,
+    "JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6,
+    "JUL": 7, "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12,
+    # Inglês (documentos bilíngues)
+    "FEB": 2, "APR": 4, "MAY": 5, "AUG": 8, "SEP": 9, "OCT": 10, "DEC": 12,
+}
+
+
 def _parse_data_br(valor):
-    """Aceita DD/MM/AAAA, DD-MM-AAAA e DD.MM.AAAA. Devolve date ou None."""
+    """
+    Aceita DD/MM/AAAA, DD-MM-AAAA, DD.MM.AAAA e mês escrito, como no RG
+    antigo: 04/MAR/1994, 04 MAR 1994, 4 de março de 1994.
+    Devolve date ou None.
+    """
     valor = str(valor or "").strip()
     m = re.fullmatch(r"(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{4})", valor)
-    if not m:
-        return None
+    if m:
+        dia, mes, ano = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        t = _tirar_acentos(valor).upper()
+        m = re.fullmatch(
+            r"(\d{1,2})\s*(?:[/.\-]|DE)?\s*([A-Z]{3,9})\.?\s*(?:[/.\-]|DE)?\s*(\d{4})",
+            re.sub(r"\s+", " ", t),
+        )
+        if not m or m.group(2) not in MESES_TEXTO:
+            return None
+        dia, mes, ano = int(m.group(1)), MESES_TEXTO[m.group(2)], int(m.group(3))
     try:
-        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        return date(ano, mes, dia)
     except Exception:
         return None
 
@@ -1283,6 +1308,12 @@ def _orgao_sicaq(orgao_bruto):
         return ORGAO_SSP, False
     if s in ("SDS", "SEDS") or tem("DEFESA SOCIAL"):
         return ORGAO_SDS, True
+    # Siglas combinadas, ex.: IIRGD.SSP.SP, II-SSP, SDS PE.
+    siglas = set(re.split(r"[\s/\-]+", sem_uf))
+    if siglas & {"SDS", "SEDS"}:
+        return ORGAO_SDS, True
+    if siglas & {"SSP", "SESP", "IIRGD", "IRGD", "SEJUSP", "SESEG", "SESDEC", "SSPTC"}:
+        return ORGAO_SSP, True
     # Segurança Pública (inclui IIRGD/IRGD de SP e Instituto de Identificação).
     if (
         s.startswith(("SSP", "SESP", "SESEG", "SEJUSP", "SESDEC", "SSPTC"))
