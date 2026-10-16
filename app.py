@@ -61,7 +61,7 @@ Regras:
 - RG novo/CIN: CPF é o identificador principal.
 - data_emissao: use DATA DE EXPEDIÇÃO ou DATA DE EMISSÃO; nunca nascimento.
 - validade: somente se houver VALIDADE explicitamente impressa.
-- naturalidade_municipio: somente o nome COMPLETO da cidade, sem abreviações e sem UF; naturalidade_uf: UF separada. Exemplos: 'S.ROQUE - SP' => cidade 'SAO ROQUE', UF 'SP'; 'S PAULO' ou 'S. PAULO' => 'SAO PAULO'. Nunca devolva 'S.ROQUE', 'S PAULO' ou 'CIDADE - SP' como nome final da cidade.
+- naturalidade_municipio: somente o nome COMPLETO da cidade, sem abreviações e sem UF; naturalidade_uf: SIGLA de 2 letras da UF de NASCIMENTO impressa junto da cidade (não use a UF de emissão do documento). Exemplos: 'S.ROQUE - SP' => cidade 'SAO ROQUE', UF 'SP'; 'S PAULO' ou 'S. PAULO' => 'SAO PAULO'. Nunca devolva 'S.ROQUE', 'S PAULO' ou 'CIDADE - SP' como nome final da cidade.
 - sexo: MASCULINO ou FEMININO quando explicitamente identificável.
 - órgão/UF: SSP-SP => orgao_emissor SSP e uf_emissao SP.
 - Se aparecer IIRGD/IRGD em SP, mantenha a sigla em orgao_emissor; não converta aqui.
@@ -590,12 +590,58 @@ def _corrigir_datas_cnh(d):
 
 
 
+UFS_BR = {
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS",
+    "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC",
+    "SP", "SE", "TO",
+}
+
+ESTADOS_POR_NOME = {
+    "ACRE": "AC", "ALAGOAS": "AL", "AMAPA": "AP", "AMAZONAS": "AM",
+    "BAHIA": "BA", "CEARA": "CE", "DISTRITO FEDERAL": "DF",
+    "ESPIRITO SANTO": "ES", "GOIAS": "GO", "MARANHAO": "MA",
+    "MATO GROSSO": "MT", "MATO GROSSO DO SUL": "MS", "MINAS GERAIS": "MG",
+    "PARA": "PA", "PARAIBA": "PB", "PARANA": "PR", "PERNAMBUCO": "PE",
+    "PIAUI": "PI", "RIO DE JANEIRO": "RJ", "RIO GRANDE DO NORTE": "RN",
+    "RIO GRANDE DO SUL": "RS", "RONDONIA": "RO", "RORAIMA": "RR",
+    "SANTA CATARINA": "SC", "SAO PAULO": "SP", "SERGIPE": "SE",
+    "TOCANTINS": "TO",
+}
+
+
+def _uf_naturalidade(uf_valor, municipio_bruto):
+    """
+    Devolve a sigla da UF de nascimento (ex.: 'SP'), sempre uma das 27 UFs.
+    1) usa naturalidade_uf lida pela IA (sigla ou nome do estado);
+    2) se vier vazia/inválida, tenta a sigla no fim do texto da cidade
+       ('S.ROQUE - SP', 'SAO PAULO/SP', 'SOROCABA (SP)').
+    Nunca usa a UF de emissão do documento, que pode ser de outro estado.
+    """
+    uf = _tirar_acentos(str(uf_valor or "")).upper()
+    uf = re.sub(r"[^A-Z ]", " ", uf)
+    uf = re.sub(r"\s+", " ", uf).strip()
+    if uf in UFS_BR:
+        return uf
+    if uf in ESTADOS_POR_NOME:
+        return ESTADOS_POR_NOME[uf]
+
+    cidade = _tirar_acentos(str(municipio_bruto or "")).upper().strip()
+    m = re.search(r"[\s\-/(]+([A-Z]{2})\)?\s*$", cidade)
+    if m and m.group(1) in UFS_BR and len(cidade) > 4:
+        return m.group(1)
+    return ""
+
+
 def _normalizar_municipio_naturalidade(valor):
     """Expande abreviações comuns de naturalidade e devolve somente o município."""
     texto = _tirar_acentos(str(valor or "").strip().upper())
 
     # Remove sufixo de UF quando o OCR mistura a UF no campo da cidade.
     texto = re.sub(r"\s*[-/]\s*[A-Z]{2}\s*$", "", texto)
+    texto = re.sub(r"\s*\(\s*[A-Z]{2}\s*\)\s*$", "", texto)
+    m = re.search(r"^(.{3,}?)\s+([A-Z]{2})$", texto)
+    if m and m.group(2) in UFS_BR:
+        texto = m.group(1)
     texto = re.sub(r"^(S|STA|STO)\s*\.\s*", r"\1 ", texto)
     texto = re.sub(r"\s+", " ", texto).strip(" .,-")
     texto = re.sub(r"\s+", " ", texto)
@@ -641,15 +687,27 @@ def _normalizar_saida(d):
     nat_mun = _normalizar_municipio_naturalidade(
         d.get("naturalidade_municipio") or ""
     )
-    nat_uf = _tirar_acentos(str(d.get("naturalidade_uf") or "").strip().upper())[:2]
+    nat_uf = _uf_naturalidade(
+        d.get("naturalidade_uf"),
+        d.get("naturalidade_municipio"),
+    )
 
     sexo = _tirar_acentos(str(d.get("sexo") or "").strip().upper())
     if sexo in ("M", "MASC", "MASCULINO"):
         sexo = "MASCULINO"
     elif sexo in ("F", "FEM", "FEMININO"):
         sexo = "FEMININO"
-    # O campo do SICAQ deve receber apenas o nome da cidade, sem UF.
-    naturalidade = nat_mun
+
+    # Exibição no site: CIDADE/UF (ex.: SOROCABA/SP).
+    # O site separa pela barra e envia à extensão o município (sem UF)
+    # e a UF em campos próprios, como o SICAQ exige.
+    incertos = list(d.get("campos_incertos") or [])
+    if nat_mun and nat_uf:
+        naturalidade = f"{nat_mun}/{nat_uf}"
+    else:
+        naturalidade = nat_mun
+        if nat_mun and "naturalidade_uf" not in incertos:
+            incertos.append("naturalidade_uf")
 
     return {
         "documento": tipo,
@@ -670,7 +728,7 @@ def _normalizar_saida(d):
         "filiacao1": _tirar_acentos(str(d.get("filiacao_1") or "").strip().upper()),
         "filiacao2": _tirar_acentos(str(d.get("filiacao_2") or "").strip().upper()),
         "modelo_documento": str(d.get("modelo_documento") or "").strip().upper(),
-        "campos_incertos": d.get("campos_incertos") or [],
+        "campos_incertos": incertos,
     }
 
 
