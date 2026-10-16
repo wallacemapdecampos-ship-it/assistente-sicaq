@@ -19,12 +19,31 @@ on:
     - cron: "55 9 * * *"
     - cron: "*/5 10-23 * * *"
     - cron: "*/5 0-1 * * *"
+    # Dia 1 e 15 de cada mês: renova a tarefa para o GitHub não pausá-la
+    # por "60 dias sem atividade" (não altera arquivos nem reinicia o Render).
+    - cron: "17 13 1,15 * *"
   workflow_dispatch: {}
 
 permissions: {}
 
 jobs:
+  renovar:
+    if: github.event.schedule == '17 13 1,15 * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Renovar a tarefa (evita pausa por inatividade)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT \
+            "repos/${{ github.repository }}/actions/workflows/manter-acordado.yml/enable" \
+            && echo "Tarefa renovada."
+
   ping:
+    if: github.event.schedule != '17 13 1,15 * *'
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
