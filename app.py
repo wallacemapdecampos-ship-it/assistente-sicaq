@@ -1348,7 +1348,10 @@ def _normalizar_saida(d):
     d = dict(d or {})
     tipo = str(d.get("tipo_documento") or "").strip().upper()
     nacionalidade = str(d.get("nacionalidade") or "").strip().upper()
-    if nacionalidade.startswith("BRASILEIR"):
+    # CIN imprime "BRA"; documentos bilíngues podem trazer BRAZIL/BRAZILIAN.
+    if nacionalidade.startswith("BRASILEIR") or nacionalidade in (
+        "BR", "BRA", "BRASIL", "BRAZIL", "BRAZILIAN"
+    ):
         nacionalidade = "BRASILEIRA"
 
     nat_mun = _normalizar_municipio_naturalidade(
