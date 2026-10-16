@@ -1,0 +1,41 @@
+# Mantém o servidor do Render acordado das 07h às 23h (horário de Brasília).
+#
+# O plano gratuito do Render dorme após 15 min sem visitas e leva ~1 min
+# para acordar. Esta tarefa só acessa /health (não lê documento e não gasta
+# a cota da Groq). 07h-23h todos os dias ≈ 500 h/mês, dentro das 750 h
+# gratuitas do Render.
+#
+# Horários em UTC (Brasília = UTC-3):
+#   06h55 BRT = 09h55 UTC  -> acorda o servidor antes das 07h
+#   07h-20h59 BRT = 10h-23h59 UTC
+#   21h-22h59 BRT = 00h-01h59 UTC (último aviso ~22h55; dorme ~23h10)
+#
+# Para pausar: GitHub > Actions > "Manter servidor acordado" > Disable workflow.
+
+name: Manter servidor acordado
+
+on:
+  schedule:
+    - cron: "55 9 * * *"
+    - cron: "*/5 10-23 * * *"
+    - cron: "*/5 0-1 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Visitar /health
+        run: |
+          for tentativa in 1 2 3; do
+            if curl -fsS -m 90 -o /dev/null -w "HTTP %{http_code} em %{time_total}s\n" \
+                 https://assistente-sicaq.onrender.com/health; then
+              exit 0
+            fi
+            echo "Tentativa $tentativa falhou; tentando de novo em 15 s..."
+            sleep 15
+          done
+          echo "Servidor não respondeu (pode estar acordando)."
