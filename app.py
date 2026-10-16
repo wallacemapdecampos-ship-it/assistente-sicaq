@@ -89,6 +89,7 @@ Regras:
   * data_nascimento = somente a DATA do campo 3 "DATA, LOCAL E UF DE NASCIMENTO";
   * data_emissao = somente o campo 4a "DATA EMISSÃO";
   * validade = somente o campo 4b "VALIDADE";
+  * cpf = campo 4d "CPF" (somente dígitos);
   * numero_cnh = somente o campo 5 "Nº REGISTRO", normalmente com 11 dígitos.
     IGNORE número vertical, número do espelho, código de segurança, RENACH e outros números;
   * data_primeira_habilitacao = somente o valor ao lado do texto explícito
@@ -1043,6 +1044,18 @@ def _aplicar_mrz(resultado):
     return r
 
 
+def _cpf_valido(cpf):
+    """Confere os 2 dígitos verificadores do CPF."""
+    c = re.sub(r"\D", "", str(cpf or ""))
+    if len(c) != 11 or len(set(c)) == 1:
+        return False
+    for n in (9, 10):
+        soma = sum(int(c[i]) * ((n + 1) - i) for i in range(n))
+        if (soma * 10) % 11 % 10 != int(c[n]):
+            return False
+    return True
+
+
 def _tipo_documento(d):
     """
     Padroniza o tipo para CNH, RG ou CIN.
@@ -1419,6 +1432,11 @@ def _normalizar_saida(d):
         naturalidade = nat_mun
         if nat_mun and "naturalidade_uf" not in incertos:
             incertos.append("naturalidade_uf")
+
+    # CPF lido que não fecha os dígitos verificadores: provável erro de leitura.
+    cpf_lido = re.sub(r"\D", "", str(d.get("cpf") or ""))
+    if cpf_lido and not _cpf_valido(cpf_lido) and "cpf" not in incertos:
+        incertos.append("cpf")
 
     # Órgão emissor do RG/CIN já no texto exato da opção do SICAQ.
     orgao_sicaq = ""

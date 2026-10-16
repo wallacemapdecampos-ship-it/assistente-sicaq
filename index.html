@@ -191,7 +191,7 @@
         <input id="nome" type="text">
       </div>
 
-      <div class="campo" data-tipos="RG CIN">
+      <div class="campo" data-tipos="CNH RG CIN">
         <label>CPF</label>
         <input id="cpf" type="text">
       </div>
@@ -449,7 +449,8 @@
       natUf: 10,
       validade: 11,
       pai: 12,
-      mae: 13
+      mae: 13,
+      cpf: 14   // CNH: só para consulta (não vai para o SICAQ)
     };
 
     document.querySelectorAll(".campo[data-tipos]").forEach(el => {
@@ -596,8 +597,9 @@
       tipoSicaq = "CNH - CARTEIRA NACIONAL DE HABILITAÇÃO";
     }
 
+    // Número da identidade só existe para RG/CIN (na CNH o CPF é só consulta).
     let numeroIdentidade = "";
-    if (tipoOrigem === "CIN" || modelo === "NOVO" || modelo === "NOVA") {
+    if (tipoOrigem === "CIN" || (tipoOrigem === "RG" && (modelo === "NOVO" || modelo === "NOVA"))) {
       numeroIdentidade = cpf || rg;
     } else if (tipoOrigem === "RG") {
       numeroIdentidade = rg || cpf;
