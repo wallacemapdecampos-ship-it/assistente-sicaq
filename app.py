@@ -64,7 +64,9 @@ Regras:
   da CNH nova ou da CIN), copie essas linhas exatamente, separadas por \\n.
   Se não existir, devolva vazio.
 - Leia todas as páginas/imagens como partes do MESMO documento.
-- Nome: copie exatamente.
+- Nome, filiacao_1 e filiacao_2: copie LETRA POR LETRA exatamente como está
+  impresso. Não corrija a grafia, não acrescente, não duplique e não remova
+  letras (ex.: se está impresso MARIO, devolva MARIO, nunca MARRIO).
 - RG/CIN: procure CPF, REGISTRO GERAL/RG, FILIAÇÃO, NASCIMENTO, SEXO,
   ÓRGÃO EXPEDIDOR e DATA DE EXPEDIÇÃO/EMISSÃO.
 - Para RG/CIN: filiacao_1 = PAI e filiacao_2 = MÃE.
