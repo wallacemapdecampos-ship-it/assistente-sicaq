@@ -1529,17 +1529,34 @@
         throw new Error((data && data.error) || "Falha na leitura do comprovante.");
       }
 
-      const duvidososH = preencherHolerite(data.dados || {});
+      const dadosH = data.dados || {};
+      const duvidososH = preencherHolerite(dadosH);
       const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const qtdLidos = data.arquivos_lidos || input.files.length || 1;
+      // Separa "contas não fecharam" de "campo para conferir" (ex.: admissão
+      // que não vem no holerite, adiantamento que sempre pede conferência).
+      const incertosH = dadosH.campos_incertos || [];
+      const contasOk = !incertosH.some(c => ["bruta", "liquido_original"].includes(c));
+      const conferir = [];
+      if (!document.getElementById("hAdmissao").value) {
+        conferir.push((dadosH.tipo_renda === "INSS" ? "início do benefício" : "data de admissão") + " (não está no comprovante)");
+      } else if (incertosH.includes("data_admissao")) {
+        conferir.push(dadosH.tipo_renda === "INSS" ? "início do benefício" : "data de admissão");
+      }
+      if (incertosH.includes("documento_fonte") || incertosH.includes("cnpj")) {
+        conferir.push(document.getElementById("hCnpjRotulo").textContent);
+      }
+      if (document.getElementById("hAdiantamento").classList.contains("destaque")) conferir.push("adiantamento");
+      if (!document.getElementById("hTipoFonte").value) conferir.push("tipo de fonte");
       setMensagemHolerite(
         `${qtdLidos > 1 ? qtdLidos + " arquivos lidos" : "Comprovante lido"} em ${total} s. ` +
-        (duvidososH
-          ? "As contas ou dados em amarelo não fecharam: confira no comprovante antes de usar."
-          : "Contas conferidas (proventos − descontos = líquido). Revise os valores.") +
+        (contasOk
+          ? "Contas conferidas (proventos − descontos = líquido)."
+          : "As contas não fecharam: confira os valores em amarelo no comprovante.") +
+        (conferir.length ? " Confira em amarelo: " + conferir.join(", ") + "." : "") +
         (ultimoHolerite && ultimoHolerite.cpfDaIdentificacao
           ? " O CPF do cliente veio do documento de identificação." : ""),
-        duvidososH ? "warn" : "ok"
+        (!contasOk || duvidososH) ? "warn" : "ok"
       );
     } catch (e) {
       setMensagemHolerite("Erro: " + (e.message || e), "erro");
