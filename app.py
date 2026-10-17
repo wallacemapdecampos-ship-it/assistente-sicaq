@@ -2346,11 +2346,15 @@ Regras:
   No INSS, use a data de início do benefício (DIB), se aparecer.
   Não confunda com data de pagamento, CEP, CTPS ou outras datas.
 - itens: TODAS as linhas de eventos da tabela, na ordem, cada uma como uma
-  lista curta [descrição, provento, desconto], ex.:
-  [["SALARIO BASE", "2000,00", "0,00"], ["INSS", "0,00", "150,00"]].
-  O valor vai em provento se estiver na coluna PROVENTOS/VENCIMENTOS/CRÉDITOS
-  e em desconto se estiver na coluna DESCONTOS/DÉBITOS. A coluna REFERÊNCIA
-  (dias, horas, %) NÃO é valor: ignore. Copie a descrição completa (ex.:
+  lista curta [descrição, referência, provento, desconto], ex.:
+  [["SALARIO BASE", "30,00", "2000,00", "0,00"],
+   ["IMPOSTO DE RENDA", "27,50", "0,00", "1928,51"]].
+  referência = coluna REFERÊNCIA/QTDE (dias, horas, %); NÃO é valor em
+  dinheiro. provento = coluna PROVENTOS/VENCIMENTOS/CRÉDITOS; desconto =
+  coluna DESCONTOS/DÉBITOS. Atenção no IR e no INSS: a % (ex.: 27,50; 7,50)
+  é a referência; o valor descontado é o número da coluna DESCONTOS.
+  Se o texto trouxer marcações [REF: ...], [PROVENTO: ...] e [DESCONTO: ...],
+  use exatamente essas colunas. Copie a descrição completa (ex.:
   ADIANTAMENTO SALARIAL, I.R.R.F., EMPRÉSTIMO CONSIGNADO).
   No INSS, cada rubrica é uma linha: crédito (ex.: VALOR TOTAL DE MR DO
   PERÍODO) em provento e débito (consignação, empréstimo, IR) em desconto.
@@ -2433,13 +2437,70 @@ def _compactar_texto_holerite(texto, limite=5000):
     return texto[:inicio] + "\n[...]\n" + texto[-fim:]
 
 
+_VALOR_BR = re.compile(r"^-?\d{1,3}(?:\.\d{3})*,\d{2}-?$")
+
+
+def _linhas_holerite_anotadas(palavras):
+    """
+    Monta as linhas do PDF digital pela posição das palavras e marca cada
+    valor com a coluna do cabeçalho mais próxima: [REF: 27,50] [DESCONTO:
+    1.928,51]. Assim a IA não confunde a coluna Referência (%, horas) com
+    Vencimentos/Descontos. palavras: (x0, y0, x1, y1, texto, ...).
+    """
+    ws = sorted((w for w in palavras if str(w[4]).strip()), key=lambda w: ((w[1] + w[3]) / 2, w[0]))
+    linhas = []
+    for w in ws:
+        yc, alt = (w[1] + w[3]) / 2, max(1.0, w[3] - w[1])
+        if linhas and abs(linhas[-1]["y"] - yc) <= 0.45 * alt:
+            linhas[-1]["ws"].append(w)
+        else:
+            linhas.append({"y": yc, "ws": [w]})
+
+    def centro(w):
+        return (w[0] + w[2]) / 2
+
+    colunas, saida = None, []
+    for ln in linhas:
+        ws = sorted(ln["ws"], key=lambda w: w[0])
+        textos = [_tirar_acentos(str(w[4])).upper() for w in ws]
+        prov = next((w for w, x in zip(ws, textos) if x.startswith(("VENCIMENTO", "PROVENTO", "CREDITO"))), None)
+        desc = next((w for w, x in zip(ws, textos) if x.startswith(("DESCONTO", "DEBITO"))), None)
+        if prov and desc:
+            ref = next((w for w, x in zip(ws, textos) if x.startswith(("REFER", "REF.", "QTD", "QUANT"))), None)
+            colunas = [("PROVENTO", centro(prov)), ("DESCONTO", centro(desc))]
+            if ref:
+                colunas.append(("REF", centro(ref)))
+            saida.append(" ".join(str(w[4]) for w in ws))
+            continue
+        if any("LIQUIDO" in x for x in textos):
+            colunas = None  # depois do líquido vêm bases (FGTS, IRRF...), não valores
+        valores = [w for w in ws if _VALOR_BR.match(str(w[4]))]
+        if not colunas or len(valores) > 3:
+            saida.append(" ".join(str(w[4]) for w in ws))
+            continue
+        partes = []
+        for w in ws:
+            if _VALOR_BR.match(str(w[4])):
+                nome = min(colunas, key=lambda c: abs(c[1] - centro(w)))[0]
+                partes.append(f"[{nome}: {w[4]}]")
+            else:
+                partes.append(str(w[4]))
+        saida.append(" ".join(partes))
+    return "\n".join(saida)
+
+
 def _pdf_texto_holerite(data):
     try:
         doc = pymupdf.open(stream=data, filetype="pdf")
         try:
             partes = []
             for i in range(min(len(doc), 8)):
-                texto = doc[i].get_text("text") or ""
+                try:
+                    texto = _linhas_holerite_anotadas(doc[i].get_text("words") or [])
+                except Exception:
+                    texto = ""
+                if not texto.strip():
+                    texto = doc[i].get_text("text") or ""
                 if texto.strip():
                     partes.append(f"\n--- PÁGINA {i+1} ---\n{texto}")
             return "".join(partes).strip()
@@ -2633,16 +2694,20 @@ def _holerite_itens(itens):
     saida = []
     for i in itens if isinstance(itens, list) else []:
         if isinstance(i, (list, tuple)):
-            i = {"descricao": i[0] if len(i) > 0 else "",
-                 "provento": i[1] if len(i) > 1 else 0,
-                 "desconto": i[2] if len(i) > 2 else 0}
+            if len(i) >= 4:  # [descrição, referência, provento, desconto]
+                i = {"descricao": i[0], "referencia": i[1], "provento": i[2], "desconto": i[3]}
+            else:            # formato antigo [descrição, provento, desconto]
+                i = {"descricao": i[0] if len(i) > 0 else "",
+                     "provento": i[1] if len(i) > 1 else 0,
+                     "desconto": i[2] if len(i) > 2 else 0}
         if not isinstance(i, dict):
             continue
         desc = _tirar_acentos(str(i.get("descricao") or "")).upper().strip()
         prov = _holerite_numero(i.get("provento"))
         descn = _holerite_numero(i.get("desconto"))
         if desc or prov or descn:
-            saida.append({"descricao": desc, "provento": prov, "desconto": descn})
+            saida.append({"descricao": desc, "provento": prov, "desconto": descn,
+                          "referencia": _holerite_numero(i.get("referencia"))})
     return saida
 
 
@@ -2756,6 +2821,31 @@ def _normalizar_holerite(resultado):
             bruta = soma_prov
         if not total_desc:
             total_desc = soma_desc
+
+        # Linha de desconto lida com a % da coluna Referência no lugar do
+        # valor (ex.: IR 27,50 no lugar de 1.928,51). Se os totais do
+        # holerite fecham (bruto - descontos = líquido) e UMA só linha
+        # suspeita explica a diferença, corrige essa linha e marca para conferir.
+        dif = round(total_desc - soma_desc, 2)
+        totais_fecham = bool(bruta and total_desc and liquido_original) and \
+            abs(round(bruta - total_desc, 2) - liquido_original) <= 0.05
+        if abs(dif) > 0.05 and totais_fecham:
+            # Suspeita = valor com cara de % (até 30) numa linha de IR/INSS ou
+            # igual à própria referência.
+            suspeitas = [
+                i for i in itens if 0 < i["desconto"] <= 30 and (
+                    _eh_irrf(i["descricao"]) or "INSS" in i["descricao"].replace(".", "")
+                    or (i["referencia"] and abs(i["desconto"] - i["referencia"]) < 0.005)
+                )
+            ]
+            if len(suspeitas) == 1 and suspeitas[0]["desconto"] + dif > 0:
+                linha = suspeitas[0]
+                linha["desconto"] = round(linha["desconto"] + dif, 2)
+                soma_desc = round(sum(i["desconto"] for i in itens), 2)
+                print("[HOLERITE] linha de desconto corrigida pela soma dos descontos", flush=True)
+                if _eh_irrf(linha["descricao"]):
+                    incertos += ["irrf"]
+
         # Adiantamento e IRRF calculados pelas linhas (coluna DESCONTOS).
         linhas_ad = [i for i in itens if _eh_adiantamento_salarial(i["descricao"])]
         if linhas_ad:
@@ -2771,7 +2861,9 @@ def _normalizar_holerite(resultado):
         if abs(soma_prov - bruta) > 0.05:
             incertos += ["bruta"]
         if abs(soma_desc - total_desc) > 0.05:
-            incertos += ["liquido_original"]
+            # Alguma linha de desconto foi lida errado: o IR e o adiantamento
+            # (que vêm das linhas) também precisam ser conferidos.
+            incertos += ["liquido_original", "irrf", "adiantamento"]
     else:
         incertos += ["adiantamento"]
 

@@ -1693,6 +1693,13 @@
     document.getElementById("btnRenda").textContent = "Preenchendo…";
     setMsgRenda("Enviando para a extensão: ela consulta o " + (fisica ? "CPF" : "CNPJ") + " e depois preenche o resto.", "warn");
     clearTimeout(esperaRenda);
+    // Demorando: lembra o que costuma faltar.
+    setTimeout(() => {
+      if (aguardandoRenda) {
+        setMsgRenda("A extensão ainda não começou. Confira se a tela Renda Formal está aberta no SICAQ " +
+          "e se a extensão está com o content.js novo (recarregada em chrome://extensions).", "warn");
+      }
+    }, 12000);
     // Sem resposta: a tela Renda Formal não está aberta (o pedido expira na extensão).
     esperaRenda = setTimeout(() => {
       if (!aguardandoRenda) return;
@@ -1783,6 +1790,7 @@
       if (incertosH.includes("documento_fonte") || incertosH.includes("cnpj")) {
         conferir.push(document.getElementById("hCnpjRotulo").textContent);
       }
+      if (document.getElementById("hIrrf").classList.contains("destaque")) conferir.push("imposto de renda");
       if (document.getElementById("hAdiantamento").classList.contains("destaque")) conferir.push("adiantamento");
       if (!document.getElementById("hTipoFonte").value) conferir.push("tipo de fonte");
       setMensagemHolerite(
