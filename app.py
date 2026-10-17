@@ -1577,7 +1577,7 @@ Regras:
 - data_admissao: campo "ADMISSÃO", em DD/MM/AAAA com ano de 4 dígitos.
   Não confunda com data de pagamento, CEP, CTPS ou outras datas.
 - itens: TODAS as linhas de eventos da tabela, na ordem, cada uma como
-  {"descricao": "...", "provento": "0,00", "desconto": "0,00"}.
+  {{"descricao": "...", "provento": "0,00", "desconto": "0,00"}}.
   O valor vai em "provento" se estiver na coluna PROVENTOS/VENCIMENTOS/CRÉDITOS
   e em "desconto" se estiver na coluna DESCONTOS/DÉBITOS. A coluna REFERÊNCIA
   (dias, horas, %) NÃO é valor: ignore.
