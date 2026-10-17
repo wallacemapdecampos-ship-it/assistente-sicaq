@@ -1074,6 +1074,21 @@
       document.getElementById("hAdiantamento").classList.add("destaque");
       document.getElementById("hDescricaoAdiantamento").classList.add("destaque");
     }
+
+    // Campos que não fecharam nas conferências do servidor (contas, CNPJ, admissão).
+    const mapa = {
+      cnpj: ["hCnpj"], data_admissao: ["hAdmissao"], competencia: ["hCompetencia"],
+      bruta: ["hBruta", "hLiquida"], liquido_original: ["hLiquidoOriginal", "hLiquida"],
+      adiantamento: ["hAdiantamento", "hLiquida"], irrf: ["hIrrf"]
+    };
+    let duvidosos = 0;
+    (d.campos_incertos || []).forEach(chave => {
+      (mapa[chave] || []).forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.classList.contains("destaque")) { el.classList.add("destaque"); duvidosos++; }
+      });
+    });
+    return duvidosos;
   }
 
   async function lerHolerite() {
@@ -1127,13 +1142,16 @@
         throw new Error((data && data.error) || "Falha na leitura do holerite.");
       }
 
-      preencherHolerite(data.dados || {});
+      const duvidososH = preencherHolerite(data.dados || {});
       const total = ((performance.now() - inicio) / 1000).toFixed(2);
       const api = data.tempo_api ? ` • Groq/Qwen: ${data.tempo_api}s` : "";
       const qtdLidos = data.arquivos_lidos || input.files.length || 1;
       setMensagemHolerite(
-        `${qtdLidos} arquivo${qtdLidos > 1 ? "s" : ""} de holerite lido${qtdLidos > 1 ? "s" : ""} em ${total}s${api}. Revise os valores.`,
-        "ok"
+        `${qtdLidos} arquivo${qtdLidos > 1 ? "s" : ""} de holerite lido${qtdLidos > 1 ? "s" : ""} em ${total}s${api}. ` +
+        (duvidososH
+          ? "As contas ou dados em amarelo não fecharam: confira no holerite antes de usar."
+          : "Contas conferidas (proventos − descontos = líquido). Revise os valores."),
+        duvidososH ? "warn" : "ok"
       );
     } catch (e) {
       setMensagemHolerite("Erro: " + (e.message || e), "erro");

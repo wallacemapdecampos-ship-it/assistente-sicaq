@@ -1563,19 +1563,30 @@ def _holerite_prompt():
     atual, anterior, retrasado = _holerite_competencias_validas()
     return f"""
 Leia este HOLERITE / CONTRACHEQUE brasileiro e devolva SOMENTE JSON válido.
+A imagem pode ser FOTO (papel torto/dobrado): siga cada linha da tabela com
+cuidado, sem pular para a linha de cima ou de baixo.
 
-Chaves obrigatórias:
-cnpj, data_admissao, competencia, bruta, liquido_original,
-adiantamento_salarial_total, descricao_adiantamento, irrf, campos_incertos.
+Chaves, NESTA ORDEM:
+competencia, cnpj, data_admissao, itens, total_proventos, total_descontos,
+liquido_original, bruta, adiantamento_salarial_total, descricao_adiantamento,
+irrf, campos_incertos.
 
 Regras:
-- cnpj: CNPJ do empregador, somente dígitos.
-- data_admissao: DD/MM/AAAA. Não confunda com data de pagamento.
 - competencia: mês/ano do holerite em MM/AAAA.
-- bruta: TOTAL DE PROVENTOS / TOTAL BRUTO. Não use salário base, base INSS,
-  base FGTS ou líquido.
-- liquido_original: somente LÍQUIDO A RECEBER / LÍQUIDO DO HOLERITE.
-- adiantamento_salarial_total: some SOMENTE antecipação do salário mensal.
+- cnpj: CNPJ do EMPREGADOR (14 dígitos, formato 00.000.000/0000-00), somente dígitos.
+- data_admissao: campo "ADMISSÃO", em DD/MM/AAAA com ano de 4 dígitos.
+  Não confunda com data de pagamento, CEP, CTPS ou outras datas.
+- itens: TODAS as linhas de eventos da tabela, na ordem, cada uma como
+  {"descricao": "...", "provento": "0,00", "desconto": "0,00"}.
+  O valor vai em "provento" se estiver na coluna PROVENTOS/VENCIMENTOS/CRÉDITOS
+  e em "desconto" se estiver na coluna DESCONTOS/DÉBITOS. A coluna REFERÊNCIA
+  (dias, horas, %) NÃO é valor: ignore.
+- total_proventos: linha TOTAL da coluna de proventos (TOTAL DE VENCIMENTOS).
+- total_descontos: linha TOTAL da coluna de descontos.
+- liquido_original: TOTAL LÍQUIDO / LÍQUIDO A RECEBER.
+- bruta: igual a total_proventos. Não use salário base, base INSS, base FGTS.
+- adiantamento_salarial_total: some SOMENTE antecipação do salário mensal,
+  usando o valor da coluna DESCONTOS dessas linhas.
   Exemplos válidos: ADIANTAMENTO DE SALÁRIO, ADIANTAMENTO SALARIAL,
   ADIANT. SALÁRIO, ADIANTAMENTO QUINZENAL, VALE SALÁRIO, ANTECIPAÇÃO SALARIAL.
 - NÃO trate como adiantamento salarial: empréstimo/consignado, férias,
@@ -1680,13 +1691,19 @@ def _imagem_holerite(data, filename, mimetype):
     is_pdf = ext == ".pdf" or mimetype == "application/pdf"
 
     if not is_pdf:
-        img = Image.open(io.BytesIO(data)).convert("RGB")
-        max_w = 1500
-        if img.width > max_w:
-            escala = max_w / img.width
-            img = img.resize((max_w, max(1, int(img.height * escala))))
+        # Foto: corrige a rotação do celular e recorta o papel quando ele
+        # está pequeno/torto na foto (mesma rotina dos documentos).
+        img = _abrir_imagem(data)
+        img, _ = _recortar_documento(img)
+        max_lado = 1600
+        if max(img.size) > max_lado:
+            escala = max_lado / max(img.size)
+            img = img.resize(
+                (max(1, int(img.width * escala)), max(1, int(img.height * escala))),
+                Image.Resampling.LANCZOS,
+            )
         out = io.BytesIO()
-        img.save(out, format="JPEG", quality=88, optimize=True)
+        img.save(out, format="JPEG", quality=90, optimize=True)
         return out.getvalue()
 
     doc = pymupdf.open(stream=data, filetype="pdf")
@@ -1778,7 +1795,7 @@ def _groq_holerite_call(arquivos):
             "messages": [{"role": "user", "content": conteudo}],
             "temperature": 0.0,
             "top_p": 0.8,
-            "max_completion_tokens": 650,
+            "max_completion_tokens": 1100,  # inclui as linhas da tabela
             "stream": False,
             "reasoning_effort": "none",
             "response_format": {"type": "json_object"},
@@ -1830,6 +1847,49 @@ def _groq_holerite_call(arquivos):
     raise RuntimeError(str(ultimo or "Falha na leitura do holerite."))
 
 
+def _cnpj_valido(cnpj):
+    """Confere os 2 dígitos verificadores do CNPJ."""
+    c = re.sub(r"\D", "", str(cnpj or ""))
+    if len(c) != 14 or len(set(c)) == 1:
+        return False
+    def dv(base, pesos):
+        resto = sum(int(a) * b for a, b in zip(base, pesos)) % 11
+        return "0" if resto < 2 else str(11 - resto)
+    p1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+    d1 = dv(c[:12], p1)
+    d2 = dv(c[:12] + d1, [6] + p1)
+    return c[12:] == d1 + d2
+
+
+def _holerite_itens(itens):
+    """Normaliza as linhas transcritas: [{descricao, provento, desconto}]."""
+    saida = []
+    for i in itens if isinstance(itens, list) else []:
+        if not isinstance(i, dict):
+            continue
+        desc = _tirar_acentos(str(i.get("descricao") or "")).upper().strip()
+        prov = _holerite_numero(i.get("provento"))
+        descn = _holerite_numero(i.get("desconto"))
+        if desc or prov or descn:
+            saida.append({"descricao": desc, "provento": prov, "desconto": descn})
+    return saida
+
+
+def _eh_adiantamento_salarial(descricao):
+    d = _tirar_acentos(str(descricao or "")).upper()
+    if not re.search(r"ADIANT|ANTECIP|VALE\s*SAL|ADTO|ADT\.", d):
+        return False
+    # Não é adiantamento do salário mensal:
+    if re.search(r"FERIAS|13|DECIMO|EMPREST|CONSIG|TRANSP|REFEI|ALIMENT|PENS|INSS|IRRF", d):
+        return False
+    return True
+
+
+def _eh_irrf(descricao):
+    d = _tirar_acentos(str(descricao or "")).upper()
+    return bool(re.search(r"\bIRRF\b|I\.R\.R\.F|IMPOSTO\s+DE\s+RENDA|\bI\.?R\.?\s*FONTE", d))
+
+
 def _normalizar_holerite(resultado):
     resultado = dict(resultado or {})
     cnpj = re.sub(r"\D", "", str(resultado.get("cnpj") or ""))
@@ -1843,10 +1903,67 @@ def _normalizar_holerite(resultado):
             f"Período aceito: {validas[0]}, {validas[1]} e {validas[2]}."
         )
 
-    bruta = _holerite_numero(resultado.get("bruta"))
+    incertos = [str(x) for x in (resultado.get("campos_incertos") or [])]
+    bruta = _holerite_numero(resultado.get("total_proventos") or resultado.get("bruta"))
+    total_desc = _holerite_numero(resultado.get("total_descontos"))
     liquido_original = _holerite_numero(resultado.get("liquido_original"))
     adiantamento = _holerite_numero(resultado.get("adiantamento_salarial_total"))
+    descricao_ad = str(resultado.get("descricao_adiantamento") or "").strip().upper()
     irrf = _holerite_numero(resultado.get("irrf"))
+
+    # --- Conferências a partir das linhas transcritas (sem gastar IA) ---
+    itens = _holerite_itens(resultado.get("itens"))
+    if itens:
+        soma_prov = round(sum(i["provento"] for i in itens), 2)
+        soma_desc = round(sum(i["desconto"] for i in itens), 2)
+        # Totais: se não vieram, usa as somas das linhas.
+        if not bruta:
+            bruta = soma_prov
+        if not total_desc:
+            total_desc = soma_desc
+        # Adiantamento e IRRF calculados pelas linhas (coluna DESCONTOS).
+        linhas_ad = [i for i in itens if _eh_adiantamento_salarial(i["descricao"])]
+        if linhas_ad:
+            adiantamento = round(sum(i["desconto"] or i["provento"] for i in linhas_ad), 2)
+            descricao_ad = " + ".join(i["descricao"] for i in linhas_ad)
+        else:
+            adiantamento, descricao_ad = 0.0, ""
+        linhas_ir = [i for i in itens if _eh_irrf(i["descricao"])]
+        if linhas_ir:
+            irrf = round(sum(i["desconto"] for i in linhas_ir), 2)
+        elif not _holerite_numero(resultado.get("irrf")):
+            irrf = 0.0
+        if abs(soma_prov - bruta) > 0.05:
+            incertos += ["bruta"]
+        if abs(soma_desc - total_desc) > 0.05:
+            incertos += ["liquido_original"]
+    else:
+        incertos += ["adiantamento"]
+
+    # Bruto - descontos tem de dar o líquido.
+    # Sem os 3 valores não dá para conferir: marca para revisar.
+    if bruta and total_desc and liquido_original:
+        if abs(round(bruta - total_desc, 2) - liquido_original) > 0.05:
+            incertos += ["bruta", "liquido_original"]
+    else:
+        incertos += ["bruta", "liquido_original"]
+
+    # CNPJ com dígitos verificadores.
+    if not _cnpj_valido(cnpj):
+        incertos.append("cnpj")
+
+    # Admissão: data válida, ano de 4 dígitos e antes da competência.
+    admissao_txt = str(resultado.get("data_admissao") or "").strip()
+    admissao = _parse_data_br(admissao_txt)
+    try:
+        mes_c, ano_c = (int(x) for x in competencia.split("/"))
+        fim_comp = date(ano_c + (mes_c == 12), (mes_c % 12) + 1, 1)
+    except Exception:
+        fim_comp = None
+    if not admissao or admissao.year < 1950 or (fim_comp and admissao >= fim_comp):
+        incertos.append("data_admissao")
+    else:
+        admissao_txt = f"{admissao.day:02d}/{admissao.month:02d}/{admissao.year:04d}"
 
     # Regra SICAQ: somente adiantamento salarial volta ao líquido.
     liquida_sicaq = liquido_original + adiantamento
@@ -1856,15 +1973,15 @@ def _normalizar_holerite(resultado):
         "tipo_fonte": "JURIDICA",
         "documento": "CONTRACHEQUE/HOLLERITH",
         "cnpj": cnpj,
-        "data_admissao": str(resultado.get("data_admissao") or "").strip(),
+        "data_admissao": admissao_txt,
         "competencia": competencia,
         "bruta": _holerite_valor(bruta),
         "liquida": _holerite_valor(liquida_sicaq),
         "irrf": _holerite_valor(irrf),
         "liquido_original": _holerite_valor(liquido_original),
         "adiantamento": _holerite_valor(adiantamento),
-        "descricao_adiantamento": str(resultado.get("descricao_adiantamento") or "").strip().upper(),
-        "campos_incertos": list(resultado.get("campos_incertos") or []),
+        "descricao_adiantamento": descricao_ad,
+        "campos_incertos": sorted(set(incertos)),
     }
 
 
