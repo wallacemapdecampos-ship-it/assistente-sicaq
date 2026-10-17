@@ -74,7 +74,7 @@ def _texto_espera(segundos):
 def _groq_abrir(req, timeout=35):
     """
     Envia o pedido à Groq. No limite POR MINUTO do plano gratuito, se a espera
-    for curta (até 20 s), aguarda e tenta de novo sozinho; assim o analista
+    for curta (até 45 s), aguarda e tenta de novo sozinho; assim o analista
     não vê erro. Limite diário ou espera longa: avisa quanto tempo falta.
     """
     for tentativa in range(2):
@@ -101,7 +101,7 @@ def _groq_abrir(req, timeout=35):
                 msg = detalhe
             print(f"[GROQ] 429 {'diário' if diario else 'por minuto'}; espera={espera}; "
                   f"retry-after={cabecalho}; msg={msg[:300]!r}", flush=True)
-            if tentativa == 0 and not diario and espera is not None and espera <= 20:
+            if tentativa == 0 and not diario and espera is not None and espera <= 45:
                 time.sleep(espera + 0.7)
                 continue
             if diario:
@@ -1194,7 +1194,7 @@ def _groq_call(image_bytes, nota=""):
             "messages": [{"role": "user", "content": conteudo}],
             "temperature": 0.0,
             "top_p": 0.8,
-            "max_completion_tokens": 560,
+            "max_completion_tokens": 480,
             "stream": False,
             "reasoning_effort": "none",
             "response_format": {"type": "json_object"},
@@ -2090,8 +2090,7 @@ cuidado, sem pular para a linha de cima ou de baixo.
 Chaves, NESTA ORDEM:
 origem, competencia, empregador_tipo, empregador_documento, cpf_funcionario,
 numero_beneficio, especie_beneficio, data_admissao, itens, total_proventos,
-total_descontos, liquido_original, bruta, adiantamento_salarial_total,
-descricao_adiantamento, irrf, campos_incertos.
+total_descontos, liquido_original, campos_incertos.
 
 Regras:
 - origem: "INSS" se for extrato/demonstrativo de pagamento de benefício do
@@ -2109,29 +2108,20 @@ Regras:
 - data_admissao: campo "ADMISSÃO", em DD/MM/AAAA com ano de 4 dígitos.
   No INSS, use a data de início do benefício (DIB), se aparecer.
   Não confunda com data de pagamento, CEP, CTPS ou outras datas.
-- itens: TODAS as linhas de eventos da tabela, na ordem, cada uma como
-  {{"descricao": "...", "provento": "0,00", "desconto": "0,00"}}.
-  O valor vai em "provento" se estiver na coluna PROVENTOS/VENCIMENTOS/CRÉDITOS
-  e em "desconto" se estiver na coluna DESCONTOS/DÉBITOS. A coluna REFERÊNCIA
-  (dias, horas, %) NÃO é valor: ignore.
+- itens: TODAS as linhas de eventos da tabela, na ordem, cada uma como uma
+  lista curta [descrição, provento, desconto], ex.:
+  [["SALARIO BASE", "2000,00", "0,00"], ["INSS", "0,00", "150,00"]].
+  O valor vai em provento se estiver na coluna PROVENTOS/VENCIMENTOS/CRÉDITOS
+  e em desconto se estiver na coluna DESCONTOS/DÉBITOS. A coluna REFERÊNCIA
+  (dias, horas, %) NÃO é valor: ignore. Copie a descrição completa (ex.:
+  ADIANTAMENTO SALARIAL, I.R.R.F., EMPRÉSTIMO CONSIGNADO).
   No INSS, cada rubrica é uma linha: crédito (ex.: VALOR TOTAL DE MR DO
-  PERÍODO) em "provento" e débito (consignação, empréstimo, IR) em "desconto".
+  PERÍODO) em provento e débito (consignação, empréstimo, IR) em desconto.
 - total_proventos: linha TOTAL da coluna de proventos (TOTAL DE VENCIMENTOS).
   No INSS, o total de créditos (valor bruto).
 - total_descontos: linha TOTAL da coluna de descontos.
 - liquido_original: TOTAL LÍQUIDO / LÍQUIDO A RECEBER (no INSS, VALOR LÍQUIDO).
-- bruta: igual a total_proventos. Não use salário base, base INSS, base FGTS.
-- adiantamento_salarial_total: some SOMENTE antecipação do salário mensal,
-  usando o valor da coluna DESCONTOS dessas linhas.
-  Exemplos válidos: ADIANTAMENTO DE SALÁRIO, ADIANTAMENTO SALARIAL,
-  ADIANT. SALÁRIO, ADIANTAMENTO QUINZENAL, VALE SALÁRIO, ANTECIPAÇÃO SALARIAL.
-- NÃO trate como adiantamento salarial: empréstimo/consignado, férias,
-  adiantamento de férias, 13º, vale transporte, vale refeição, vale alimentação,
-  INSS, IRRF, pensão ou contribuições.
-- descricao_adiantamento: copie a descrição usada para formar o adiantamento;
-  se não houver, deixe vazio.
-- irrf: valor DESCONTADO de IRRF / I.R.R.F. / IMPOSTO DE RENDA RETIDO.
-  Se não houver, devolva "0,00".
+  Não use salário base, base INSS ou base FGTS como total.
 - Valores monetários no formato brasileiro, ex.: "2304,21".
 - Não invente. Campo ilegível = vazio e inclua a chave em campos_incertos.
 
@@ -2331,7 +2321,9 @@ def _groq_holerite_call(arquivos):
             "messages": [{"role": "user", "content": conteudo}],
             "temperature": 0.0,
             "top_p": 0.8,
-            "max_completion_tokens": 1250,  # inclui as linhas da tabela
+            # Plano gratuito: no máximo 1.000 tokens de resposta por minuto
+            # (OTPM). As linhas vão em formato curto para caber.
+            "max_completion_tokens": 950,
             "stream": False,
             "reasoning_effort": "none",
             "response_format": {"type": "json_object"},
@@ -2397,9 +2389,16 @@ def _cnpj_valido(cnpj):
 
 
 def _holerite_itens(itens):
-    """Normaliza as linhas transcritas: [{descricao, provento, desconto}]."""
+    """
+    Normaliza as linhas transcritas. Aceita o formato curto
+    [descricao, provento, desconto] e o antigo {descricao, provento, desconto}.
+    """
     saida = []
     for i in itens if isinstance(itens, list) else []:
+        if isinstance(i, (list, tuple)):
+            i = {"descricao": i[0] if len(i) > 0 else "",
+                 "provento": i[1] if len(i) > 1 else 0,
+                 "desconto": i[2] if len(i) > 2 else 0}
         if not isinstance(i, dict):
             continue
         desc = _tirar_acentos(str(i.get("descricao") or "")).upper().strip()
@@ -3185,7 +3184,7 @@ def ler_certidao():
     inicio = time.perf_counter()
     try:
         conteudo, texto_pdf, n_imagens = _conteudo_certidao(arquivos)
-        lido, tempo_api = _groq_json(conteudo, 400)
+        lido, tempo_api = _groq_json(conteudo, 320)
         r = _estado_civil_certidao(lido, nome_doc, texto_pdf)
         print(
             f"[CERTIDAO] tipo={r['tipo_certidao']} estado={r['estado_civil'] or '-'} "
