@@ -4,200 +4,253 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Assistente SICAQ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --tinta: #182635;
+      --tinta-2: #4b5b6b;
+      --papel: #eef2f1;
+      --folha: #ffffff;
+      --linha: #d5dde1;
+      --campo: #fafbfb;
+      --azul: #0f5a9c;
+      --azul-escuro: #0b4677;
+      --azul-claro: #e7f0f8;
+      --marca: #ffe15a;
+      --marca-fundo: #fff5bf;
+      --ok: #1f7a4d;
+      --warn: #94580a;
+      --erro: #b3261e;
+      --raio: 6px;
+    }
     * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
     body {
       margin: 0;
-      font-family: Arial, sans-serif;
-      background: #f3f6f9;
-      color: #1f2937;
+      font-family: "Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
+      background: var(--papel);
+      color: var(--tinta);
     }
+
+    /* ---------- Barra superior ---------- */
     header {
-      background: #0867b2;
-      color: #fff;
-      padding: 28px 40px;
+      position: sticky; top: 0; z-index: 5;
+      display: flex; align-items: center; gap: 22px;
+      height: 52px; padding: 0 24px;
+      background: var(--tinta); color: #fff;
     }
-    header h1 { margin: 0 0 6px; font-size: 30px; }
-    header p { margin: 0; opacity: .92; }
-    .container {
-      max-width: 1250px;
-      margin: 24px auto;
-      padding: 0 20px 40px;
-    }
-    .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+    .marca-app { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; white-space: nowrap; }
+    .marca-app svg { flex: none; }
+    .tabs { display: flex; height: 100%; gap: 4px; }
     .tab {
-      padding: 14px 26px;
-      border: 0;
-      font-weight: 700;
-      background: #e5edf5;
-      color: #1f2937;
-      border-radius: 3px;
+      height: 100%; padding: 0 14px;
+      background: none; color: #c3ceda; border: 0; border-radius: 0;
+      border-bottom: 3px solid transparent;
+      font: inherit; font-weight: 700; cursor: pointer;
     }
-    .tab.active { background: #0867b2; color: white; }
+    .tabs .tab:hover:not(:disabled) { color: #fff; background: none; border-color: transparent; }
+    .tabs .tab.active, .tabs .tab.active:hover:not(:disabled) { color: #fff; border-bottom-color: #6fb1ea; }
+    .tab.active { color: #fff; border-bottom-color: #6fb1ea; }
+    .estado-sistema { margin-left: auto; display: flex; gap: 16px; font-size: 13px; }
+    .status { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; white-space: nowrap; }
+    .status::before {
+      content: ""; width: 8px; height: 8px; border-radius: 50%;
+      background: currentColor; flex: none;
+    }
+    header .status { color: #c3ceda; }
+    header .status.ok { color: #7fd6a6; }
+    header .status.warn { color: #f5c46b; }
+    header .status.erro { color: #ff9b94; }
+
+    /* ---------- Página ---------- */
+    .container { max-width: 1120px; margin: 0 auto; padding: 18px 24px 40px; }
+    .painel { display: none; }
+    .painel.active { display: block; }
     .card {
-      background: white;
-      border: 1px solid #d5dde5;
-      padding: 22px;
-      margin-bottom: 16px;
-      border-radius: 6px;
+      background: var(--folha);
+      border: 1px solid var(--linha);
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
     }
-    .statusbar {
-      display: flex;
-      justify-content: space-between;
-      gap: 14px;
-      align-items: center;
-      flex-wrap: wrap;
-      margin-bottom: 16px;
+    .card-topo { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .card-topo h2 { margin: 0; font-size: 15px; }
+    .legenda { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--tinta-2); }
+    .legenda i {
+      width: 22px; height: 10px; border-radius: 2px;
+      background: var(--marca); transform: skewX(-12deg); display: inline-block;
     }
-    .status {
-      font-weight: 700;
-    }
-    .ok { color: #15803d; }
-    .warn { color: #b45309; }
-    .erro { color: #b91c1c; }
-    .muted { color: #64748b; }
-    .upload {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .erro { color: var(--erro); }
+    .muted { color: var(--tinta-2); }
+
+    /* ---------- Botões ---------- */
     button {
-      background: #0867b2;
-      color: white;
-      border: 0;
-      padding: 12px 22px;
-      font-weight: 700;
-      cursor: pointer;
-      border-radius: 3px;
+      font: inherit; font-weight: 700;
+      height: 34px; padding: 0 16px;
+      background: var(--azul); color: #fff;
+      border: 1px solid var(--azul); border-radius: var(--raio);
+      cursor: pointer; white-space: nowrap;
     }
-    button:disabled {
-      opacity: .55;
-      cursor: not-allowed;
+    button:hover:not(:disabled) { background: var(--azul-escuro); border-color: var(--azul-escuro); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.secondary { background: var(--folha); color: var(--azul); border-color: #b9cbdc; }
+    button.secondary:hover:not(:disabled) { background: var(--azul-claro); border-color: var(--azul); }
+    button:focus-visible, input:focus-visible, select:focus-visible, .tab:focus-visible {
+      outline: 2px solid #6fb1ea; outline-offset: 2px;
     }
-    .secondary {
-      background: #e9eff5;
-      color: #1f2937;
+    #btnSicaq { height: 38px; padding: 0 22px; font-size: 15px; }
+
+    /* ---------- Linhas de arquivo (documento, PIS, certidão) ---------- */
+    .linha-arquivo {
+      display: grid;
+      grid-template-columns: 118px minmax(0, 1.15fr) minmax(0, 1fr) 128px;
+      gap: 6px 12px; align-items: center;
+      padding: 10px 0;
+      border-top: 1px solid #e7ecef;
+    }
+    .card-topo + .linha-arquivo { border-top: 0; padding-top: 0; }
+    .linha-arquivo > label { font-weight: 700; }
+    .linha-arquivo > label small { display: block; font-weight: 400; font-size: 12px; color: var(--tinta-2); }
+    .linha-arquivo > button { width: 100%; }
+    /* Mensagens: o JS troca a classe (ok/warn/erro/muted), por isso o seletor é pelo id. */
+    #mensagem, #msgPis, #msgCertidao, #mensagemHolerite { grid-column: 2 / -1; font-size: 12.5px; font-weight: 700; }
+    #mensagem.muted, #msgPis.muted, #msgCertidao.muted, #mensagemHolerite.muted { font-weight: 400; }
+    [hidden] { display: none !important; }
+    .vazio {
+      margin: 0; padding: 22px 16px; text-align: center;
+      color: var(--tinta-2); font-size: 13.5px;
+      border: 1px dashed var(--linha); border-radius: var(--raio); background: #fbfcfc;
+    }
+    .dica { font-size: 12.5px; color: var(--tinta-2); }
+    input[type="file"] { font: inherit; font-size: 13px; color: var(--tinta-2); width: 100%; min-width: 0; }
+    input[type="file"]::file-selector-button {
+      font: inherit; font-weight: 700; font-size: 13px;
+      height: 32px; margin-right: 10px; padding: 0 12px;
+      background: var(--azul-claro); color: var(--azul);
+      border: 1px dashed #8fb0cf; border-radius: var(--raio); cursor: pointer;
+    }
+    input[type="file"]::file-selector-button:hover { background: #d9e8f5; }
+    .linha-arquivo #pis, .linha-arquivo #estadoCivil {
+      width: 100%; height: 34px; padding: 0 10px;
+      border: 1px solid #c7d2d9; border-radius: var(--raio);
+      background: var(--campo); font: inherit; color: var(--tinta);
+    }
+
+    /* ---------- Campos lidos ---------- */
+    #tipoDetectado {
+      font-size: 12.5px; font-weight: 700;
+      color: var(--azul); background: var(--azul-claro);
+      padding: 3px 10px; border-radius: 999px;
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 14px 28px;
-      margin-top: 15px;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      grid-auto-flow: row dense;
+      gap: 10px 14px;
     }
-    .campo {
-      grid-column: span 3;
-    }
-    .pisbar {
-      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-      margin-top: 14px; padding-top: 12px; border-top: 1px dashed #d5dde5;
-    }
-    .pisbar label { font-size: 13px; font-weight: 700; }
-    .pisbar #pis {
-      padding: 8px 10px; border: 1px solid #9da9b5; border-radius: 3px;
-      background: #f1faf3; font-size: 15px; width: 170px;
-    }
-    .pisbar button { padding: 9px 16px; }
-    #msgPis, #msgCertidao { font-size: 13px; font-weight: 700; }
-    .pisbar #estadoCivil {
-      padding: 8px 10px; border: 1px solid #9da9b5; border-radius: 3px;
-      background: #f1faf3; font-size: 14px; width: 340px; max-width: 100%;
-    }
-    .nat { display: flex; gap: 8px; }
-    .nat #natUf { flex: 0 0 86px; width: 86px; }
-    .nat #naturalidade { flex: 1 1 auto; min-width: 0; }
-    .campo.cnh-terco {
-      grid-column: span 2;
-    }
-    .campo label {
-      display: block;
-      font-size: 13px;
-      font-weight: 700;
-      margin-bottom: 5px;
-    }
+    .campo { grid-column: span var(--span, 4); min-width: 0; }
+    .campo label { display: block; font-size: 12.5px; font-weight: 700; color: var(--tinta-2); margin-bottom: 3px; }
     .campo input, .campo select {
-      width: 100%;
-      padding: 10px;
-      border: 1px solid #9da9b5;
-      border-radius: 3px;
-      background: #f1faf3;
-      font-size: 15px;
+      width: 100%; height: 34px; padding: 0 10px;
+      border: 1px solid #c7d2d9; border-radius: var(--raio);
+      background: var(--campo);
+      font: inherit; font-size: 14px; color: var(--tinta);
       text-transform: uppercase;
     }
-    .rodape {
-      display: flex;
-      justify-content: flex-end;
-      margin-top: 20px;
+    .campo input:focus, .campo select:focus, .linha-arquivo #pis:focus, .linha-arquivo #estadoCivil:focus {
+      border-color: var(--azul); background: #fff; outline: none; box-shadow: 0 0 0 3px #d4e6f6;
     }
-    #mensagem, #mensagemHolerite {
-      margin-top: 12px;
-      font-weight: 700;
-    }
-    .painel { display: none; }
-    .painel.active { display: block; }
-    .fixo {
-      background: #eef3f8 !important;
-      font-weight: 700;
-    }
+    .nat { display: flex; gap: 6px; }
+    .nat #natUf { flex: 0 0 74px; width: 74px; }
+    .nat #naturalidade { flex: 1 1 auto; min-width: 0; }
+    .fixo { background: #eef2f5 !important; color: var(--tinta-2) !important; font-weight: 700; }
+
+    /* Campo para conferir: marca-texto amarelo. */
     .destaque {
-      background: #fff2b2 !important;
+      background: var(--marca-fundo) !important;
+      border-color: #e2b500 !important;
+      box-shadow: inset 0 -3px 0 var(--marca) !important;
     }
-    .nota {
-      margin-top: 12px;
-      font-size: 13px;
-      font-weight: 700;
-      color: #5f6b7a;
-      line-height: 1.45;
+
+    .acoes {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      margin-top: 14px; padding-top: 12px; border-top: 1px solid #e7ecef;
     }
-    @media (max-width: 700px) {
+    .nota { margin-top: 12px; font-size: 12.5px; color: var(--tinta-2); line-height: 1.5; }
+
+    /* Holerite: 4 por linha. */
+    #painelHolerite .campo { --span: 3; }
+
+    @media (max-width: 860px) {
+      header { gap: 14px; padding: 0 14px; }
+      .estado-sistema { gap: 10px; }
+      .container { padding: 14px 14px 32px; }
+      #painelHolerite .campo { --span: 6; }
+    }
+    @media (max-width: 720px) {
+      header { height: auto; flex-wrap: wrap; padding: 8px 14px 0; position: static; }
+      .tabs { order: 3; width: 100%; height: 40px; }
+      .estado-sistema { margin-left: auto; font-size: 12px; }
+      .estado-sistema .status { font-size: 12px; }
+      .linha-arquivo { grid-template-columns: 1fr; }
+      #mensagem, #msgPis, #msgCertidao, #mensagemHolerite { grid-column: 1; }
       .grid { grid-template-columns: 1fr; }
-      .campo, .campo.cnh-terco { grid-column: span 1; }
-      header { padding: 22px 20px; }
+      .campo, #painelHolerite .campo { grid-column: 1 / -1; }
     }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
   </style>
 </head>
 <body>
 <header>
-  <h1>ASSISTENTE SICAQ</h1>
-  <p>Leitura inteligente de CNH, RG e CIN • preenchimento assistido</p>
+  <div class="marca-app">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+      <rect x="3" y="2" width="16" height="18" rx="2.5" fill="none" stroke="#6fb1ea" stroke-width="1.8"/>
+      <path d="M7 8h8M7 11.5h5" stroke="#c3ceda" stroke-width="1.8" stroke-linecap="round"/>
+      <path d="M11.5 15.2l1.8 1.8 3.4-3.6" fill="none" stroke="#ffe15a" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    Assistente SICAQ
+  </div>
+  <nav class="tabs" aria-label="Seções">
+    <button id="tabIdentificacao" class="tab active" type="button">Identificação</button>
+    <button id="tabHolerite" class="tab" type="button">Holerite</button>
+  </nav>
+  <div class="estado-sistema">
+    <div id="statusServidor" class="status warn">Verificando servidor</div>
+    <div id="statusExtensao" class="status warn">Extensão: verificando</div>
+  </div>
 </header>
 
-<div class="container">
-  <div class="tabs">
-    <button id="tabIdentificacao" class="tab active" type="button">IDENTIFICAÇÃO</button>
-    <button id="tabHolerite" class="tab" type="button">HOLERITE</button>
-  </div>
-
+<main class="container">
   <section id="painelIdentificacao" class="painel active">
   <div class="card">
-    <div class="statusbar">
-      <h3 style="margin:0">Documento de identificação</h3>
-      <div id="statusServidor" class="status warn">Verificando servidor...</div>
-    </div>
+    <div class="card-topo"><h2>Arquivos do cliente</h2></div>
 
-    <div class="upload">
+    <div class="linha-arquivo">
+      <label for="documento">Documento<small>CNH, RG ou CIN</small></label>
       <input type="file" id="documento" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
-      <button id="btnLer" type="button" disabled>LER DOCUMENTO</button>
-      <span class="muted" style="font-size:13px;">Pode selecionar 1 ou 2 arquivos (ex.: frente + verso do RG)</span>
+      <span class="dica">PDF, foto ou print. Frente e verso: até 2 arquivos.</span>
+      <button id="btnLer" type="button" disabled>Ler documento</button>
+      <div id="mensagem" class="msg muted">Aguarde a conexão com o servidor.</div>
     </div>
 
-    <div id="mensagem" class="muted">
-      Aguarde a conexão com o servidor.
-    </div>
-
-    <div class="pisbar">
-      <label for="pis">PIS/NIS (opcional)</label>
+    <div class="linha-arquivo">
+      <label for="pisArquivo">PIS/NIS<small>opcional</small></label>
       <input type="file" id="pisArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp">
-      <button id="btnLerPis" type="button" class="secondary">LER PIS</button>
-      <input id="pis" type="text" inputmode="numeric" maxlength="14" placeholder="ou digite o PIS">
-      <span id="msgPis" class="muted">Extrato do FGTS, Carteira de Trabalho Digital ou documento com o nº do PIS.</span>
+      <input id="pis" type="text" inputmode="numeric" maxlength="14" placeholder="ou digite o número" aria-label="Número do PIS/NIS">
+      <button id="btnLerPis" type="button" class="secondary">Ler PIS</button>
+      <span id="msgPis" class="msg muted">Extrato do FGTS, Carteira de Trabalho Digital ou documento com o nº do PIS.</span>
     </div>
 
-    <div class="pisbar">
-      <label for="estadoCivil">Estado civil (opcional)</label>
+    <div class="linha-arquivo">
+      <label for="certidaoArquivo">Estado civil<small>opcional</small></label>
       <input type="file" id="certidaoArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
-      <button id="btnLerCertidao" type="button" class="secondary">LER CERTIDÃO</button>
-      <select id="estadoCivil">
+      <select id="estadoCivil" aria-label="Estado civil">
         <option value=""></option>
         <option>SOLTEIRO (A)</option>
         <option>DIVORCIADO (A)</option>
@@ -207,17 +260,23 @@
         <option>CASADO (A) COM SEPARAÇÃO DE BENS</option>
         <option>CASADO (A) COM COMUNHÃO PARCIAL DE BENS</option>
       </select>
-      <span id="msgCertidao" class="muted">Certidão de nascimento, de casamento (com as averbações) ou de óbito do cônjuge. Pode mandar frente + verso.</span>
+      <button id="btnLerCertidao" type="button" class="secondary">Ler certidão</button>
+      <span id="msgCertidao" class="msg muted">Certidão de nascimento, de casamento (com as averbações) ou de óbito do cônjuge. Pode mandar frente + verso.</span>
     </div>
   </div>
 
   <div class="card" id="cardDados">
-    <div id="tipoDetectado" style="display:none;font-weight:700;font-size:18px;margin-bottom:14px;color:#0b5fa5;"></div>
-    <h3>Dados identificados</h3>
+    <div class="card-topo">
+      <h2>Dados do documento</h2>
+      <div id="tipoDetectado" style="display:none"></div>
+      <span class="legenda"><i></i>Amarelo: confira no documento</span>
+    </div>
+
+    <p id="semDados" class="vazio">Escolha o arquivo do documento e clique em Ler documento. Os dados lidos aparecem aqui para você conferir.</p>
 
     <div class="grid">
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Documento</label>
+        <label for="documentoTipo">Documento</label>
         <select id="documentoTipo">
           <option value=""></option>
           <option>CNH</option>
@@ -227,32 +286,32 @@
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Nome</label>
+        <label for="nome">Nome</label>
         <input id="nome" type="text">
       </div>
 
       <div class="campo" data-tipos="RG CIN">
-        <label>CPF</label>
+        <label for="cpf">CPF</label>
         <input id="cpf" type="text">
       </div>
 
       <div class="campo" data-tipos="RG">
-        <label>RG</label>
+        <label for="rg">RG</label>
         <input id="rg" type="text">
       </div>
 
       <div class="campo" data-tipos="CNH">
-        <label>Número CNH</label>
+        <label for="numero_cnh">Nº registro CNH</label>
         <input id="numero_cnh" type="text">
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>UF Emissão</label>
+        <label for="uf">UF emissão</label>
         <input id="uf" type="text">
       </div>
 
       <div class="campo" data-tipos="RG CIN">
-        <label>Órgão Emissor</label>
+        <label for="orgao">Órgão emissor</label>
         <select id="orgao">
           <option value=""></option>
           <option>SECRETARIA DE SEGURANÇA PÚBLICA</option>
@@ -264,27 +323,27 @@
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Data Nascimento</label>
+        <label for="nascimento">Nascimento</label>
         <input id="nascimento" type="text">
       </div>
 
       <div class="campo" data-tipos="CNH">
-        <label>1ª Habilitação</label>
+        <label for="primeira">1ª habilitação</label>
         <input id="primeira" type="text">
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Emissão</label>
+        <label for="emissao">Emissão</label>
         <input id="emissao" type="text">
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Validade</label>
+        <label for="validade">Validade</label>
         <input id="validade" type="text">
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Sexo</label>
+        <label for="sexo">Sexo</label>
         <select id="sexo">
           <option value=""></option>
           <option>MASCULINO</option>
@@ -293,12 +352,12 @@
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Nacionalidade</label>
+        <label for="nacionalidade">Nacionalidade</label>
         <input id="nacionalidade" type="text">
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Naturalidade</label>
+        <label for="natUf">Naturalidade</label>
         <div class="nat">
           <select id="natUf" aria-label="UF de nascimento"></select>
           <select id="naturalidade" aria-label="Município de nascimento"></select>
@@ -306,114 +365,111 @@
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Pai</label>
+        <label for="pai">Pai</label>
         <input id="pai" type="text">
       </div>
 
       <div class="campo" data-tipos="CNH RG CIN">
-        <label>Mãe</label>
+        <label for="mae">Mãe</label>
         <input id="mae" type="text">
       </div>
     </div>
 
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:18px;">
-      <div id="statusExtensao" class="status warn">Extensão SICAQ: verificando...</div>
-      <button id="btnSicaq" type="button" disabled>PREENCHER SICAQ</button>
+    <div class="acoes">
+      <span class="dica">Deixe a tela Dados Cadastrais do SICAQ aberta e logada.</span>
+      <button id="btnSicaq" type="button" disabled>Preencher SICAQ</button>
     </div>
   </div>
   </section>
 
   <section id="painelHolerite" class="painel">
     <div class="card">
-      <div class="statusbar">
-        <h3 style="margin:0">Holerite / Contracheque</h3>
-        <div id="statusServidorHolerite" class="status ok">Servidor online • Groq/Qwen</div>
-      </div>
-
-      <div class="upload">
+      <div class="card-topo"><h2>Holerite / contracheque</h2></div>
+      <div class="linha-arquivo">
+        <label for="holeriteArquivo">Holerite<small>1 ou 2 arquivos</small></label>
         <input type="file" id="holeriteArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
-        <button id="btnLerHolerite" type="button" disabled>LER HOLERITE</button>
-        <span class="muted" style="font-size:13px;">Pode selecionar 1 ou 2 arquivos de holerite</span>
+        <span class="dica">PDF, foto ou print do contracheque.</span>
+        <button id="btnLerHolerite" type="button" disabled>Ler holerite</button>
+        <div id="mensagemHolerite" class="msg muted">Selecione um holerite para leitura.</div>
       </div>
-
-      <div id="mensagemHolerite" class="muted">
-        Selecione um holerite para leitura.
-      </div>
+      <div id="statusServidorHolerite" class="status ok" hidden>Servidor online</div>
     </div>
 
     <div class="card">
-      <h3>Renda Formal - dados para o SICAQ</h3>
+      <div class="card-topo">
+        <h2>Renda formal para o SICAQ</h2>
+        <span class="legenda"><i></i>Amarelo: confira no holerite</span>
+      </div>
 
       <div class="grid">
         <div class="campo">
-          <label>Característica da Renda</label>
+          <label for="hCaracteristica">Característica da renda</label>
           <input id="hCaracteristica" class="fixo" value="COMPROVADA" readonly>
         </div>
 
         <div class="campo">
-          <label>Documento</label>
+          <label for="hDocumento">Documento</label>
           <input id="hDocumento" class="fixo" value="CONTRACHEQUE/HOLLERITH" readonly>
         </div>
 
         <div class="campo">
-          <label>Tipo de Fonte</label>
+          <label for="hTipoFonte">Tipo de fonte</label>
           <input id="hTipoFonte" class="fixo" value="JURIDICA" readonly>
         </div>
 
         <div class="campo">
-          <label>Data do Comprovante</label>
+          <label for="hCompetencia">Data do comprovante</label>
           <input id="hCompetencia" type="text">
         </div>
 
         <div class="campo">
-          <label>CNPJ</label>
+          <label for="hCnpj">CNPJ</label>
           <input id="hCnpj" type="text">
         </div>
 
         <div class="campo">
-          <label>IRRF</label>
+          <label for="hIrrf">IRRF</label>
           <input id="hIrrf" type="text">
         </div>
 
         <div class="campo">
-          <label>Data de Admissão</label>
+          <label for="hAdmissao">Data de admissão</label>
           <input id="hAdmissao" type="text">
         </div>
 
         <div class="campo">
-          <label>Líquido do Holerite</label>
+          <label for="hLiquidoOriginal">Líquido do holerite</label>
           <input id="hLiquidoOriginal" type="text">
         </div>
 
         <div class="campo">
-          <label>Bruta</label>
+          <label for="hBruta">Bruta</label>
           <input id="hBruta" type="text">
         </div>
 
         <div class="campo">
-          <label>Adiantamento Salarial</label>
+          <label for="hAdiantamento">Adiantamento salarial</label>
           <input id="hAdiantamento" type="text">
         </div>
 
         <div class="campo">
-          <label>Líquida para o SICAQ</label>
+          <label for="hLiquida">Líquida para o SICAQ</label>
           <input id="hLiquida" type="text">
         </div>
 
         <div class="campo">
-          <label>Descrição do Adiantamento</label>
+          <label for="hDescricaoAdiantamento">Descrição do adiantamento</label>
           <input id="hDescricaoAdiantamento" type="text">
         </div>
       </div>
 
       <div id="notaHolerite" class="nota">
-        Regra: Bruta = Total de Proventos. Líquida = Líquido a Receber + somente Adiantamento Salarial.
-        Empréstimos/consignados NÃO são somados.
+        Regra: Bruta = total de proventos. Líquida = líquido a receber + somente o adiantamento salarial.
+        Empréstimos e consignados não são somados.
       </div>
     </div>
   </section>
-</div>
-
+</main>
 <script>
   const API = "https://assistente-sicaq.onrender.com";
   let ultimoDados = null;
@@ -479,39 +535,50 @@
   function ajustarCampos(tipo) {
     const t = (tipo || "").toUpperCase().trim();
 
-    const ordemCNH = {
-      documentoTipo: 1,
-      nome: 2,
-      numero_cnh: 3,
-      uf: 4,
-      nascimento: 5,
-      sexo: 6,
-      primeira: 7,
-      nacionalidade: 8,
-      emissao: 9,
-      natUf: 10,
-      validade: 11,
-      pai: 12,
-      mae: 13
+    // Posição e largura (em 12 colunas) de cada campo, por tipo de documento.
+    // Cada linha soma 12 para a grade ficar alinhada.
+    const LAYOUT = {
+      CNH: [["documentoTipo", 2], ["nome", 7], ["numero_cnh", 3],
+            ["nascimento", 2], ["sexo", 2], ["nacionalidade", 3], ["natUf", 5],
+            ["uf", 3], ["primeira", 3], ["emissao", 3], ["validade", 3],
+            ["pai", 6], ["mae", 6]],
+      RG:  [["documentoTipo", 2], ["nome", 7], ["cpf", 3],
+            ["rg", 3], ["orgao", 5], ["uf", 2], ["emissao", 2],
+            ["nascimento", 2], ["sexo", 2], ["nacionalidade", 2], ["natUf", 4], ["validade", 2],
+            ["pai", 6], ["mae", 6]],
+      CIN: [["documentoTipo", 2], ["nome", 7], ["cpf", 3],
+            ["orgao", 5], ["uf", 2], ["emissao", 2], ["validade", 3],
+            ["nascimento", 2], ["sexo", 2], ["nacionalidade", 3], ["natUf", 5],
+            ["pai", 6], ["mae", 6]],
+      TODOS: [["documentoTipo", 2], ["nome", 7], ["cpf", 3],
+            ["rg", 3], ["numero_cnh", 3], ["orgao", 4], ["uf", 2],
+            ["nascimento", 2], ["primeira", 2], ["emissao", 2], ["validade", 2], ["sexo", 2], ["nacionalidade", 2],
+            ["natUf", 4], ["pai", 4], ["mae", 4]]
     };
+    const posicao = {};
+    (LAYOUT[t] || []).forEach(([id, span], i) => { posicao[id] = [i + 1, span]; });
 
+    let visiveis = 0;
     document.querySelectorAll(".campo[data-tipos]").forEach(el => {
       const tipos = el.dataset.tipos.split(/\s+/);
-      el.style.display = (t === "TODOS" || (t && tipos.includes(t))) ? "" : "none";
+      const mostra = t === "TODOS" || (t && tipos.includes(t));
+      el.style.display = mostra ? "" : "none";
+      if (mostra) visiveis++;
 
       const input = el.querySelector("input, select");
-      if (t === "CNH" && input) {
-        el.style.order = String(ordemCNH[input.id] || 50);
-      } else {
-        el.style.order = "";
-      }
+      const pos = input && posicao[input.id];
+      el.style.order = pos ? String(pos[0]) : "";
+      if (pos) el.style.setProperty("--span", pos[1]);
+      else el.style.removeProperty("--span");
     });
+    document.getElementById("semDados").style.display = visiveis ? "none" : "";
+    document.getElementById("cardDados").querySelector(".legenda").style.visibility = visiveis ? "" : "hidden";
 
     const titulo = document.getElementById("tipoDetectado");
     if (t) {
       titulo.textContent = t === "TODOS"
-        ? "Tipo do documento não identificado: escolha CNH, RG ou CIN no campo Documento."
-        : "Tipo identificado pelo Qwen: " + t;
+        ? "Tipo não identificado: escolha CNH, RG ou CIN no campo Documento"
+        : "Identificado: " + t;
       titulo.style.display = "block";
     } else {
       titulo.textContent = "";
@@ -663,7 +730,7 @@
       return;
     }
     btn.disabled = true;
-    btn.textContent = "LENDO...";
+    btn.textContent = "Lendo…";
     setMsgPis("Procurando o número do PIS...", "warn");
     const form = new FormData();
     form.append("file", input.files[0]);
@@ -693,7 +760,7 @@
       setMsgPis("Erro: " + (e.message || e), "erro");
     } finally {
       btn.disabled = false;
-      btn.textContent = "LER PIS";
+      btn.textContent = "Ler PIS";
     }
   }
 
@@ -729,7 +796,7 @@
       return;
     }
     btn.disabled = true;
-    btn.textContent = "LENDO...";
+    btn.textContent = "Lendo…";
     setMsgCertidao("Lendo a certidão e as averbações...", "warn");
     const form = new FormData();
     Array.from(input.files).forEach(f => form.append("files", f));
@@ -753,7 +820,7 @@
       setMsgCertidao("Erro: " + (e.message || e), "erro");
     } finally {
       btn.disabled = false;
-      btn.textContent = "LER CERTIDÃO";
+      btn.textContent = "Ler certidão";
     }
   }
 
@@ -894,7 +961,7 @@
 
     aguardandoSicaq = true;
     atualizarBotaoSicaq();
-    document.getElementById("btnSicaq").textContent = "PREENCHENDO...";
+    document.getElementById("btnSicaq").textContent = "Preenchendo…";
     setMensagem("Enviando os dados para a extensão. Deixe a página Dados Cadastrais do SICAQ aberta e logada.", "warn");
 
     window.postMessage({
@@ -913,7 +980,7 @@
     if (msg.type === "EXTENSION_READY") {
       extensaoPronta = true;
       const el = document.getElementById("statusExtensao");
-      el.textContent = "Extensão SICAQ conectada";
+      el.textContent = "Extensão conectada";
       el.className = "status ok";
       atualizarBotaoSicaq();
       return;
@@ -921,13 +988,13 @@
 
     if (msg.type === "SICAQ_ACCEPTED" && !msg.ok) {
       aguardandoSicaq = false;
-      document.getElementById("btnSicaq").textContent = "PREENCHER SICAQ";
+      document.getElementById("btnSicaq").textContent = "Preencher SICAQ";
       atualizarBotaoSicaq();
       const erroExt = String(msg.error || "");
       // Extensão recarregada/atualizada com esta página aberta: a ligação
       // antiga deixa de existir até a página ser recarregada.
       if (/sendMessage|context invalidated|runtime/i.test(erroExt)) {
-        setMensagem("A extensão foi atualizada ou recarregada. Aperte Ctrl+F5 nesta página (e F5 na página do SICAQ) e clique em PREENCHER SICAQ de novo.", "erro");
+        setMensagem("A extensão foi atualizada ou recarregada. Aperte Ctrl+F5 nesta página (e F5 na página do SICAQ) e clique em Preencher SICAQ de novo.", "erro");
       } else {
         setMensagem("A extensão não aceitou o comando: " + (erroExt || "erro desconhecido"), "erro");
       }
@@ -936,7 +1003,7 @@
 
     if (msg.type === "SICAQ_RESULT") {
       aguardandoSicaq = false;
-      document.getElementById("btnSicaq").textContent = "PREENCHER SICAQ";
+      document.getElementById("btnSicaq").textContent = "Preencher SICAQ";
       atualizarBotaoSicaq();
       const r = msg.result || {};
       if (r.ok) {
@@ -958,7 +1025,7 @@
   async function checarServidor() {
     const status = document.getElementById("statusServidor");
     const btn = document.getElementById("btnLer");
-    status.textContent = "Conectando ao servidor...";
+    status.textContent = "Conectando ao servidor";
     status.className = "status warn";
 
     try {
@@ -969,35 +1036,35 @@
         throw new Error("Servidor ou Groq indisponível.");
       }
 
-      status.textContent = "Servidor online • Groq/Qwen configurado";
+      status.textContent = "Servidor online";
       status.className = "status ok";
       btn.disabled = false;
-      setMensagem("Selecione um documento e clique em LER DOCUMENTO.", "muted");
+      setMensagem("Selecione um documento e clique em Ler documento.", "muted");
 
       const hbtn = document.getElementById("btnLerHolerite");
       if (hbtn) hbtn.disabled = false;
       const hstatus = document.getElementById("statusServidorHolerite");
       if (hstatus) {
-        hstatus.textContent = "Servidor online • Groq/Qwen configurado";
+        hstatus.textContent = "Servidor online";
         hstatus.className = "status ok";
       }
       const validas = data.holerite_competencias || [];
       const nota = document.getElementById("notaHolerite");
       if (nota && validas.length >= 3) {
         nota.textContent =
-          "Regra: Bruta = Total de Proventos. Líquida = Líquido a Receber + somente Adiantamento Salarial. " +
-          "Empréstimos/consignados NÃO são somados. Período aceito: " +
+          "Regra: Bruta = total de proventos. Líquida = líquido a receber + somente o adiantamento salarial. " +
+          "Empréstimos e consignados não são somados. Período aceito: " +
           validas[0] + ", " + validas[1] + " e " + validas[2] + ".";
       }
     } catch (e) {
-      status.textContent = "Servidor iniciando ou indisponível";
+      status.textContent = "Servidor indisponível";
       status.className = "status erro";
       btn.disabled = true;
       const hbtn = document.getElementById("btnLerHolerite");
       if (hbtn) hbtn.disabled = true;
       const hstatus = document.getElementById("statusServidorHolerite");
       if (hstatus) {
-        hstatus.textContent = "Servidor iniciando ou indisponível";
+        hstatus.textContent = "Servidor indisponível";
         hstatus.className = "status erro";
       }
       setMensagem("No plano gratuito do Render, a primeira conexão pode demorar até cerca de 1 minuto. Tentando novamente...", "warn");
@@ -1023,7 +1090,7 @@
     limparCampos();
     ajustarCampos("");
     btn.disabled = true;
-    btn.textContent = "LENDO...";
+    btn.textContent = "Lendo…";
 
     const qtd = input.files.length;
     setMensagem(
@@ -1056,21 +1123,20 @@
 
       preencher(data.dados || {});
       const duvidosos = destacarIncertos((data.dados || {}).campos_incertos);
-      const total = ((performance.now() - inicio) / 1000).toFixed(2);
-      const api = data.tempo_api ? ` • Groq/Qwen: ${data.tempo_api}s` : "";
+      const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const qtd = data.arquivos_lidos || input.files.length || 1;
       setMensagem(
-        `Leitura concluída (${qtd} arquivo${qtd > 1 ? "s" : ""}) em ${total}s${api}. ` +
+        `${qtd > 1 ? qtd + " arquivos lidos" : "Documento lido"} em ${total} s. ` +
         (duvidosos
-          ? `Confira no documento o${duvidosos > 1 ? "s campos" : " campo"} em amarelo antes de continuar.`
-          : "Revise os dados antes de continuar."),
+          ? `Confira no documento o${duvidosos > 1 ? "s campos" : " campo"} em amarelo antes de preencher.`
+          : "Revise os dados antes de preencher."),
         duvidosos ? "warn" : "ok"
       );
     } catch (e) {
       setMensagem("Erro: " + (e.message || e), "erro");
     } finally {
       btn.disabled = false;
-      btn.textContent = "LER DOCUMENTO";
+      btn.textContent = "Ler documento";
     }
   }
 
@@ -1087,7 +1153,7 @@
     ajustarCampos(event.target.value || "TODOS");
     if (event.target.value) {
       document.getElementById("tipoDetectado").textContent =
-        "Tipo escolhido manualmente: " + event.target.value;
+        "Escolhido: " + event.target.value;
     }
     atualizarBotaoSicaq();
   });
@@ -1112,7 +1178,7 @@
       setMsgCertidao("Selecione no máximo 2 arquivos (frente + verso da mesma certidão).", "erro");
       event.target.value = "";
     } else if (qtd) {
-      setMsgCertidao((qtd === 2 ? "2 arquivos (frente + verso)." : "1 arquivo.") + " Clique em LER CERTIDÃO.");
+      setMsgCertidao((qtd === 2 ? "2 arquivos (frente + verso)." : "1 arquivo.") + " Clique em Ler certidão.");
     }
   });
 
@@ -1131,7 +1197,7 @@
     } else if (qtd === 2) {
       setMensagem("2 arquivos selecionados: vou tratar como frente + verso do mesmo documento.", "muted");
     } else if (qtd === 1) {
-      setMensagem("1 arquivo selecionado. Clique em LER DOCUMENTO.", "muted");
+      setMensagem("1 arquivo selecionado. Clique em Ler documento.", "muted");
     }
   });
 
@@ -1216,7 +1282,7 @@
 
     limparHolerite();
     btn.disabled = true;
-    btn.textContent = "LENDO...";
+    btn.textContent = "Lendo…";
 
     const qtd = input.files.length;
     setMensagemHolerite(
@@ -1251,11 +1317,10 @@
       }
 
       const duvidososH = preencherHolerite(data.dados || {});
-      const total = ((performance.now() - inicio) / 1000).toFixed(2);
-      const api = data.tempo_api ? ` • Groq/Qwen: ${data.tempo_api}s` : "";
+      const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const qtdLidos = data.arquivos_lidos || input.files.length || 1;
       setMensagemHolerite(
-        `${qtdLidos} arquivo${qtdLidos > 1 ? "s" : ""} de holerite lido${qtdLidos > 1 ? "s" : ""} em ${total}s${api}. ` +
+        `${qtdLidos > 1 ? qtdLidos + " holerites lidos" : "Holerite lido"} em ${total} s. ` +
         (duvidososH
           ? "As contas ou dados em amarelo não fecharam: confira no holerite antes de usar."
           : "Contas conferidas (proventos − descontos = líquido). Revise os valores."),
@@ -1265,7 +1330,7 @@
       setMensagemHolerite("Erro: " + (e.message || e), "erro");
     } finally {
       btn.disabled = false;
-      btn.textContent = "LER HOLERITE";
+      btn.textContent = "Ler holerite";
     }
   }
 
@@ -1289,7 +1354,7 @@
         "muted"
       );
     } else if (qtd === 1) {
-      setMensagemHolerite("Holerite selecionado. Clique em LER HOLERITE.", "muted");
+      setMensagemHolerite("Holerite selecionado. Clique em Ler holerite.", "muted");
     }
   });
 
