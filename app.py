@@ -455,47 +455,58 @@ def _pdf_area_documento(page):
 PAINEIS_PDF_DIGITAL = True
 
 
-def _pdf_paineis_lado_a_lado(page):
+def _pdf_paineis(page):
     """
     PDF digital do gov.br (CNH/CIN): o cartão vem como 2-4 imagens (painéis)
-    pequenas numa página A4. Monta uma faixa com os painéis LADO A LADO, na
-    resolução original, sem cabeçalho/QR code: as letras chegam à IA com
-    cerca do dobro do tamanho. Qualquer dúvida -> None (usa a página inteira).
+    pequenas numa página A4. Devolve os painéis (de cima para baixo) na
+    resolução original, ou None quando a página não é desse tipo.
     """
-    try:
-        pagina = page.rect
-        paineis = []
-        for info in page.get_image_info():
-            larg_px = int(info.get("width") or 0)
-            alt_px = int(info.get("height") or 0)
-            comps = int(info.get("colorspace") or 0)
-            bpc = int(info.get("bpc") or 0)
-            if larg_px < 600 or alt_px < 350 or comps < 3 or bpc < 8:
-                continue
-            caixa = pymupdf.Rect(info["bbox"]) & pagina
-            if caixa.is_empty or caixa.width < 50 or caixa.height < 30:
-                continue
-            razao = max(caixa.width, caixa.height) / min(caixa.width, caixa.height)
-            if not (1.2 <= razao <= 1.95):
-                continue
-            paineis.append((caixa, larg_px))
-        if not (2 <= len(paineis) <= 4):
+    pagina = page.rect
+    paineis = []
+    for info in page.get_image_info():
+        larg_px = int(info.get("width") or 0)
+        alt_px = int(info.get("height") or 0)
+        comps = int(info.get("colorspace") or 0)
+        bpc = int(info.get("bpc") or 0)
+        if larg_px < 600 or alt_px < 350 or comps < 3 or bpc < 8:
+            continue
+        caixa = pymupdf.Rect(info["bbox"]) & pagina
+        if caixa.is_empty or caixa.width < 50 or caixa.height < 30:
+            continue
+        razao = max(caixa.width, caixa.height) / min(caixa.width, caixa.height)
+        if not (1.2 <= razao <= 1.95):
+            continue
+        paineis.append((caixa, larg_px))
+    if not (2 <= len(paineis) <= 4):
+        return None
+
+    # Dado do cliente escrito como texto FORA dos painéis: não arrisca.
+    for bloco in page.get_text("blocks"):
+        caixa_txt = pymupdf.Rect(bloco[:4])
+        if any(caixa_txt.intersects(c) for c, _ in paineis):
+            continue
+        if re.search(r"\d{2}/\d{2}/\d{4}|\d{3}\.?\d{3}\.?\d{3}-?\d{2}", str(bloco[4] or "")):
             return None
 
-        # Dado do cliente escrito como texto FORA dos painéis: não arrisca.
-        for bloco in page.get_text("blocks"):
-            caixa_txt = pymupdf.Rect(bloco[:4])
-            if any(caixa_txt.intersects(c) for c, _ in paineis):
-                continue
-            if re.search(r"\d{2}/\d{2}/\d{4}|\d{3}\.?\d{3}\.?\d{3}-?\d{2}", str(bloco[4] or "")):
-                return None
+    paineis.sort(key=lambda p: (round(p[0].y0), p[0].x0))
+    imgs = []
+    for caixa, larg_px in paineis:
+        zoom = max(1.0, min(5.0, larg_px / caixa.width))
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=caixa, alpha=False)
+        imgs.append(Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB"))
+    return imgs
 
-        paineis.sort(key=lambda p: (round(p[0].y0), p[0].x0))
-        imgs = []
-        for caixa, larg_px in paineis:
-            zoom = max(1.0, min(5.0, larg_px / caixa.width))
-            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=caixa, alpha=False)
-            imgs.append(Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB"))
+
+def _pdf_paineis_lado_a_lado(page):
+    """
+    Monta uma faixa com os painéis do PDF digital LADO A LADO, na resolução
+    original, sem cabeçalho/QR code: as letras chegam à IA com cerca do
+    dobro do tamanho. Qualquer dúvida -> None (usa a página inteira).
+    """
+    try:
+        imgs = _pdf_paineis(page)
+        if not imgs:
+            return None
 
         altura = max(i.height for i in imgs)
         imgs = [
@@ -522,6 +533,186 @@ def _pdf_paineis_lado_a_lado(page):
     except Exception as e:
         print(f"[LER] painéis do PDF não montados ({type(e).__name__}); usando a página", flush=True)
         return None
+
+
+# ============================================================
+# CNH DIGITAL DO GOV.BR (PDF "CNH Digital" da Senatran)
+# Modelo mais comum: sempre o mesmo layout, com 3 painéis (frente, verso e
+# MRZ). A MRZ é lida aqui mesmo, sem IA (letra OCR-B fixa, conferida pelos
+# dígitos verificadores), e a IA recebe só os campos da frente + a MRZ,
+# com as letras bem maiores.
+# ============================================================
+
+NOTA_CNH_DIGITAL = (
+    "ATENÇÃO: esta imagem é uma CNH Digital (PDF do gov.br). Em cima estão os "
+    "campos da frente do cartão; embaixo, a MRZ (3 linhas com <<<). Leia cada "
+    "campo pelo seu rótulo."
+)
+NOTA_CNH_DIGITAL_CAMPOS = (
+    "ATENÇÃO: esta imagem é a frente de uma CNH Digital (PDF do gov.br), "
+    "ampliada. Leia cada campo pelo seu rótulo. A MRZ já foi lida: devolva mrz vazio."
+)
+
+_MRZ_MODELOS = None
+
+
+def _mrz_modelos():
+    """Desenhos médios de cada caractere OCR-B (arquivo mrz_ocrb.json)."""
+    global _MRZ_MODELOS
+    if _MRZ_MODELOS is None:
+        try:
+            caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mrz_ocrb.json")
+            with open(caminho, encoding="utf-8") as f:
+                bruto = json.load(f)
+            chaves = list(bruto["modelos"])
+            matriz = np.array([bruto["modelos"][k] for k in chaves], dtype=np.float32)
+            matriz -= matriz.mean(axis=1, keepdims=True)
+            matriz /= np.linalg.norm(matriz, axis=1, keepdims=True)
+            _MRZ_MODELOS = (chaves, matriz, int(bruto["largura"]), int(bruto["altura"]))
+        except Exception as e:
+            print(f"[MRZ] modelos OCR-B indisponíveis ({type(e).__name__})", flush=True)
+            _MRZ_MODELOS = ()
+    return _MRZ_MODELOS
+
+
+def _ler_mrz_ocrb(painel):
+    """
+    Lê as 2 primeiras linhas da MRZ do painel 3 da CNH Digital, sem IA.
+    Devolve "linha1\\nlinha2" só se os dígitos verificadores conferirem;
+    senão "".
+    """
+    modelos = _mrz_modelos()
+    if not modelos or cv2 is None or np is None:
+        return ""
+    chaves, matriz, tw, th = modelos
+    try:
+        g = np.asarray(painel.convert("L"), dtype=np.uint8)
+        H, W = g.shape
+        y0 = int(H * 0.45)
+        _, tinta = cv2.threshold(g[y0:], 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        por_linha = (tinta > 0).sum(axis=1)
+
+        # Faixas horizontais com texto (as linhas da MRZ).
+        faixas, ini = [], None
+        for y, t in enumerate(list(por_linha) + [0]):
+            if t >= 3 and ini is None:
+                ini = y
+            elif t < 3 and ini is not None:
+                faixas.append((ini, y))
+                ini = None
+
+        linhas = []
+        for a, b in faixas:
+            if not (0.018 * H <= b - a <= 0.07 * H):
+                continue
+            cols = np.where(tinta[a:b].sum(axis=0) > 0)[0]
+            if len(cols) == 0 or cols[-1] - cols[0] < 0.4 * W:
+                continue
+            n, _, stats, _ = cv2.connectedComponentsWithStats(tinta[a:b], connectivity=8)
+            comps = sorted(
+                [int(stats[i][0]), int(stats[i][0] + stats[i][2])]
+                for i in range(1, n)
+                if stats[i][4] >= max(6, 0.01 * (b - a) ** 2)
+            )
+            juntos = []
+            for c in comps:
+                if juntos and c[0] < juntos[-1][1] - 0.5 * (c[1] - c[0]):
+                    juntos[-1][1] = max(juntos[-1][1], c[1])
+                else:
+                    juntos.append(c)
+            if len(juntos) != 30:
+                continue
+            centros = np.array([(c[0] + c[1]) / 2 for c in juntos])
+            passo = float(np.median(np.diff(centros)))
+            m = max(1, int(0.08 * (b - a)))
+            topo, base = max(0, y0 + a - m), min(H, y0 + b + m)
+            texto = ""
+            for cx in centros:
+                x1 = max(0, int(round(cx - passo / 2)))
+                x2 = min(W, int(round(cx + passo / 2)))
+                cel = cv2.resize(g[topo:base, x1:x2], (tw, th), interpolation=cv2.INTER_AREA)
+                v = 255.0 - cel.astype(np.float32).ravel()
+                v -= v.mean()
+                norma = float(np.linalg.norm(v))
+                if norma == 0:
+                    texto += "?"
+                    continue
+                texto += chaves[int(np.argmax(matriz @ (v / norma)))]
+            linhas.append(texto)
+            if len(linhas) == 2:
+                break
+
+        if len(linhas) < 2:
+            return ""
+        mrz = "\n".join(linhas)
+        if _numero_cnh_mrz(mrz) or _datas_mrz(mrz):
+            return mrz
+    except Exception as e:
+        print(f"[MRZ] leitura OCR-B falhou ({type(e).__name__})", flush=True)
+    return ""
+
+
+def _cnh_digital_senatran(arquivos):
+    """
+    1 PDF "CNH Digital" do gov.br -> {"imagem": jpeg, "mrz": texto ou ""}.
+    Qualquer outro arquivo -> None (segue o caminho normal).
+    """
+    if len(arquivos) != 1:
+        return None
+    a = arquivos[0]
+    if PathLikeSuffix(a["filename"]) != ".pdf" and a["mimetype"] != "application/pdf":
+        return None
+    try:
+        doc = pymupdf.open(stream=a["data"], filetype="pdf")
+    except Exception:
+        return None
+    try:
+        if len(doc) < 1:
+            return None
+        page = doc[0]
+        if "SENATRAN" not in _tirar_acentos(page.get_text("text") or "").upper():
+            return None
+        paineis = _pdf_paineis(page)
+        if not paineis or len(paineis) != 3:
+            return None
+        frente, _verso, painel_mrz = paineis
+
+        mrz = _ler_mrz_ocrb(painel_mrz)
+
+        # Frente sem a faixa do mapa/número lateral. A MRZ só vai para a IA
+        # quando não foi lida aqui (assim os campos ficam ainda maiores).
+        W, H = frente.size
+        campos = frente.crop((int(W * 0.16), int(H * 0.18), int(W * 0.99), int(H * 0.99)))
+        if mrz:
+            folha, nota = campos, NOTA_CNH_DIGITAL_CAMPOS
+        else:
+            w3, h3 = painel_mrz.size
+            linhas = painel_mrz.crop((int(w3 * 0.15), int(h3 * 0.56), int(w3 * 0.85), int(h3 * 0.83)))
+            gap = 14
+            folha = Image.new("RGB", (max(campos.width, linhas.width), campos.height + gap + linhas.height), "white")
+            folha.paste(campos, (0, 0))
+            folha.paste(linhas, ((folha.width - linhas.width) // 2, campos.height + gap))
+            nota = NOTA_CNH_DIGITAL
+        largura, altura = folha.size
+        # Amplia até ~1,6 MP (o tamanho que a IA usa): letras maiores.
+        fator = min(2.0, (1_600_000 / (largura * altura)) ** 0.5)
+        if fator > 1.05:
+            folha = folha.resize(
+                (int(largura * fator), int(altura * fator)), Image.Resampling.LANCZOS
+            )
+        out = io.BytesIO()
+        folha.save(out, format="JPEG", quality=92)
+        print(
+            f"[LER] CNH Digital gov.br: {'campos' if mrz else 'campos + MRZ'} {folha.size}; "
+            f"MRZ sem IA {'conferida' if mrz else 'não lida'}",
+            flush=True,
+        )
+        return {"imagem": out.getvalue(), "mrz": mrz, "nota": nota}
+    except Exception as e:
+        print(f"[LER] CNH Digital não montada ({type(e).__name__}); caminho normal", flush=True)
+        return None
+    finally:
+        doc.close()
 
 
 # Recorte do PDF digital (só os painéis do cartão) DESLIGADO: no teste real,
@@ -797,7 +988,7 @@ def _groq_call(image_bytes, nota=""):
 
     imagens = image_bytes if isinstance(image_bytes, list) else [image_bytes]
     conteudo = [{"type": "text", "text": PROMPT}]
-    if len(imagens) > 1:
+    if nota or len(imagens) > 1:
         conteudo.append({"type": "text", "text": nota or NOTA_ROTACOES})
     for img in imagens:
         conteudo.append({"type": "image_url", "image_url": {
@@ -2766,10 +2957,21 @@ def ler():
     start = time.perf_counter()
     try:
         t_preparo = time.perf_counter()
-        image_bytes, nota_ia = _imagens_para_ia(arquivos)
+        # PDF "CNH Digital" do gov.br: caminho próprio (campos + MRZ sem IA).
+        cnh_digital = _cnh_digital_senatran(arquivos)
+        if cnh_digital:
+            image_bytes, nota_ia = [cnh_digital["imagem"]], cnh_digital["nota"]
+        else:
+            image_bytes, nota_ia = _imagens_para_ia(arquivos)
         tempo_preparo = time.perf_counter() - t_preparo
 
         dados_raw, modelo, tempo_api = _groq_call(image_bytes, nota_ia)
+
+        if cnh_digital:
+            dados_raw["tipo_documento"] = "CNH"
+            if cnh_digital["mrz"]:
+                # MRZ lida sem IA vem primeiro; a da IA fica de reserva.
+                dados_raw["mrz"] = cnh_digital["mrz"] + "\n" + str(dados_raw.get("mrz") or "")
 
         # Tipo do documento sempre como CNH, RG ou CIN (ou vazio se não der).
         tipo_lido = str(dados_raw.get("tipo_documento") or "")
