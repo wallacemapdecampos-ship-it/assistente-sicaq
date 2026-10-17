@@ -98,7 +98,11 @@
       background: #f1faf3; font-size: 15px; width: 170px;
     }
     .pisbar button { padding: 9px 16px; }
-    #msgPis { font-size: 13px; font-weight: 700; }
+    #msgPis, #msgCertidao { font-size: 13px; font-weight: 700; }
+    .pisbar #estadoCivil {
+      padding: 8px 10px; border: 1px solid #9da9b5; border-radius: 3px;
+      background: #f1faf3; font-size: 14px; width: 340px; max-width: 100%;
+    }
     .nat { display: flex; gap: 8px; }
     .nat #natUf { flex: 0 0 86px; width: 86px; }
     .nat #naturalidade { flex: 1 1 auto; min-width: 0; }
@@ -187,6 +191,23 @@
       <button id="btnLerPis" type="button" class="secondary">LER PIS</button>
       <input id="pis" type="text" inputmode="numeric" maxlength="14" placeholder="ou digite o PIS">
       <span id="msgPis" class="muted">Extrato do FGTS, Carteira de Trabalho Digital ou documento com o nº do PIS.</span>
+    </div>
+
+    <div class="pisbar">
+      <label for="estadoCivil">Estado civil (opcional)</label>
+      <input type="file" id="certidaoArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
+      <button id="btnLerCertidao" type="button" class="secondary">LER CERTIDÃO</button>
+      <select id="estadoCivil">
+        <option value=""></option>
+        <option>SOLTEIRO (A)</option>
+        <option>DIVORCIADO (A)</option>
+        <option>SEPARADO (A) JUDICIALMENTE</option>
+        <option>VIÚVO (A)</option>
+        <option>CASADO (A) COM COMUNHÃO TOTAL DE BENS</option>
+        <option>CASADO (A) COM SEPARAÇÃO DE BENS</option>
+        <option>CASADO (A) COM COMUNHÃO PARCIAL DE BENS</option>
+      </select>
+      <span id="msgCertidao" class="muted">Certidão de nascimento, de casamento (com as averbações) ou de óbito do cônjuge. Pode mandar frente + verso.</span>
     </div>
   </div>
 
@@ -676,6 +697,66 @@
     }
   }
 
+  // ---------- Estado civil pela certidão (opcional) ----------
+  const MSG_CERTIDAO_PADRAO = "Certidão de nascimento, de casamento (com as averbações) ou de óbito do cônjuge. Pode mandar frente + verso.";
+  let certidaoLida = false;
+
+  function setMsgCertidao(texto, classe = "muted") {
+    const el = document.getElementById("msgCertidao");
+    el.textContent = texto;
+    el.className = classe;
+  }
+
+  function limparCertidao() {
+    const sel = document.getElementById("estadoCivil");
+    sel.value = "";
+    sel.classList.remove("destaque");
+    document.getElementById("certidaoArquivo").value = "";
+    certidaoLida = false;
+    setMsgCertidao(MSG_CERTIDAO_PADRAO);
+  }
+
+  async function lerCertidao() {
+    const input = document.getElementById("certidaoArquivo");
+    const btn = document.getElementById("btnLerCertidao");
+    const sel = document.getElementById("estadoCivil");
+    if (!input.files.length) {
+      setMsgCertidao("Escolha o arquivo da certidão (PDF, foto ou print).", "erro");
+      return;
+    }
+    if (input.files.length > 2) {
+      setMsgCertidao("Selecione no máximo 2 arquivos (frente + verso da mesma certidão).", "erro");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "LENDO...";
+    setMsgCertidao("Lendo a certidão e as averbações...", "warn");
+    const form = new FormData();
+    Array.from(input.files).forEach(f => form.append("files", f));
+    form.append("nome", document.getElementById("nome").value || "");
+    try {
+      const resp = await postarComServidorAcordado("/ler-certidao", form, setMsgCertidao);
+      let data;
+      try { data = await resp.json(); } catch { throw new Error("Resposta inválida do servidor."); }
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Falha na leitura da certidão.");
+      certidaoLida = true;
+      const opcoes = Array.from(sel.options).map(o => o.value);
+      sel.value = opcoes.includes(data.estado_civil) ? data.estado_civil : "";
+      sel.classList.toggle("destaque", Boolean(data.incerto) || !sel.value);
+      const partes = [data.motivo || "Certidão lida"];
+      if (data.averbacoes) partes.push("Averbações: " + data.averbacoes);
+      (data.avisos || []).forEach(a => partes.push(a));
+      if (!sel.value) partes.push("Escolha o estado civil manualmente");
+      const texto = partes.map(p => String(p).trim().replace(/\.+$/, "")).filter(Boolean).join(". ") + ".";
+      setMsgCertidao(texto, !sel.value ? "erro" : (data.incerto ? "warn" : "ok"));
+    } catch (e) {
+      setMsgCertidao("Erro: " + (e.message || e), "erro");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "LER CERTIDÃO";
+    }
+  }
+
   // ---------- Naturalidade: UF + município (lista oficial do IBGE) ----------
   const UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG",
                "PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
@@ -777,6 +858,8 @@
       validade: document.getElementById("validade").value || "",
       numero_identidade: numeroIdentidade,
       pis: pisValido(pisDigitos()) ? pisDigitos() : "",
+      // Vazio: a extensão não mexe no Estado Civil do SICAQ.
+      estado_civil: document.getElementById("estadoCivil").value || "",
       checkboxes: [
         "Movimentação de Conta de Depósito/Poupança",
         "Empréstimos/Financiamentos",
@@ -800,6 +883,12 @@
     if (pisDigitos() && !pisValido(pisDigitos())) {
       document.getElementById("pis").classList.add("destaque");
       setMensagem("O PIS/NIS informado não é válido. Corrija ou apague o campo PIS antes de preencher.", "erro");
+      return;
+    }
+    // Certidão lida sem estado civil definido: o SICAQ ficaria em SOLTEIRO.
+    if (certidaoLida && !document.getElementById("estadoCivil").value) {
+      document.getElementById("estadoCivil").classList.add("destaque");
+      setMensagem("A certidão não deixou o estado civil claro. Escolha o estado civil antes de preencher.", "erro");
       return;
     }
 
@@ -1012,11 +1101,27 @@
     }
   });
 
+  document.getElementById("btnLerCertidao").addEventListener("click", lerCertidao);
+  document.getElementById("estadoCivil").addEventListener("change", (event) => {
+    event.target.classList.remove("destaque");
+    if (event.target.value && certidaoLida) setMsgCertidao("Estado civil escolhido: " + event.target.value + ".", "ok");
+  });
+  document.getElementById("certidaoArquivo").addEventListener("change", (event) => {
+    const qtd = event.target.files.length;
+    if (qtd > 2) {
+      setMsgCertidao("Selecione no máximo 2 arquivos (frente + verso da mesma certidão).", "erro");
+      event.target.value = "";
+    } else if (qtd) {
+      setMsgCertidao((qtd === 2 ? "2 arquivos (frente + verso)." : "1 arquivo.") + " Clique em LER CERTIDÃO.");
+    }
+  });
+
   document.getElementById("btnLer").addEventListener("click", lerDocumento);
   document.getElementById("btnSicaq").addEventListener("click", preencherSicaq);
   document.getElementById("documento").addEventListener("change", (event) => {
     limparCampos();
     limparPis();
+    limparCertidao();
     ajustarCampos("");
 
     const qtd = event.target.files.length;
