@@ -73,8 +73,12 @@ Regras:
   Se houver duas linhas sem rótulo, identifique pai/mãe apenas quando estiver claro.
   Se ficar ambíguo, deixe os campos vazios e inclua-os em campos_incertos.
 - cpf: somente dígitos.
-- rg: letras/números sem pontuação.
-- RG antigo: mantenha o número do Registro Geral em rg.
+- rg: letras/números sem pontuação, SOMENTE do campo "REGISTRO GERAL"
+  (no RG antigo fica no lado dos dados, ao lado do nome, geralmente em
+  VERMELHO e com dígito no fim, ex.: 58.569.906-9 => 585699069).
+  NUNCA use em rg o número pequeno impresso no lado da digital/assinatura
+  (número do espelho/formulário), o número ao lado da foto (ex.: 8274-3),
+  números verticais, nem números do campo DOC. ORIGEM / certidão.
 - RG novo/CIN: CPF é o identificador principal.
 - data_emissao: use DATA DE EXPEDIÇÃO ou DATA DE EMISSÃO; nunca nascimento.
 - Todas as datas em DD/MM/AAAA, com o mês em número (ex.: 04/MAR/1994 => 04/03/1994).
@@ -398,6 +402,54 @@ def _recortar_documento(img: Image.Image, frac_min: float = 0.0):
         return recorte, f"recortado({frac:.0%})"
     except Exception:
         return img, "erro_recorte"
+
+
+def _texto_de_lado(img):
+    """
+    O texto do documento está de lado (girado 90°)? Olha as letras: em cada
+    linha de texto, a letra vizinha mais próxima fica do lado (horizontal);
+    com o documento de lado, fica em cima/embaixo. Devolve True, False ou
+    None (poucas letras para decidir).
+    """
+    if cv2 is None or np is None:
+        return None
+    try:
+        W, H = img.size
+        e = min(1.0, 1400 / max(W, H))
+        peq = img if e >= 1.0 else img.resize((max(1, int(W * e)), max(1, int(H * e))), Image.Resampling.BILINEAR)
+        g = np.asarray(peq.convert("L"))
+        tinta = cv2.adaptiveThreshold(g, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 18)
+        n, _, st, cen = cv2.connectedComponentsWithStats(tinta, connectivity=8)
+        w, h, a = st[1:, 2], st[1:, 3], st[1:, 4]
+        maior, menor = np.maximum(w, h), np.maximum(1, np.minimum(w, h))
+        letra = (a >= 15) & (maior >= 5) & (maior <= 45) & (maior <= 5 * menor) & (a <= 0.9 * w * h)
+        idx = np.where(letra)[0] + 1
+        if len(idx) < 30:
+            return None
+        if len(idx) > 2500:
+            idx = idx[np.linspace(0, len(idx) - 1, 2500).astype(int)]
+        pts = cen[idx]
+        tam = np.maximum(st[idx, 2], st[idx, 3]).astype(float)
+        hor = ver = 0
+        for i in range(len(pts)):
+            d = np.hypot(pts[:, 0] - pts[i, 0], pts[:, 1] - pts[i, 1])
+            d[i] = 1e9
+            ok = (tam > 0.6 * tam[i]) & (tam < 1.7 * tam[i]) & (d < 2.2 * tam[i])
+            if not ok.any():
+                continue
+            j = int(np.argmin(np.where(ok, d, 1e9)))
+            dx, dy = abs(pts[j, 0] - pts[i, 0]), abs(pts[j, 1] - pts[i, 1])
+            if dx > 2.5 * dy:
+                hor += 1
+            elif dy > 2.5 * dx:
+                ver += 1
+        if ver >= 25 and ver > 1.8 * hor:
+            return True
+        if hor >= 25 and hor > 1.8 * ver:
+            return False
+        return None
+    except Exception:
+        return None
 
 
 def _pdf_area_documento(page):
@@ -792,26 +844,39 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
 
     em_pe = False
     dividir = False
+    paginas_de_lado = None
     if is_pdf:
         doc = pymupdf.open(stream=data, filetype="pdf")
         try:
             pages = []
+            de_lado = []
             for i in range(min(2, len(doc))):
                 img, pode_recortar = _pdf_pagina_para_imagem(doc[i])
+                lado = False
                 if pode_recortar:
                     img, info = _recortar_documento(img)
-                    if info.startswith("recortado"):
-                        if img.height > 1.15 * img.width:
-                            em_pe = True
-                    elif img.height > 1.3 * img.width:
+                    recortado = info.startswith("recortado")
+                    # De lado? Pelas letras; sem letras suficientes, pela
+                    # regra antiga (recorte mais alto que largo).
+                    lado = _texto_de_lado(img)
+                    if lado is None:
+                        lado = recortado and img.height > 1.15 * img.width
+                    if lado:
+                        em_pe = True
+                    elif not recortado and img.height > 1.3 * img.width:
                         # Scan de folha em pé (CamScanner, WhatsApp): o
                         # documento ocupa a folha toda e as letras ficam
                         # pequenas. Vai em 2 metades (cima/baixo).
                         dividir = True
                 pages.append(img)
+                de_lado.append(lado)
             if len(pages) > 1:
                 em_pe = False
                 dividir = False
+                # Frente e verso fotografados de lado (cartão em pé na foto):
+                # vão girados para a posição de leitura (ver _imagens_para_ia).
+                if any(de_lado):
+                    paginas_de_lado = (pages, de_lado)
 
             if not pages:
                 raise ValueError("PDF sem páginas válidas.")
@@ -835,7 +900,9 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
     else:
         img = _abrir_imagem(data)
         img, info = _recortar_documento(img)
-        em_pe = info.startswith("recortado") and img.height > 1.15 * img.width
+        em_pe = _texto_de_lado(img)
+        if em_pe is None:
+            em_pe = info.startswith("recortado") and img.height > 1.15 * img.width
 
     max_side = 3200
     scale = min(1.0, max_side / max(img.width, img.height))
@@ -848,6 +915,9 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
             Image.Resampling.LANCZOS,
         )
     modo = "em_pe" if em_pe else ("dividir" if dividir else "normal")
+    if paginas_de_lado:
+        modo = "paginas_de_lado"
+        img.info["paginas_de_lado"] = paginas_de_lado
     return img, modo
 
 
@@ -896,9 +966,60 @@ def _imagens_para_ia(arquivos):
             baixo = img.crop((0, int(h * 0.46), w, h))
             print("[LER] scan de folha em pé: enviando metade de cima e de baixo", flush=True)
             return [_jpeg_para_ia(cima), _jpeg_para_ia(baixo)], NOTA_METADES
+        if modo == "paginas_de_lado":
+            paginas, de_lado = img.info["paginas_de_lado"]
+            imagens = []
+            for angulo in (-90, 90):
+                giradas = [
+                    p.rotate(angulo, expand=True) if lado else p
+                    for p, lado in zip(paginas, de_lado)
+                ]
+                imagens.append(_jpeg_para_ia(_empilhar_paginas(giradas)))
+            print("[LER] frente e verso de lado: enviando 2 orientações", flush=True)
+            return imagens, NOTA_ROTACOES_PAGINAS
         return [_jpeg_para_ia(img)], ""
+
+    # 2 arquivos (frente + verso): se algum estiver de lado, vão girados.
+    preparados = [_preparar_imagem(a["data"], a["filename"], a["mimetype"]) for a in arquivos[:2]]
+    if any(modo in ("em_pe", "paginas_de_lado") for _, modo in preparados):
+        paginas, de_lado = [], []
+        for img, modo in preparados:
+            if modo == "paginas_de_lado":
+                ps, ls = img.info["paginas_de_lado"]
+                paginas += list(ps)
+                de_lado += list(ls)
+            else:
+                paginas.append(img)
+                de_lado.append(modo == "em_pe")
+        imagens = []
+        for angulo in (-90, 90):
+            giradas = [p.rotate(angulo, expand=True) if lado else p for p, lado in zip(paginas, de_lado)]
+            imagens.append(_jpeg_para_ia(_empilhar_paginas(giradas)))
+        print("[LER] frente e verso (2 arquivos) de lado: enviando 2 orientações", flush=True)
+        return imagens, NOTA_ROTACOES_PAGINAS
     return [_combinar_arquivos_identificacao(arquivos)], ""
 
+
+def _empilhar_paginas(paginas, largura=1650, gap=18):
+    """Cartões (já deitados) um embaixo do outro, com a mesma largura."""
+    prontas = []
+    for p in paginas:
+        f = largura / p.width
+        prontas.append(p.resize((largura, max(1, int(p.height * f))), Image.Resampling.LANCZOS))
+    altura = sum(p.height for p in prontas) + gap * (len(prontas) - 1)
+    folha = Image.new("RGB", (largura, altura), "white")
+    y = 0
+    for p in prontas:
+        folha.paste(p, (0, y))
+        y += p.height + gap
+    return folha
+
+
+NOTA_ROTACOES_PAGINAS = (
+    "ATENÇÃO: as 2 imagens a seguir mostram o MESMO documento (frente e verso), "
+    "girado em sentidos opostos: numa delas o texto fica de cabeça para baixo. "
+    "Leia os dados na imagem em que o texto está na posição normal de leitura."
+)
 
 NOTA_ROTACOES = (
     "ATENÇÃO: as 2 imagens a seguir são o MESMO documento, giradas em "
@@ -1756,6 +1877,23 @@ def _orgao_sicaq(orgao_bruto):
     return ORGAO_SSP, False
 
 
+def _rg_sp_valido(rg):
+    """
+    Dígito do RG de São Paulo (IIRGD): 8 dígitos com pesos 2..9; DV = 11 - resto
+    (10 => X, 11 => 0). Ex.: 58.569.906-9. Devolve None quando o formato não é
+    o de 7 ou 8 dígitos + DV (aí não dá para conferir).
+    """
+    r = re.sub(r"[^0-9X]", "", str(rg or "").upper())
+    if len(r) == 8 and r[:7].isdigit():
+        r = "0" + r  # RG antigo com 7 dígitos + DV (ex.: 4.752.686-1)
+    if len(r) != 9 or not r[:8].isdigit():
+        return None
+    soma = sum(int(c) * w for c, w in zip(r[:8], range(2, 10)))
+    calc = 11 - soma % 11
+    dv = "X" if calc == 10 else ("0" if calc == 11 else str(calc))
+    return r[8] == dv
+
+
 def _normalizar_saida(d):
     d = _corrigir_datas_cnh(d)
     d = dict(d or {})
@@ -1807,6 +1945,11 @@ def _normalizar_saida(d):
     cpf_lido = re.sub(r"\D", "", str(d.get("cpf") or ""))
     if tipo in ("RG", "CIN") and cpf_lido and not _cpf_valido(cpf_lido) and "cpf" not in incertos:
         incertos.append("cpf")
+
+    # RG de SP: confere o dígito (pega o número do espelho lido no lugar do RG).
+    uf_doc = _tirar_acentos(str(d.get("uf_emissao") or "")).strip().upper()
+    if tipo == "RG" and uf_doc == "SP" and _rg_sp_valido(d.get("rg")) is False and "rg" not in incertos:
+        incertos.append("rg")
 
     # Órgão emissor do RG/CIN já no texto exato da opção do SICAQ.
     orgao_sicaq = ""
