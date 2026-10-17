@@ -1579,7 +1579,7 @@ def _normalizar_saida(d):
 
     # CPF lido que não fecha os dígitos verificadores: provável erro de leitura.
     cpf_lido = re.sub(r"\D", "", str(d.get("cpf") or ""))
-    if cpf_lido and not _cpf_valido(cpf_lido) and "cpf" not in incertos:
+    if tipo in ("RG", "CIN") and cpf_lido and not _cpf_valido(cpf_lido) and "cpf" not in incertos:
         incertos.append("cpf")
 
     # Órgão emissor do RG/CIN já no texto exato da opção do SICAQ.

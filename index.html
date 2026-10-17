@@ -444,6 +444,9 @@
     (lista || []).forEach(chave => {
       const id = campoIncerto[String(chave)];
       const el = id && document.getElementById(id);
+      const campo = el && el.closest(".campo");
+      // Só conta campos visíveis para o tipo de documento.
+      if (campo && campo.style.display === "none") return;
       if (el && !el.classList.contains("destaque")) {
         el.classList.add("destaque");
         qtd++;
