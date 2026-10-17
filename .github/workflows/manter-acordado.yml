@@ -42,19 +42,27 @@ jobs:
             "repos/${{ github.repository }}/actions/workflows/manter-acordado.yml/enable" \
             && echo "Tarefa renovada."
 
+  # O GitHub não garante o "a cada 5 min": na prática dispara a cada 20-40 min.
+  # Por isso cada execução fica ativa ~45 min visitando o servidor a cada
+  # 4 min; quando a próxima começa, a anterior é encerrada (sem buracos).
   ping:
     if: github.event.schedule != '17 13 1,15 * *'
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 50
+    concurrency:
+      group: manter-acordado-ping
+      cancel-in-progress: true
     steps:
-      - name: Visitar /health
+      - name: Visitar /health a cada 4 min (07h-23h Brasília)
         run: |
-          for tentativa in 1 2 3; do
-            if curl -fsS -m 90 -o /dev/null -w "HTTP %{http_code} em %{time_total}s\n" \
-                 https://assistente-sicaq.onrender.com/health; then
+          fim=$(( $(date +%s) + 45*60 ))
+          while [ "$(date +%s)" -lt "$fim" ]; do
+            hhmm=$(TZ=America/Sao_Paulo date +%H%M)
+            if [ "$hhmm" -lt 0650 ] || [ "$hhmm" -ge 2300 ]; then
+              echo "Fora do horário (07h-23h Brasília): encerrando."
               exit 0
             fi
-            echo "Tentativa $tentativa falhou; tentando de novo em 15 s..."
-            sleep 15
+            curl -sS -m 90 -o /dev/null -w "$(TZ=America/Sao_Paulo date +%H:%M) HTTP %{http_code} em %{time_total}s\n" \
+              https://assistente-sicaq.onrender.com/health || echo "sem resposta (pode estar acordando)"
+            sleep 240
           done
-          echo "Servidor não respondeu (pode estar acordando)."

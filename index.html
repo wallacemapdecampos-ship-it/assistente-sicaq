@@ -1134,6 +1134,14 @@
   carregarMunicipios();
   ajustarCampos("");
   checarServidor();
+
+  // Mantém o servidor acordado enquanto esta página estiver aberta
+  // (07h-23h): visita /health a cada 10 min. Não lê documento nem gasta IA.
+  setInterval(() => {
+    const h = new Date().getHours();
+    if (h < 7 || h >= 23) return;
+    fetch(API + "/health", { cache: "no-store" }).catch(() => {});
+  }, 10 * 60 * 1000);
   pingExtensao();
   setInterval(() => { if (!extensaoPronta) pingExtensao(); }, 1500);
 </script>
