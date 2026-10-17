@@ -190,6 +190,44 @@
     /* Holerite: 4 por linha. */
     #painelHolerite .campo { --span: 3; }
 
+    /* ---------- Login ---------- */
+    .tela-login {
+      position: fixed; inset: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px; background: var(--papel);
+    }
+    .cartao-login {
+      width: 100%; max-width: 360px;
+      background: var(--folha); border: 1px solid var(--linha); border-radius: 10px;
+      padding: 26px 24px 22px;
+    }
+    .cartao-login .marca-app { color: var(--tinta); margin-bottom: 18px; }
+    .cartao-login h1 { margin: 0 0 14px; font-size: 20px; }
+    .cartao-login label { display: block; font-size: 12.5px; font-weight: 700; color: var(--tinta-2); margin: 10px 0 4px; }
+    .cartao-login input {
+      width: 100%; height: 38px; padding: 0 11px;
+      border: 1px solid #c7d2d9; border-radius: var(--raio); background: var(--campo);
+      font: inherit; font-size: 15px; color: var(--tinta);
+    }
+    .cartao-login input:focus { border-color: var(--azul); background: #fff; outline: none; box-shadow: 0 0 0 3px #d4e6f6; }
+    .cartao-login button { width: 100%; height: 40px; margin-top: 18px; font-size: 15px; }
+    #msgLogin { margin: 12px 0 0; font-size: 13px; min-height: 18px; }
+    #msgLogin.erro, #msgLogin.warn { font-weight: 700; }
+    .conta { display: inline-flex; align-items: center; gap: 10px; color: #e3e9f0; font-weight: 700; white-space: nowrap; }
+    header .sair {
+      height: 28px; padding: 0 10px; font-size: 12.5px;
+      background: transparent; color: #c3ceda; border: 1px solid #3a4b5e;
+    }
+    header .sair:hover:not(:disabled) { background: #26384a; color: #fff; border-color: #6f8296; }
+    /* ---------- Uso ---------- */
+    .tabela-uso { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    .tabela-uso th, .tabela-uso td { padding: 8px 10px; border-bottom: 1px solid #e7ecef; text-align: right; }
+    .tabela-uso th:first-child, .tabela-uso td:first-child { text-align: left; }
+    .tabela-uso th { font-size: 12.5px; color: var(--tinta-2); }
+    .tabela-uso tfoot td { font-weight: 700; border-bottom: 0; }
+    .uso-bloco + .uso-bloco { margin-top: 18px; }
+    .uso-bloco h3 { margin: 0 0 6px; font-size: 14px; }
+
     @media (max-width: 860px) {
       header { gap: 14px; padding: 0 14px; }
       .estado-sistema { gap: 10px; }
@@ -222,12 +260,37 @@
   <nav class="tabs" aria-label="Seções">
     <button id="tabIdentificacao" class="tab active" type="button">Identificação</button>
     <button id="tabHolerite" class="tab" type="button">Renda</button>
+    <button id="tabUso" class="tab" type="button" hidden>Uso</button>
   </nav>
   <div class="estado-sistema">
     <div id="statusServidor" class="status warn">Verificando servidor</div>
     <div id="statusExtensao" class="status warn">Extensão: verificando</div>
+    <div id="contaUsuario" class="conta" hidden>
+      <span id="nomeUsuario"></span>
+      <button id="btnSair" class="sair" type="button">Sair</button>
+    </div>
   </div>
 </header>
+
+<div id="telaLogin" class="tela-login" hidden>
+  <form id="formLogin" class="cartao-login">
+    <div class="marca-app">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+        <rect x="3" y="2" width="16" height="18" rx="2.5" fill="none" stroke="#0f5a9c" stroke-width="1.8"/>
+        <path d="M7 8h8M7 11.5h5" stroke="#4b5b6b" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M11.5 15.2l1.8 1.8 3.4-3.6" fill="none" stroke="#e2b500" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Assistente SICAQ
+    </div>
+    <h1>Entrar</h1>
+    <label for="loginUsuario">Usuário</label>
+    <input id="loginUsuario" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="loginSenha">Senha</label>
+    <input id="loginSenha" name="password" type="password" autocomplete="current-password" required>
+    <button id="btnEntrar" type="submit">Entrar</button>
+    <p id="msgLogin" class="muted">Use o usuário e a senha que o administrador passou para você.</p>
+  </form>
+</div>
 
 <main class="container">
   <section id="painelIdentificacao" class="painel active">
@@ -501,6 +564,17 @@
       </div>
     </div>
   </section>
+
+  <section id="painelUso" class="painel">
+    <div class="card">
+      <div class="card-topo">
+        <h2>Leituras por analista</h2>
+        <button id="btnAtualizarUso" type="button" class="secondary" style="margin-left:auto">Atualizar</button>
+      </div>
+      <div id="conteudoUso"><p class="vazio">Clique em Atualizar para ver as leituras.</p></div>
+      <p id="notaUso" class="nota"></p>
+    </div>
+  </section>
 </main>
 <script>
   const API = "https://assistente-sicaq.onrender.com";
@@ -673,6 +747,86 @@
   // arquivo for enviado nesse momento, o upload pode travar. Por isso:
   // 1) confirma que o servidor está acordado (/health); 2) só então envia;
   // 3) se a conexão cair ou travar, tenta mais uma vez automaticamente.
+  // ---------- Login (um usuário por analista) ----------
+  const CHAVE_SESSAO = "assistente_sicaq_sessao";
+  let SESSAO = null;          // {token, usuario, nome, admin, expira}
+  let loginObrigatorio = false;
+
+  function lerSessao() {
+    try {
+      const s = JSON.parse(localStorage.getItem(CHAVE_SESSAO) || "null");
+      if (s && s.token && Number(s.expira) * 1000 > Date.now()) return s;
+    } catch (_) {}
+    return null;
+  }
+  function salvarSessao(s) {
+    try { localStorage.setItem(CHAVE_SESSAO, JSON.stringify(s)); } catch (_) {}
+  }
+  function apagarSessao() {
+    SESSAO = null;
+    try { localStorage.removeItem(CHAVE_SESSAO); } catch (_) {}
+    document.getElementById("contaUsuario").hidden = true;
+    document.getElementById("tabUso").hidden = true;
+  }
+  function setMsgLogin(texto, classe = "muted") {
+    const el = document.getElementById("msgLogin");
+    el.textContent = texto;
+    el.className = classe;
+  }
+  function mostrarLogin(msg, classe) {
+    document.getElementById("telaLogin").hidden = false;
+    if (msg) setMsgLogin(msg, classe || "warn");
+    setTimeout(() => document.getElementById(
+      document.getElementById("loginUsuario").value ? "loginSenha" : "loginUsuario").focus(), 50);
+  }
+  function aplicarSessao() {
+    document.getElementById("telaLogin").hidden = true;
+    document.getElementById("nomeUsuario").textContent = SESSAO ? SESSAO.nome : "";
+    document.getElementById("contaUsuario").hidden = !SESSAO;
+    document.getElementById("tabUso").hidden = !(SESSAO && SESSAO.admin);
+  }
+  function cabecalhoLogin() {
+    return SESSAO && SESSAO.token ? { Authorization: "Bearer " + SESSAO.token } : {};
+  }
+
+  async function entrar(evento) {
+    evento.preventDefault();
+    const btn = document.getElementById("btnEntrar");
+    const usuario = document.getElementById("loginUsuario").value.trim();
+    const senha = document.getElementById("loginSenha").value;
+    if (!usuario || !senha) { setMsgLogin("Preencha usuário e senha.", "erro"); return; }
+    btn.disabled = true;
+    btn.textContent = "Entrando…";
+    setMsgLogin("Conferindo…", "muted");
+    try {
+      if (!(await acordarServidor(setMsgLogin))) throw new Error("O servidor não respondeu. Tente de novo.");
+      const resp = await fetchComLimite(API + "/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usuario, senha })
+      }, 30000);
+      let data = {};
+      try { data = await resp.json(); } catch (_) {}
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível entrar.");
+      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin, expira: data.expira };
+      salvarSessao(SESSAO);
+      document.getElementById("loginSenha").value = "";
+      setMsgLogin("Use o usuário e a senha que o administrador passou para você.");
+      aplicarSessao();
+    } catch (e) {
+      setMsgLogin(e.message || String(e), "erro");
+      document.getElementById("loginSenha").select();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Entrar";
+    }
+  }
+
+  function sair() {
+    apagarSessao();
+    mostrarLogin("Você saiu. Entre de novo para continuar.", "muted");
+  }
+
   async function fetchComLimite(url, opcoes, ms) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), ms);
@@ -704,14 +858,22 @@
     for (let tentativa = 1; tentativa <= 2; tentativa++) {
       const acordado = await acordarServidor(avisar);
       if (!acordado) throw new Error("O servidor não respondeu. Tente de novo em instantes.");
+      let resp;
       try {
-        return await fetchComLimite(API + rota, { method: "POST", body: form }, 110000);
+        resp = await fetchComLimite(API + rota, { method: "POST", body: form, headers: cabecalhoLogin() }, 110000);
       } catch (e) {
         if (tentativa === 2) {
           throw new Error("A conexão com o servidor caiu durante o envio. Clique de novo para tentar.");
         }
         if (avisar) avisar("A conexão oscilou; enviando de novo automaticamente...", "warn");
+        continue;
       }
+      if (resp.status === 401 && loginObrigatorio) {
+        apagarSessao();
+        mostrarLogin("Sua sessão terminou. Entre de novo e clique outra vez.");
+        throw new Error("Sua sessão terminou: entre de novo e clique outra vez.");
+      }
+      return resp;
     }
   }
 
@@ -1090,6 +1252,15 @@
       status.textContent = "Servidor online";
       status.className = "status ok";
       btn.disabled = false;
+
+      loginObrigatorio = !!data.login;
+      if (loginObrigatorio) {
+        SESSAO = SESSAO || lerSessao();
+        if (SESSAO) aplicarSessao(); else mostrarLogin();
+      } else {
+        SESSAO = null;
+        aplicarSessao();
+      }
       setMensagem("Selecione um documento e clique em Ler documento.", "muted");
 
       const hbtn = document.getElementById("btnLerHolerite");
@@ -1309,11 +1480,72 @@
   }
 
   function mostrarAba(nome) {
-    const ident = nome === "identificacao";
-    document.getElementById("painelIdentificacao").classList.toggle("active", ident);
-    document.getElementById("painelHolerite").classList.toggle("active", !ident);
-    document.getElementById("tabIdentificacao").classList.toggle("active", ident);
-    document.getElementById("tabHolerite").classList.toggle("active", !ident);
+    const abas = { identificacao: ["tabIdentificacao", "painelIdentificacao"],
+                   holerite: ["tabHolerite", "painelHolerite"], uso: ["tabUso", "painelUso"] };
+    Object.entries(abas).forEach(([chave, [tab, painel]]) => {
+      document.getElementById(tab).classList.toggle("active", chave === nome);
+      document.getElementById(painel).classList.toggle("active", chave === nome);
+    });
+    if (nome === "uso") carregarUso();
+  }
+
+  // ---------- Contador de leituras (só administrador) ----------
+  const TIPOS_USO = [["documento", "Documento"], ["pis", "PIS"], ["certidao", "Certidão"], ["renda", "Renda"]];
+
+  let NOMES_USO = {};
+  function tabelaUso(titulo, contas) {
+    const nomes = Object.keys(contas).sort();
+    if (!nomes.length) return `<div class="uso-bloco"><h3>${titulo}</h3><p class="dica">Nenhuma leitura.</p></div>`;
+    const soma = {};
+    const linhas = nomes.map(n => {
+      let total = 0;
+      const cels = TIPOS_USO.map(([k]) => {
+        const v = contas[n][k] || 0; total += v; soma[k] = (soma[k] || 0) + v;
+        return `<td>${v}</td>`;
+      }).join("");
+      soma.total = (soma.total || 0) + total;
+      const seguro = String(NOMES_USO[n] || (n === "sem-login" ? "Sem login" : n)).replace(/[<>&"]/g, "");
+      return `<tr><td>${seguro}</td>${cels}<td><b>${total}</b></td></tr>`;
+    }).join("");
+    const cab = TIPOS_USO.map(([, r]) => `<th>${r}</th>`).join("");
+    const rod = TIPOS_USO.map(([k]) => `<td>${soma[k] || 0}</td>`).join("");
+    return `<div class="uso-bloco"><h3>${titulo}</h3><table class="tabela-uso"><thead><tr><th>Analista</th>${cab}<th>Total</th></tr></thead>` +
+           `<tbody>${linhas}</tbody><tfoot><tr><td>Total</td>${rod}<td>${soma.total || 0}</td></tr></tfoot></table></div>`;
+  }
+
+  async function carregarUso() {
+    const caixa = document.getElementById("conteudoUso");
+    caixa.innerHTML = '<p class="vazio">Carregando…</p>';
+    try {
+      const resp = await postarOuObter("/uso");
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível carregar.");
+      NOMES_USO = data.nomes || {};
+      const agora = new Date();
+      const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
+      const mes = hoje.slice(0, 7);
+      const doDia = {}, doMes = {};
+      (data.linhas || []).forEach(l => {
+        if (l.dia === hoje) { doDia[l.usuario] = doDia[l.usuario] || {}; doDia[l.usuario][l.tipo] = (doDia[l.usuario][l.tipo] || 0) + l.quantidade; }
+        if (String(l.dia).startsWith(mes)) { doMes[l.usuario] = doMes[l.usuario] || {}; doMes[l.usuario][l.tipo] = (doMes[l.usuario][l.tipo] || 0) + l.quantidade; }
+      });
+      caixa.innerHTML = tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes);
+      document.getElementById("notaUso").textContent =
+        `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
+    } catch (e) {
+      caixa.innerHTML = "";
+      document.getElementById("notaUso").textContent = "Erro: " + (e.message || e);
+    }
+  }
+
+  async function postarOuObter(rota) {
+    const resp = await fetchComLimite(API + rota, { headers: cabecalhoLogin(), cache: "no-store" }, 30000);
+    if (resp.status === 401 && loginObrigatorio) {
+      apagarSessao();
+      mostrarLogin("Sua sessão terminou. Entre de novo.");
+      throw new Error("Sua sessão terminou.");
+    }
+    return resp;
   }
 
   function setMensagemHolerite(texto, classe="muted") {
@@ -1568,6 +1800,10 @@
 
   document.getElementById("tabIdentificacao").addEventListener("click", () => mostrarAba("identificacao"));
   document.getElementById("tabHolerite").addEventListener("click", () => mostrarAba("holerite"));
+  document.getElementById("tabUso").addEventListener("click", () => mostrarAba("uso"));
+  document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
+  document.getElementById("formLogin").addEventListener("submit", entrar);
+  document.getElementById("btnSair").addEventListener("click", sair);
   document.getElementById("btnLerHolerite").addEventListener("click", lerHolerite);
   document.getElementById("btnRenda").addEventListener("click", preencherRenda);
   document.getElementById("hTipoFonte").addEventListener("change", ajustarRotuloFonte);

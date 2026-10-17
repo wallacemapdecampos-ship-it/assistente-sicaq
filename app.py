@@ -1,5 +1,8 @@
 import base64
+import hashlib
+import hmac
 import io
+import secrets
 import json
 import os
 import re
@@ -11,7 +14,7 @@ from collections import defaultdict, deque
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from flask_cors import CORS
 from PIL import Image, ImageFilter, ImageOps
 import pymupdf
@@ -196,6 +199,88 @@ def _origin_ok():
     return origin == ALLOWED_ORIGIN
 
 
+# ============================================================
+# LOGIN (um usuário por analista) — sem banco de dados
+# Usuários na variável USUARIOS do Render, em JSON:
+#   {"ana": {"nome": "Ana", "senha": "pbkdf2$...", "admin": false}, ...}
+# A sessão é um "crachá" assinado (HMAC com SEGREDO_SESSAO) que vale até
+# 23h59 do dia (horário de Brasília). Tirar o usuário da lista bloqueia na hora.
+# Sem USUARIOS configurado, o login fica desligado (funciona como antes).
+# ============================================================
+
+FUSO_BR = ZoneInfo("America/Sao_Paulo")
+_SEGREDO_PADRAO = secrets.token_hex(32)
+_falhas_login = defaultdict(deque)
+
+
+def _segredo():
+    return (os.getenv("SEGREDO_SESSAO", "").strip() or _SEGREDO_PADRAO).encode()
+
+
+def _usuarios():
+    try:
+        bruto = json.loads(os.getenv("USUARIOS", "").strip() or "{}")
+        return {str(k).strip().lower(): v for k, v in bruto.items() if isinstance(v, dict)}
+    except Exception:
+        print("[LOGIN] variável USUARIOS inválida (JSON)", flush=True)
+        return {}
+
+
+def _login_ligado():
+    return bool(_usuarios())
+
+
+def _hash_senha(senha, sal=None, voltas=200_000):
+    sal = sal or secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), bytes.fromhex(sal), voltas)
+    return f"pbkdf2${voltas}${sal}${h.hex()}"
+
+
+def _senha_confere(senha, guardado):
+    try:
+        tipo, voltas, sal, esperado = str(guardado).split("$")
+        if tipo != "pbkdf2":
+            return False
+        h = hashlib.pbkdf2_hmac("sha256", str(senha).encode("utf-8"), bytes.fromhex(sal), int(voltas))
+        return hmac.compare_digest(h.hex(), esperado)
+    except Exception:
+        return False
+
+
+def _b64(dados):
+    return base64.urlsafe_b64encode(dados).decode().rstrip("=")
+
+
+def _de_b64(texto):
+    return base64.urlsafe_b64decode(texto + "=" * (-len(texto) % 4))
+
+
+def _fim_do_dia():
+    agora = datetime.now(FUSO_BR)
+    return int(agora.replace(hour=23, minute=59, second=59, microsecond=0).timestamp())
+
+
+def _token_novo(usuario):
+    corpo = _b64(json.dumps({"u": usuario, "exp": _fim_do_dia()}).encode())
+    assinatura = _b64(hmac.new(_segredo(), corpo.encode(), hashlib.sha256).digest())
+    return f"{corpo}.{assinatura}"
+
+
+def _usuario_do_token(token):
+    try:
+        corpo, assinatura = str(token or "").split(".", 1)
+        certa = _b64(hmac.new(_segredo(), corpo.encode(), hashlib.sha256).digest())
+        if not hmac.compare_digest(certa, assinatura):
+            return None
+        dados = json.loads(_de_b64(corpo))
+        usuario = str(dados.get("u") or "").lower()
+        if int(dados.get("exp") or 0) < time.time():
+            return None
+        return usuario if usuario in _usuarios() else None  # removido = bloqueado
+    except Exception:
+        return None
+
+
 @app.before_request
 def _guard():
     if request.method == "OPTIONS":
@@ -204,7 +289,77 @@ def _guard():
         return jsonify({"ok": False, "error": "Origem não autorizada."}), 403
     if request.path != "/health" and not _rate_ok():
         return jsonify({"ok": False, "error": "Muitas requisições. Aguarde um minuto."}), 429
+    g.usuario = ""
+    if request.path in ("/health", "/login") or not _login_ligado():
+        return None
+    cab = request.headers.get("Authorization", "")
+    usuario = _usuario_do_token(cab[7:] if cab.startswith("Bearer ") else "")
+    if not usuario:
+        return jsonify({"ok": False, "code": "LOGIN", "error": "Sua sessão terminou. Entre de novo."}), 401
+    g.usuario = usuario
     return None
+
+
+@app.post("/login")
+def login():
+    if not _login_ligado():
+        return jsonify({"ok": False, "error": "Login não configurado no servidor."}), 400
+    dados = request.get_json(silent=True) or {}
+    usuario = str(dados.get("usuario") or "").strip().lower()
+    senha = str(dados.get("senha") or "")
+
+    # Muitas senhas erradas para o mesmo usuário (no mesmo lugar): pausa de
+    # 10 minutos. Por usuário, para um erro não travar o escritório todo.
+    agora = time.time()
+    falhas = _falhas_login[(_ip(), usuario)]
+    while falhas and falhas[0] < agora - 600:
+        falhas.popleft()
+    if len(falhas) >= 8:
+        return jsonify({"ok": False, "error": "Muitas tentativas. Aguarde 10 minutos."}), 429
+
+    conta = _usuarios().get(usuario)
+    if not conta or not _senha_confere(senha, conta.get("senha")):
+        falhas.append(agora)
+        print("[LOGIN] senha ou usuário incorretos", flush=True)
+        return jsonify({"ok": False, "error": "Usuário ou senha incorretos."}), 401
+
+    print(f"[LOGIN] entrou: {usuario}", flush=True)
+    return jsonify({
+        "ok": True,
+        "token": _token_novo(usuario),
+        "usuario": usuario,
+        "nome": str(conta.get("nome") or usuario),
+        "admin": bool(conta.get("admin")),
+        "expira": _fim_do_dia(),
+    })
+
+
+# ---------- Contador de leituras por usuário ----------
+# Guardado na memória do servidor (zera quando o servidor reinicia) e
+# registrado no log ([USO]), até ligarmos um banco de dados pequeno.
+_USO = defaultdict(int)
+_USO_DESDE = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
+
+
+def _registrar_uso(tipo):
+    usuario = getattr(g, "usuario", "") or "sem-login"
+    dia = datetime.now(FUSO_BR).strftime("%Y-%m-%d")
+    _USO[(dia, usuario, tipo)] += 1
+    print(f"[USO] usuario={usuario} tipo={tipo}", flush=True)
+
+
+@app.get("/uso")
+def uso():
+    if _login_ligado():
+        conta = _usuarios().get(getattr(g, "usuario", ""), {})
+        if not conta.get("admin"):
+            return jsonify({"ok": False, "error": "Só o administrador vê o contador."}), 403
+    linhas = [
+        {"dia": dia, "usuario": usuario, "tipo": tipo, "quantidade": n}
+        for (dia, usuario, tipo), n in sorted(_USO.items())
+    ]
+    nomes = {u: str(c.get("nome") or u) for u, c in _usuarios().items()}
+    return jsonify({"ok": True, "desde": _USO_DESDE, "linhas": linhas, "nomes": nomes})
 
 
 # ============================================================
@@ -2629,6 +2784,7 @@ def ler_holerite():
     try:
         resultado, modelo, tempo_api = _groq_holerite_call(arquivos)
         dados = _normalizar_holerite(resultado)
+        _registrar_uso("renda")
 
         return jsonify({
             "ok": True,
@@ -2773,6 +2929,7 @@ def ler_pis():
             pis = _pis_do_texto(texto)
             if pis:
                 print("[PIS] encontrado no texto do PDF (sem IA)", flush=True)
+                _registrar_uso("pis")
                 return jsonify({
                     "ok": True, "pis": pis, "valido": True, "nome": "",
                     "fonte": "texto", "tempo_total": round(time.perf_counter() - inicio, 3),
@@ -2786,6 +2943,7 @@ def ler_pis():
         pis = re.sub(r"\D", "", str(resultado.get("pis") or ""))
         nome = _tirar_acentos(str(resultado.get("nome") or "").strip().upper())
         print(f"[PIS] lido pela IA; valido={_pis_valido(pis)}", flush=True)
+        _registrar_uso("pis")
         return jsonify({
             "ok": True, "pis": pis, "valido": _pis_valido(pis), "nome": nome,
             "fonte": "ia", "tempo_api": round(tempo_api, 3),
@@ -3191,6 +3349,7 @@ def ler_certidao():
             f"incerto={r['incerto']} imagens={n_imagens} texto_pdf={bool(texto_pdf)}",
             flush=True,
         )
+        _registrar_uso("certidao")
         return jsonify({
             "ok": True, **r,
             "fonte": "texto" if texto_pdf and not n_imagens else "imagem",
@@ -3209,6 +3368,7 @@ def health():
         "ok": True,
         "service": "Assistente SICAQ Web",
         "groq_configurada": bool(os.getenv("GROQ_API_KEY", "").strip()),
+        "login": _login_ligado(),
         "holerite_competencias": _holerite_competencias_validas(),
     })
 
@@ -3292,6 +3452,7 @@ def ler():
             dados_raw = _validar_cnh_final(dados_raw)
 
         dados = _normalizar_saida(dados_raw)
+        _registrar_uso("documento")
 
         return jsonify({
             "ok": True,
