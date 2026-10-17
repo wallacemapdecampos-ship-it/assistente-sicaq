@@ -44,6 +44,60 @@ class GroqLimite(RuntimeError):
     """Limite temporário de tokens da Groq (HTTP 429)."""
 
 
+def _espera_groq(detalhe):
+    """Segundos de espera da mensagem da Groq ("try again in 1m12.5s"), ou None."""
+    m = re.search(r"try again in\s+([0-9hms.]+)", str(detalhe or ""), re.I)
+    if not m:
+        return None
+    total, achou = 0.0, False
+    for valor, unidade in re.findall(r"([0-9.]+)(ms|h|m|s)", m.group(1)):
+        try:
+            v = float(valor)
+        except ValueError:
+            continue
+        achou = True
+        total += {"h": 3600, "m": 60, "s": 1, "ms": 0.001}[unidade] * v
+    return total if achou else None
+
+
+def _texto_espera(segundos):
+    if segundos is None:
+        return "Aguarde um minuto e clique de novo."
+    if segundos < 90:
+        return f"Aguarde cerca de {max(1, round(segundos))} segundos e clique de novo."
+    minutos = round(segundos / 60)
+    if minutos < 90:
+        return f"Libera de novo em cerca de {minutos} minutos."
+    return f"Libera de novo em cerca de {round(minutos / 60)} horas."
+
+
+def _groq_abrir(req, timeout=35):
+    """
+    Envia o pedido à Groq. No limite POR MINUTO do plano gratuito, se a espera
+    for curta (até 20 s), aguarda e tenta de novo sozinho; assim o analista
+    não vê erro. Limite diário ou espera longa: avisa quanto tempo falta.
+    """
+    for tentativa in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code != 429:
+                raise
+            detalhe = e.read().decode("utf-8", errors="replace")
+            baixo = detalhe.lower()
+            diario = "per day" in baixo or "(tpd)" in baixo or "(rpd)" in baixo
+            espera = _espera_groq(detalhe)
+            print(f"[GROQ] limite {'diário' if diario else 'por minuto'}; espera={espera}", flush=True)
+            if tentativa == 0 and not diario and espera is not None and espera <= 20:
+                time.sleep(espera + 0.7)
+                continue
+            if diario:
+                raise GroqLimite("Limite diário gratuito da Groq atingido. " + _texto_espera(espera))
+            raise GroqLimite("Limite por minuto da Groq atingido. " + _texto_espera(espera))
+    raise GroqLimite("Limite por minuto da Groq atingido. " + _texto_espera(None))
+
+
 RATE_WINDOW = 60
 RATE_MAX = 20
 _rate = defaultdict(deque)
@@ -1145,8 +1199,7 @@ def _groq_call(image_bytes, nota=""):
         )
         try:
             t0 = time.perf_counter()
-            with urllib.request.urlopen(req, timeout=35) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
+            body = _groq_abrir(req)
             elapsed = time.perf_counter() - t0
             content = body["choices"][0]["message"]["content"]
             dados = json.loads(content)
@@ -1282,8 +1335,7 @@ def _groq_cnh_criticos(image_bytes: bytes, texto_pdf: str = ""):
 
         try:
             t0 = time.perf_counter()
-            with urllib.request.urlopen(req, timeout=35) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
+            body = _groq_abrir(req)
             tempo = time.perf_counter() - t0
             conteudo = body["choices"][0]["message"]["content"]
             dados = json.loads(conteudo)
@@ -2286,8 +2338,7 @@ def _groq_holerite_call(arquivos):
 
         try:
             t0 = time.perf_counter()
-            with urllib.request.urlopen(req, timeout=35) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
+            body = _groq_abrir(req)
             elapsed = time.perf_counter() - t0
             content = body["choices"][0]["message"]["content"]
             dados = json.loads(content)
@@ -2679,8 +2730,7 @@ def _groq_json(conteudo, max_tokens=120):
     )
     try:
         t0 = time.perf_counter()
-        with urllib.request.urlopen(req, timeout=35) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
+        body = _groq_abrir(req)
         return json.loads(body["choices"][0]["message"]["content"]), time.perf_counter() - t0
     except urllib.error.HTTPError as e:
         detalhe = e.read().decode("utf-8", errors="replace")
