@@ -126,6 +126,12 @@ filiacao_2, mrz, campos_incertos.
 
 Regras:
 - tipo_documento: CNH, RG ou CIN. modelo_documento: ANTIGO, NOVO ou vazio.
+- CIN = Carteira de Identidade Nacional (modelo novo): também tem o título
+  "CARTEIRA DE IDENTIDADE", mas o número do documento é o CPF, tem VALIDADE,
+  rótulos em português e inglês (NOME/NAME, NACIONALIDADE/NATIONALITY BRA),
+  QR Code e zona '<<<' no verso. Nesse caso responda CIN, nunca RG.
+  RG = modelo antigo, com número de REGISTRO GERAL próprio (diferente do CPF)
+  e normalmente sem validade.
 - A imagem pode ser FOTO de celular: o documento pode estar pequeno, inclinado,
   girado ou com reflexo. Leia só o documento e ignore o fundo.
 - Não invente dados.
@@ -1844,12 +1850,51 @@ def _cpf_valido(cpf):
     return True
 
 
+def _sinal_cin(d):
+    """
+    A IA costuma chamar a CIN de "RG" porque o cartão também tem o título
+    CARTEIRA DE IDENTIDADE. Sinais que só a CIN tem, conferidos sem IA:
+    - zona de leitura mecânica (linhas com '<<<') no verso, que RG antigo
+      não tem (a CNH já foi separada antes, pelos dados de CNH);
+    - o número do documento é o próprio CPF (sem número de RG separado),
+      com VALIDADE impressa ou modelo NOVO.
+    Devolve "forte", "fraco" ou "".
+    """
+    mrz = re.sub(r"[^0-9A-Z<]", "", str(d.get("mrz") or "").upper())
+    if mrz.count("<") >= 8 and len(mrz) >= 25 and "BRA" in mrz:
+        return "forte"
+    cpf = re.sub(r"\D", "", str(d.get("cpf") or ""))
+    if not _cpf_valido(cpf):
+        return ""
+    rg = re.sub(r"[^0-9A-Za-z]", "", str(d.get("rg") or "")).upper()
+    modelo = str(d.get("modelo_documento") or "").strip().upper()
+    tem_validade = _parse_data_br(d.get("validade")) is not None
+    if rg and re.sub(r"\D", "", rg) == cpf and (tem_validade or modelo.startswith("NOV")):
+        return "forte"
+    if not rg and tem_validade and modelo.startswith("NOV"):
+        return "forte"
+    if not rg and (tem_validade or modelo.startswith("NOV")):
+        return "fraco"
+    return ""
+
+
 def _tipo_documento(d):
     """
     Padroniza o tipo para CNH, RG ou CIN.
     Devolve (tipo, deduzido): deduzido=True quando veio dos campos lidos,
     e não do tipo informado pela IA.
     """
+    tipo, deduzido = _tipo_documento_base(d)
+    if tipo == "RG":
+        sinal = _sinal_cin(d)
+        if sinal == "forte":
+            return "CIN", False
+        if sinal == "fraco":
+            return "CIN", True
+    return tipo, deduzido
+
+
+def _tipo_documento_base(d):
     t = _tirar_acentos(str(d.get("tipo_documento") or "")).upper()
     t = re.sub(r"[^A-Z ]", " ", t)
     palavras = set(t.split())
