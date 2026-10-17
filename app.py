@@ -546,7 +546,15 @@ def _pdf_pagina_para_imagem(page):
         except Exception:
             pass
 
-    pix = page.get_pixmap(matrix=pymupdf.Matrix(2.2, 2.2), alpha=False)
+    zoom_pagina = 2.2
+    try:
+        area_pag0 = page.rect.width * page.rect.height
+        if any((pymupdf.Rect(i["bbox"]) & page.rect).get_area() >= 0.6 * area_pag0
+               for i in page.get_image_info()):
+            zoom_pagina = 3.0   # scan/foto: aproveita a resolução original
+    except Exception:
+        pass
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom_pagina, zoom_pagina), alpha=False)
     img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB").copy()
 
     # PDF de foto/scan (uma imagem ocupando a página): trata como foto e tenta
@@ -567,7 +575,7 @@ def _pdf_pagina_para_imagem(page):
 
 
 def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
-    img, _ = _preparar_imagem(data, filename, mimetype)
+    img, _modo = _preparar_imagem(data, filename, mimetype)
     out = io.BytesIO()
     img.save(out, format="JPEG", quality=91)
     return out.getvalue()
@@ -588,6 +596,7 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
     is_pdf = ext == ".pdf" or mimetype == "application/pdf"
 
     em_pe = False
+    dividir = False
     if is_pdf:
         doc = pymupdf.open(stream=data, filetype="pdf")
         try:
@@ -596,11 +605,18 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
                 img, pode_recortar = _pdf_pagina_para_imagem(doc[i])
                 if pode_recortar:
                     img, info = _recortar_documento(img)
-                    if info.startswith("recortado") and img.height > 1.15 * img.width:
-                        em_pe = True
+                    if info.startswith("recortado"):
+                        if img.height > 1.15 * img.width:
+                            em_pe = True
+                    elif img.height > 1.3 * img.width:
+                        # Scan de folha em pé (CamScanner, WhatsApp): o
+                        # documento ocupa a folha toda e as letras ficam
+                        # pequenas. Vai em 2 metades (cima/baixo).
+                        dividir = True
                 pages.append(img)
             if len(pages) > 1:
                 em_pe = False
+                dividir = False
 
             if not pages:
                 raise ValueError("PDF sem páginas válidas.")
@@ -636,7 +652,8 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
             ),
             Image.Resampling.LANCZOS,
         )
-    return img, em_pe
+    modo = "em_pe" if em_pe else ("dividir" if dividir else "normal")
+    return img, modo
 
 
 def _jpeg_para_ia(img):
@@ -671,15 +688,33 @@ def _imagens_para_ia(arquivos):
     """
     if len(arquivos) == 1:
         a = arquivos[0]
-        img, em_pe = _preparar_imagem(a["data"], a["filename"], a["mimetype"])
-        if em_pe:
+        img, modo = _preparar_imagem(a["data"], a["filename"], a["mimetype"])
+        if modo == "em_pe":
             print("[LER] documento de lado: enviando 2 orientações", flush=True)
             return [
                 _jpeg_para_ia(img.rotate(-90, expand=True)),
                 _jpeg_para_ia(img.rotate(90, expand=True)),
-            ]
-        return [_jpeg_para_ia(img)]
-    return [_combinar_arquivos_identificacao(arquivos)]
+            ], NOTA_ROTACOES
+        if modo == "dividir":
+            w, h = img.size
+            cima = img.crop((0, 0, w, int(h * 0.54)))
+            baixo = img.crop((0, int(h * 0.46), w, h))
+            print("[LER] scan de folha em pé: enviando metade de cima e de baixo", flush=True)
+            return [_jpeg_para_ia(cima), _jpeg_para_ia(baixo)], NOTA_METADES
+        return [_jpeg_para_ia(img)], ""
+    return [_combinar_arquivos_identificacao(arquivos)], ""
+
+
+NOTA_ROTACOES = (
+    "ATENÇÃO: as 2 imagens a seguir são o MESMO documento, giradas em "
+    "sentidos opostos (uma delas está de cabeça para baixo). Leia os "
+    "dados na imagem em que o texto está na posição normal de leitura."
+)
+NOTA_METADES = (
+    "ATENÇÃO: as 2 imagens a seguir são a METADE DE CIMA e a METADE DE BAIXO "
+    "da MESMA folha escaneada (com uma pequena faixa repetida entre elas). "
+    "Leia as duas como um único documento."
+)
 
 
 def _combinar_arquivos_identificacao(arquivos):
@@ -750,7 +785,7 @@ def PathLikeSuffix(name: str) -> str:
     return name[dot:] if dot >= 0 else ""
 
 
-def _groq_call(image_bytes):
+def _groq_call(image_bytes, nota=""):
     """image_bytes: uma imagem (bytes) ou uma lista com 1 ou 2 imagens."""
     key = os.getenv("GROQ_API_KEY", "").strip()
     if not key:
@@ -759,11 +794,7 @@ def _groq_call(image_bytes):
     imagens = image_bytes if isinstance(image_bytes, list) else [image_bytes]
     conteudo = [{"type": "text", "text": PROMPT}]
     if len(imagens) > 1:
-        conteudo.append({"type": "text", "text": (
-            "ATENÇÃO: as 2 imagens a seguir são o MESMO documento, giradas em "
-            "sentidos opostos (uma delas está de cabeça para baixo). Leia os "
-            "dados na imagem em que o texto está na posição normal de leitura."
-        )})
+        conteudo.append({"type": "text", "text": nota or NOTA_ROTACOES})
     for img in imagens:
         conteudo.append({"type": "image_url", "image_url": {
             "url": "data:image/jpeg;base64," + base64.b64encode(img).decode("ascii")
@@ -2320,10 +2351,10 @@ def ler():
     start = time.perf_counter()
     try:
         t_preparo = time.perf_counter()
-        image_bytes = _imagens_para_ia(arquivos)
+        image_bytes, nota_ia = _imagens_para_ia(arquivos)
         tempo_preparo = time.perf_counter() - t_preparo
 
-        dados_raw, modelo, tempo_api = _groq_call(image_bytes)
+        dados_raw, modelo, tempo_api = _groq_call(image_bytes, nota_ia)
 
         # Tipo do documento sempre como CNH, RG ou CIN (ou vazio se não der).
         tipo_lido = str(dados_raw.get("tipo_documento") or "")
