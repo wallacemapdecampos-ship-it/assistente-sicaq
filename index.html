@@ -109,7 +109,7 @@
     /* ---------- Linhas de arquivo (documento, PIS, certidão) ---------- */
     .linha-arquivo {
       display: grid;
-      grid-template-columns: 118px minmax(0, 1.15fr) minmax(0, 1fr) 128px;
+      grid-template-columns: 118px minmax(0, 1.15fr) minmax(0, 1fr) 152px;
       gap: 6px 12px; align-items: center;
       padding: 10px 0;
       border-top: 1px solid #e7ecef;
@@ -143,7 +143,7 @@
     }
 
     /* ---------- Campos lidos ---------- */
-    #tipoDetectado {
+    #tipoDetectado, .selo {
       font-size: 12.5px; font-weight: 700;
       color: var(--azul); background: var(--azul-claro);
       padding: 3px 10px; border-radius: 999px;
@@ -183,6 +183,9 @@
       margin-top: 14px; padding-top: 12px; border-top: 1px solid #e7ecef;
     }
     .nota { margin-top: 12px; font-size: 12.5px; color: var(--tinta-2); line-height: 1.5; }
+    #msgRenda { font-size: 12.5px; max-width: 70ch; }
+    #msgRenda.dica, #msgRenda.muted { color: var(--tinta-2); }
+    #msgRenda.ok, #msgRenda.warn, #msgRenda.erro { font-weight: 700; }
 
     /* Holerite: 4 por linha. */
     #painelHolerite .campo { --span: 3; }
@@ -218,7 +221,7 @@
   </div>
   <nav class="tabs" aria-label="Seções">
     <button id="tabIdentificacao" class="tab active" type="button">Identificação</button>
-    <button id="tabHolerite" class="tab" type="button">Holerite</button>
+    <button id="tabHolerite" class="tab" type="button">Renda</button>
   </nav>
   <div class="estado-sistema">
     <div id="statusServidor" class="status warn">Verificando servidor</div>
@@ -384,13 +387,13 @@
 
   <section id="painelHolerite" class="painel">
     <div class="card">
-      <div class="card-topo"><h2>Holerite / contracheque</h2></div>
+      <div class="card-topo"><h2>Comprovante de renda</h2></div>
       <div class="linha-arquivo">
-        <label for="holeriteArquivo">Holerite<small>1 ou 2 arquivos</small></label>
+        <label for="holeriteArquivo">Comprovante<small>1 ou 2 arquivos</small></label>
         <input type="file" id="holeriteArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
-        <span class="dica">PDF, foto ou print do contracheque.</span>
-        <button id="btnLerHolerite" type="button" disabled>Ler holerite</button>
-        <div id="mensagemHolerite" class="msg muted">Selecione um holerite para leitura.</div>
+        <span class="dica">Holerite (CNPJ, CEI, CAEPF ou CNO), recibo do eSocial ou extrato do INSS.</span>
+        <button id="btnLerHolerite" type="button" disabled>Ler comprovante</button>
+        <div id="mensagemHolerite" class="msg muted">Selecione o comprovante de renda para leitura.</div>
       </div>
       <div id="statusServidorHolerite" class="status ok" hidden>Servidor online</div>
     </div>
@@ -398,7 +401,8 @@
     <div class="card">
       <div class="card-topo">
         <h2>Renda formal para o SICAQ</h2>
-        <span class="legenda"><i></i>Amarelo: confira no holerite</span>
+        <span id="hTipoRenda" class="selo" hidden></span>
+        <span class="legenda"><i></i>Amarelo: confira no comprovante</span>
       </div>
 
       <div class="grid">
@@ -408,38 +412,56 @@
         </div>
 
         <div class="campo">
-          <label for="hDocumento">Documento</label>
-          <input id="hDocumento" class="fixo" value="CONTRACHEQUE/HOLLERITH" readonly>
+          <label for="hTipoFonte">Tipo de fonte</label>
+          <select id="hTipoFonte">
+            <option value=""></option>
+            <option>FÍSICA</option>
+            <option>JURÍDICA</option>
+          </select>
         </div>
 
         <div class="campo">
-          <label for="hTipoFonte">Tipo de fonte</label>
-          <input id="hTipoFonte" class="fixo" value="JURIDICA" readonly>
+          <label for="hCnpj" id="hCnpjRotulo">CNPJ</label>
+          <input id="hCnpj" type="text" inputmode="numeric">
         </div>
 
         <div class="campo">
           <label for="hCompetencia">Data do comprovante</label>
-          <input id="hCompetencia" type="text">
+          <input id="hCompetencia" type="text" placeholder="MM/AAAA">
+        </div>
+
+        <div class="campo" style="--span: 6">
+          <label for="hDocumento">Documento de comprovante de renda</label>
+          <select id="hDocumento">
+            <option value=""></option>
+            <option>COMPROVANTE DE RECEBIMENTO NO EXTERIOR</option>
+            <option>CONTRACHEQUE/HOLLERITH</option>
+            <option>HISTORICO DE CONTRACHEQUE</option>
+            <option>CONTRATO DE ALUGUEL</option>
+            <option>CONTRATO DE ESTÁGIO</option>
+            <option>DECLARAÇÃO DE IMPOSTO DE RENDA</option>
+            <option>DECLARAÇÃO EMPREGADOR/PREVIDENCIÁRIA</option>
+            <option>DECORE</option>
+            <option>DECORE C/ DARF</option>
+            <option>EXTRATO APLICAÇÃO FINANCEIRA / POUPANÇA</option>
+            <option>EXTRATO DE BENEFÍCIO PREVIDENCIÁRIO</option>
+            <option>EXTRATO DE CONTA SALÁRIO/APOSENTADORIA</option>
+            <option>EXTRATO DE FGTS</option>
+            <option>NOTAS FISCAIS DE VENDAS (ATIVIDADE RURAL)</option>
+            <option>RECIBO PAGAMENTO AUTONOMO (RPA)</option>
+            <option>RECOLHIMENTO ISS</option>
+            <option>SENTENÇA JUDICIAL</option>
+          </select>
         </div>
 
         <div class="campo">
-          <label for="hCnpj">CNPJ</label>
-          <input id="hCnpj" type="text">
+          <label for="hAdmissao" id="hAdmissaoRotulo">Data de admissão</label>
+          <input id="hAdmissao" type="text" placeholder="DD/MM/AAAA">
         </div>
 
         <div class="campo">
-          <label for="hIrrf">IRRF</label>
+          <label for="hIrrf">Imposto de renda retido</label>
           <input id="hIrrf" type="text">
-        </div>
-
-        <div class="campo">
-          <label for="hAdmissao">Data de admissão</label>
-          <input id="hAdmissao" type="text">
-        </div>
-
-        <div class="campo">
-          <label for="hLiquidoOriginal">Líquido do holerite</label>
-          <input id="hLiquidoOriginal" type="text">
         </div>
 
         <div class="campo">
@@ -448,16 +470,21 @@
         </div>
 
         <div class="campo">
-          <label for="hAdiantamento">Adiantamento salarial</label>
-          <input id="hAdiantamento" type="text">
-        </div>
-
-        <div class="campo">
           <label for="hLiquida">Líquida para o SICAQ</label>
           <input id="hLiquida" type="text">
         </div>
 
         <div class="campo">
+          <label for="hLiquidoOriginal">Líquido do comprovante</label>
+          <input id="hLiquidoOriginal" type="text">
+        </div>
+
+        <div class="campo">
+          <label for="hAdiantamento">Adiantamento salarial</label>
+          <input id="hAdiantamento" type="text">
+        </div>
+
+        <div class="campo" style="--span: 12">
           <label for="hDescricaoAdiantamento">Descrição do adiantamento</label>
           <input id="hDescricaoAdiantamento" type="text">
         </div>
@@ -466,6 +493,11 @@
       <div id="notaHolerite" class="nota">
         Regra: Bruta = total de proventos. Líquida = líquido a receber + somente o adiantamento salarial.
         Empréstimos e consignados não são somados.
+      </div>
+
+      <div class="acoes">
+        <span id="msgRenda" class="dica">Abra a tela Renda Formal do SICAQ. A ocupação você escolhe lá, e o Salvar também.</span>
+        <button id="btnRenda" type="button" disabled>Preencher renda no SICAQ</button>
       </div>
     </div>
   </section>
@@ -983,6 +1015,14 @@
       el.textContent = "Extensão conectada";
       el.className = "status ok";
       atualizarBotaoSicaq();
+      atualizarBotaoRenda();
+      return;
+    }
+
+    if (msg.type === "SICAQ_ACCEPTED" && !msg.ok && aguardandoRenda) {
+      terminarRenda();
+      setMsgRenda("A extensão não aceitou o comando: " + (msg.error || "erro desconhecido") +
+        ". Se a extensão foi recarregada, aperte Ctrl+F5 aqui e F5 no SICAQ.", "erro");
       return;
     }
 
@@ -997,6 +1037,17 @@
         setMensagem("A extensão foi atualizada ou recarregada. Aperte Ctrl+F5 nesta página (e F5 na página do SICAQ) e clique em Preencher SICAQ de novo.", "erro");
       } else {
         setMensagem("A extensão não aceitou o comando: " + (erroExt || "erro desconhecido"), "erro");
+      }
+      return;
+    }
+
+    if (msg.type === "SICAQ_RESULT" && String((msg.result || {}).id || "").startsWith("renda-")) {
+      terminarRenda();
+      const r = msg.result || {};
+      if (r.ok) {
+        setMsgRenda("Renda preenchida no SICAQ. Escolha a ocupação, confira e clique em Salvar.", "ok");
+      } else {
+        setMsgRenda("SICAQ: " + ((r.erros || []).join(" | ") || "o preenchimento não foi concluído."), "erro");
       }
       return;
     }
@@ -1207,8 +1258,55 @@
   // ============================================================
   const holeriteIds = [
     "hCnpj","hAdmissao","hCompetencia","hBruta","hLiquida","hIrrf",
-    "hLiquidoOriginal","hAdiantamento","hDescricaoAdiantamento"
+    "hLiquidoOriginal","hAdiantamento","hDescricaoAdiantamento",
+    "hTipoFonte","hDocumento"
   ];
+  let ultimoHolerite = null;
+  let aguardandoRenda = false;
+  let esperaRenda = null;
+
+  function soDigitos(v) { return String(v || "").replace(/\D/g, ""); }
+
+  function cpfValido(v) {
+    const c = soDigitos(v);
+    if (c.length !== 11 || /^(\d)\1+$/.test(c)) return false;
+    for (const n of [9, 10]) {
+      let soma = 0;
+      for (let i = 0; i < n; i++) soma += Number(c[i]) * (n + 1 - i);
+      if ((soma * 10) % 11 % 10 !== Number(c[n])) return false;
+    }
+    return true;
+  }
+
+  function cnpjValido(v) {
+    const c = soDigitos(v);
+    if (c.length !== 14 || /^(\d)\1+$/.test(c)) return false;
+    const dv = (base, pesos) => {
+      const r = base.split("").reduce((s, d, i) => s + Number(d) * pesos[i], 0) % 11;
+      return r < 2 ? 0 : 11 - r;
+    };
+    const p1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const d1 = dv(c.slice(0, 12), p1);
+    const d2 = dv(c.slice(0, 12) + d1, [6, ...p1]);
+    return c.slice(12) === `${d1}${d2}`;
+  }
+
+  // FÍSICA -> CPF; JURÍDICA -> CNPJ (o rótulo acompanha o SICAQ).
+  function ajustarRotuloFonte() {
+    const fisica = (document.getElementById("hTipoFonte").value || "").startsWith("F");
+    document.getElementById("hCnpjRotulo").textContent = fisica ? "CPF" : "CNPJ";
+  }
+
+  function atualizarBotaoRenda() {
+    document.getElementById("btnRenda").disabled =
+      !extensaoPronta || !ultimoHolerite || aguardandoRenda;
+  }
+
+  function setMsgRenda(texto, classe = "dica") {
+    const el = document.getElementById("msgRenda");
+    el.textContent = texto;
+    el.className = classe;
+  }
 
   function mostrarAba(nome) {
     const ident = nome === "identificacao";
@@ -1230,10 +1328,51 @@
       el.value = "";
       el.classList.remove("destaque");
     });
+    ultimoHolerite = null;
+    const selo = document.getElementById("hTipoRenda");
+    selo.textContent = "";
+    selo.hidden = true;
+    document.getElementById("hAdmissaoRotulo").textContent = "Data de admissão";
+    ajustarRotuloFonte();
+    setMsgRenda("Abra a tela Renda Formal do SICAQ. A ocupação você escolhe lá, e o Salvar também.");
+    atualizarBotaoRenda();
   }
 
   function preencherHolerite(d) {
-    document.getElementById("hCnpj").value = d.cnpj || "";
+    ultimoHolerite = { ...(d || {}) };
+    const tipo = String(d.tipo_renda || "");
+    const selo = document.getElementById("hTipoRenda");
+    let nomeTipo = d.tipo_renda_nome || "";
+    if (tipo === "INSS") {
+      const extras = [d.especie_beneficio, d.numero_beneficio ? "NB " + d.numero_beneficio : ""].filter(Boolean);
+      if (extras.length) nomeTipo += " · " + extras.join(" · ");
+    }
+    selo.textContent = nomeTipo;
+    selo.hidden = !nomeTipo;
+    document.getElementById("hAdmissaoRotulo").textContent =
+      tipo === "INSS" ? "Início do benefício" : "Data de admissão";
+
+    const fonteLida = semAcentos(d.tipo_fonte || "").toUpperCase();
+    document.getElementById("hTipoFonte").value =
+      fonteLida.startsWith("F") ? "FÍSICA" : (fonteLida.startsWith("J") ? "JURÍDICA" : "");
+    ajustarRotuloFonte();
+    document.getElementById("hDocumento").value = d.documento || "CONTRACHEQUE/HOLLERITH";
+
+    // CEI / CAEPF / CNO: vai o CPF do próprio cliente. Se o comprovante não
+    // trouxer, usa o CPF lido no documento de identificação (se for válido).
+    let docFonte = soDigitos(d.documento_fonte || d.cnpj);
+    let cpfDaIdentificacao = false;
+    if (!docFonte && /^HOLERITE_(CEI|CAEPF|CNO)$/.test(tipo)) {
+      const cpfIdent = soDigitos(document.getElementById("cpf").value);
+      if (cpfValido(cpfIdent)) {
+        docFonte = cpfIdent;
+        cpfDaIdentificacao = true;
+        d.campos_incertos = (d.campos_incertos || []).filter(c => c !== "documento_fonte");
+      }
+    }
+    document.getElementById("hCnpj").value = docFonte;
+    ultimoHolerite.cpfDaIdentificacao = cpfDaIdentificacao;
+
     document.getElementById("hAdmissao").value = d.data_admissao || "";
     document.getElementById("hCompetencia").value = d.competencia || "";
     document.getElementById("hBruta").value = d.bruta || "";
@@ -1251,7 +1390,8 @@
 
     // Campos que não fecharam nas conferências do servidor (contas, CNPJ, admissão).
     const mapa = {
-      cnpj: ["hCnpj"], data_admissao: ["hAdmissao"], competencia: ["hCompetencia"],
+      cnpj: ["hCnpj"], documento_fonte: ["hCnpj"],
+      data_admissao: ["hAdmissao"], competencia: ["hCompetencia"],
       bruta: ["hBruta", "hLiquida"], liquido_original: ["hLiquidoOriginal", "hLiquida"],
       adiantamento: ["hAdiantamento", "hLiquida"], irrf: ["hIrrf"]
     };
@@ -1262,7 +1402,80 @@
         if (el && !el.classList.contains("destaque")) { el.classList.add("destaque"); duvidosos++; }
       });
     });
+    if (!document.getElementById("hTipoFonte").value) {
+      document.getElementById("hTipoFonte").classList.add("destaque");
+      duvidosos++;
+    }
+    atualizarBotaoRenda();
     return duvidosos;
+  }
+
+  // ---------- Preencher a Renda Formal no SICAQ (extensão) ----------
+  function montarPayloadRenda() {
+    const v = (id) => String(document.getElementById(id).value || "").trim().toUpperCase();
+    return {
+      preencher: "renda",
+      criado_em: Date.now(),
+      caracteristica: "COMPROVADA",
+      tipo_fonte: v("hTipoFonte"),
+      documento_fonte: soDigitos(v("hCnpj")),
+      data_admissao: v("hAdmissao"),
+      bruta: v("hBruta"),
+      liquida: v("hLiquida"),
+      documento_comprovante: v("hDocumento"),
+      data_comprovante: v("hCompetencia"),
+      irrf: v("hIrrf") || "0,00"
+    };
+  }
+
+  function preencherRenda() {
+    if (!extensaoPronta) {
+      setMsgRenda("A extensão SICAQ não foi detectada. Recarregue a extensão e atualize esta página.", "erro");
+      return;
+    }
+    const p = montarPayloadRenda();
+    const fisica = p.tipo_fonte.startsWith("F");
+    const docOk = fisica ? cpfValido(p.documento_fonte) : cnpjValido(p.documento_fonte);
+    if (!p.tipo_fonte) {
+      document.getElementById("hTipoFonte").classList.add("destaque");
+      setMsgRenda("Escolha o tipo de fonte (física ou jurídica) antes de preencher.", "erro");
+      return;
+    }
+    if (!docOk) {
+      document.getElementById("hCnpj").classList.add("destaque");
+      setMsgRenda(`O ${fisica ? "CPF" : "CNPJ"} da fonte não é válido. Corrija antes de preencher.`, "erro");
+      return;
+    }
+    if (!p.bruta || !p.documento_comprovante) {
+      setMsgRenda("Faltam a renda bruta ou o documento de comprovante.", "erro");
+      return;
+    }
+
+    aguardandoRenda = true;
+    atualizarBotaoRenda();
+    document.getElementById("btnRenda").textContent = "Preenchendo…";
+    setMsgRenda("Enviando para a extensão: ela consulta o " + (fisica ? "CPF" : "CNPJ") + " e depois preenche o resto.", "warn");
+    clearTimeout(esperaRenda);
+    // Sem resposta: a tela Renda Formal não está aberta (o pedido expira na extensão).
+    esperaRenda = setTimeout(() => {
+      if (!aguardandoRenda) return;
+      terminarRenda();
+      setMsgRenda("Não encontrei a tela Renda Formal aberta no SICAQ. Abra a tela e clique de novo.", "erro");
+    }, 45000);
+
+    window.postMessage({
+      source: "ASSISTENTE_SICAQ_SITE",
+      type: "FILL_SICAQ",
+      id: `renda-${Date.now()}`,
+      payload: p
+    }, window.location.origin);
+  }
+
+  function terminarRenda() {
+    aguardandoRenda = false;
+    clearTimeout(esperaRenda);
+    document.getElementById("btnRenda").textContent = "Preencher renda no SICAQ";
+    atualizarBotaoRenda();
   }
 
   async function lerHolerite() {
@@ -1270,12 +1483,12 @@
     const btn = document.getElementById("btnLerHolerite");
 
     if (!input.files.length) {
-      setMensagemHolerite("Selecione 1 ou 2 arquivos de holerite.", "erro");
+      setMensagemHolerite("Selecione 1 ou 2 arquivos do comprovante de renda.", "erro");
       return;
     }
 
     if (input.files.length > 2) {
-      setMensagemHolerite("Selecione no máximo 2 arquivos de holerite.", "erro");
+      setMensagemHolerite("Selecione no máximo 2 arquivos do comprovante.", "erro");
       input.value = "";
       return;
     }
@@ -1287,8 +1500,8 @@
     const qtd = input.files.length;
     setMensagemHolerite(
       qtd === 2
-        ? "Qwen analisando os 2 arquivos de holerite..."
-        : "Qwen analisando o holerite...",
+        ? "Lendo os 2 arquivos do comprovante…"
+        : "Lendo o comprovante…",
       "warn"
     );
 
@@ -1311,50 +1524,59 @@
 
       if (!resp.ok || !data.ok) {
         if (data && data.code === "HOLERITE_FORA_PERIODO") {
-          throw new Error("Holerite fora do período aceito. " + (data.error || ""));
+          throw new Error("Comprovante fora do período aceito. " + (data.error || ""));
         }
-        throw new Error((data && data.error) || "Falha na leitura do holerite.");
+        throw new Error((data && data.error) || "Falha na leitura do comprovante.");
       }
 
       const duvidososH = preencherHolerite(data.dados || {});
       const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const qtdLidos = data.arquivos_lidos || input.files.length || 1;
       setMensagemHolerite(
-        `${qtdLidos > 1 ? qtdLidos + " holerites lidos" : "Holerite lido"} em ${total} s. ` +
+        `${qtdLidos > 1 ? qtdLidos + " arquivos lidos" : "Comprovante lido"} em ${total} s. ` +
         (duvidososH
-          ? "As contas ou dados em amarelo não fecharam: confira no holerite antes de usar."
-          : "Contas conferidas (proventos − descontos = líquido). Revise os valores."),
+          ? "As contas ou dados em amarelo não fecharam: confira no comprovante antes de usar."
+          : "Contas conferidas (proventos − descontos = líquido). Revise os valores.") +
+        (ultimoHolerite && ultimoHolerite.cpfDaIdentificacao
+          ? " O CPF do cliente veio do documento de identificação." : ""),
         duvidososH ? "warn" : "ok"
       );
     } catch (e) {
       setMensagemHolerite("Erro: " + (e.message || e), "erro");
     } finally {
       btn.disabled = false;
-      btn.textContent = "Ler holerite";
+      btn.textContent = "Ler comprovante";
     }
   }
 
   document.getElementById("tabIdentificacao").addEventListener("click", () => mostrarAba("identificacao"));
   document.getElementById("tabHolerite").addEventListener("click", () => mostrarAba("holerite"));
   document.getElementById("btnLerHolerite").addEventListener("click", lerHolerite);
+  document.getElementById("btnRenda").addEventListener("click", preencherRenda);
+  document.getElementById("hTipoFonte").addEventListener("change", ajustarRotuloFonte);
+  holeriteIds.forEach(id => {
+    ["input", "change"].forEach(ev => document.getElementById(id).addEventListener(ev, (e) => {
+      e.target.classList.remove("destaque");
+    }));
+  });
   document.getElementById("holeriteArquivo").addEventListener("change", (event) => {
     limparHolerite();
 
     const qtd = event.target.files.length;
 
     if (qtd > 2) {
-      setMensagemHolerite("Selecione no máximo 2 arquivos de holerite.", "erro");
+      setMensagemHolerite("Selecione no máximo 2 arquivos do comprovante.", "erro");
       event.target.value = "";
       return;
     }
 
     if (qtd === 2) {
       setMensagemHolerite(
-        "2 arquivos selecionados. O sistema vai analisar os dois juntos e usar a competência válida mais recente.",
+        "2 arquivos selecionados. Vou ler os dois juntos e usar o mês válido mais recente.",
         "muted"
       );
     } else if (qtd === 1) {
-      setMensagemHolerite("Holerite selecionado. Clique em Ler holerite.", "muted");
+      setMensagemHolerite("Comprovante selecionado. Clique em Ler comprovante.", "muted");
     }
   });
 

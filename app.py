@@ -1874,28 +1874,45 @@ def _holerite_competencias_validas():
 def _holerite_prompt():
     atual, anterior, retrasado = _holerite_competencias_validas()
     return f"""
-Leia este HOLERITE / CONTRACHEQUE brasileiro e devolva SOMENTE JSON válido.
+Leia este comprovante de renda brasileiro (HOLERITE / CONTRACHEQUE, recibo
+do eSocial de empregado doméstico ou EXTRATO DE PAGAMENTO DE BENEFÍCIO DO
+INSS) e devolva SOMENTE JSON válido.
 A imagem pode ser FOTO (papel torto/dobrado): siga cada linha da tabela com
 cuidado, sem pular para a linha de cima ou de baixo.
 
 Chaves, NESTA ORDEM:
-competencia, cnpj, data_admissao, itens, total_proventos, total_descontos,
-liquido_original, bruta, adiantamento_salarial_total, descricao_adiantamento,
-irrf, campos_incertos.
+origem, competencia, empregador_tipo, empregador_documento, cpf_funcionario,
+numero_beneficio, especie_beneficio, data_admissao, itens, total_proventos,
+total_descontos, liquido_original, bruta, adiantamento_salarial_total,
+descricao_adiantamento, irrf, campos_incertos.
 
 Regras:
-- competencia: mês/ano do holerite em MM/AAAA.
-- cnpj: CNPJ do EMPREGADOR (14 dígitos, formato 00.000.000/0000-00), somente dígitos.
+- origem: "INSS" se for extrato/demonstrativo de pagamento de benefício do
+  INSS (aposentadoria, pensão por morte, auxílio etc.); "ESOCIAL" se for
+  recibo de empregado DOMÉSTICO do eSocial (empregador pessoa física);
+  "HOLERITE" nos demais casos.
+- competencia: mês/ano do comprovante em MM/AAAA.
+- empregador_tipo: o rótulo do número de inscrição do EMPREGADOR como está
+  escrito: "CNPJ", "CEI", "CAEPF", "CNO" ou "CPF". No INSS, deixe vazio.
+- empregador_documento: o número de inscrição do EMPREGADOR exatamente como
+  está impresso, com pontos, barra e traço. No INSS, deixe vazio.
+- cpf_funcionario: CPF do funcionário/beneficiário, se aparecer.
+- numero_beneficio: só no INSS, o número do benefício (NB).
+- especie_beneficio: só no INSS, a espécie (ex.: "21 - PENSÃO POR MORTE").
 - data_admissao: campo "ADMISSÃO", em DD/MM/AAAA com ano de 4 dígitos.
+  No INSS, use a data de início do benefício (DIB), se aparecer.
   Não confunda com data de pagamento, CEP, CTPS ou outras datas.
 - itens: TODAS as linhas de eventos da tabela, na ordem, cada uma como
   {{"descricao": "...", "provento": "0,00", "desconto": "0,00"}}.
   O valor vai em "provento" se estiver na coluna PROVENTOS/VENCIMENTOS/CRÉDITOS
   e em "desconto" se estiver na coluna DESCONTOS/DÉBITOS. A coluna REFERÊNCIA
   (dias, horas, %) NÃO é valor: ignore.
+  No INSS, cada rubrica é uma linha: crédito (ex.: VALOR TOTAL DE MR DO
+  PERÍODO) em "provento" e débito (consignação, empréstimo, IR) em "desconto".
 - total_proventos: linha TOTAL da coluna de proventos (TOTAL DE VENCIMENTOS).
+  No INSS, o total de créditos (valor bruto).
 - total_descontos: linha TOTAL da coluna de descontos.
-- liquido_original: TOTAL LÍQUIDO / LÍQUIDO A RECEBER.
+- liquido_original: TOTAL LÍQUIDO / LÍQUIDO A RECEBER (no INSS, VALOR LÍQUIDO).
 - bruta: igual a total_proventos. Não use salário base, base INSS, base FGTS.
 - adiantamento_salarial_total: some SOMENTE antecipação do salário mensal,
   usando o valor da coluna DESCONTOS dessas linhas.
@@ -2107,7 +2124,7 @@ def _groq_holerite_call(arquivos):
             "messages": [{"role": "user", "content": conteudo}],
             "temperature": 0.0,
             "top_p": 0.8,
-            "max_completion_tokens": 1100,  # inclui as linhas da tabela
+            "max_completion_tokens": 1250,  # inclui as linhas da tabela
             "stream": False,
             "reasoning_effort": "none",
             "response_format": {"type": "json_object"},
@@ -2202,9 +2219,73 @@ def _eh_irrf(descricao):
     return bool(re.search(r"\bIRRF\b|I\.R\.R\.F|IMPOSTO\s+DE\s+RENDA|\bI\.?R\.?\s*FONTE", d))
 
 
+CNPJ_INSS = "29979036000140"
+
+TIPOS_RENDA = {
+    "HOLERITE_CNPJ": "Holerite (CNPJ)",
+    "HOLERITE_CEI": "Holerite (CEI)",
+    "HOLERITE_CAEPF": "Holerite (CAEPF)",
+    "HOLERITE_CNO": "Holerite (CNO)",
+    "ESOCIAL": "eSocial doméstico (CPF do patrão)",
+    "INSS": "Benefício do INSS",
+}
+
+
+def _fonte_renda(r):
+    """
+    Decide, por regra fixa, como a renda entra no SICAQ:
+    - holerite com CNPJ: JURÍDICA + CNPJ do empregador;
+    - holerite com CEI, CAEPF ou CNO: FÍSICA + CPF do próprio cliente;
+    - eSocial doméstico: FÍSICA + CPF do patrão;
+    - benefício do INSS: JURÍDICA + CNPJ do INSS.
+    Devolve dict com tipo, tipo_fonte, documento_fonte, rotulo, documento,
+    cpf_funcionario e incertos.
+    """
+    origem = _texto_limpo(r.get("origem"))
+    rotulo = _texto_limpo(r.get("empregador_tipo"))
+    impresso = str(r.get("empregador_documento") or r.get("cnpj") or "").strip()
+    dig = re.sub(r"\D", "", impresso)
+    cpf_func = re.sub(r"\D", "", str(r.get("cpf_funcionario") or ""))
+    cpf_func = cpf_func if _cpf_valido(cpf_func) else ""
+
+    def saida(tipo, fonte, documento, rot, comprovante, incertos=()):
+        return {
+            "tipo": tipo, "tipo_fonte": fonte, "documento_fonte": documento,
+            "rotulo": rot, "documento": comprovante,
+            "cpf_funcionario": cpf_func, "incertos": list(incertos),
+        }
+
+    if "INSS" in origem:
+        return saida("INSS", "JURÍDICA", CNPJ_INSS, "CNPJ", "EXTRATO DE BENEFÍCIO PREVIDENCIÁRIO")
+
+    formato_caepf = re.fullmatch(r"\d{3}\.\d{3}\.\d{3}/\d{3}-\d{2}", impresso)
+    if "CAEPF" in rotulo or (len(dig) == 14 and formato_caepf and not _cnpj_valido(dig)):
+        tipo = "HOLERITE_CAEPF"
+    elif "CNO" in rotulo:
+        tipo = "HOLERITE_CNO"
+    elif "CEI" in rotulo or len(dig) == 12:
+        tipo = "HOLERITE_CEI"
+    elif "ESOCIAL" in origem or "CPF" in rotulo or len(dig) == 11:
+        tipo = "ESOCIAL"
+    else:
+        tipo = "HOLERITE_CNPJ"
+
+    if tipo == "HOLERITE_CNPJ":
+        return saida(tipo, "JURÍDICA", dig, "CNPJ", "CONTRACHEQUE/HOLLERITH",
+                     [] if _cnpj_valido(dig) else ["documento_fonte"])
+    if tipo == "ESOCIAL":
+        # CPF do patrão: precisa ser válido e diferente do CPF do funcionário.
+        ok = _cpf_valido(dig) and dig != cpf_func
+        return saida(tipo, "FÍSICA", dig, "CPF", "CONTRACHEQUE/HOLLERITH",
+                     [] if ok else ["documento_fonte"])
+    # CEI / CAEPF / CNO: o SICAQ recebe o CPF do próprio cliente.
+    return saida(tipo, "FÍSICA", cpf_func, "CPF", "CONTRACHEQUE/HOLLERITH",
+                 [] if cpf_func else ["documento_fonte"])
+
+
 def _normalizar_holerite(resultado):
     resultado = dict(resultado or {})
-    cnpj = re.sub(r"\D", "", str(resultado.get("cnpj") or ""))
+    fonte = _fonte_renda(resultado)
     competencia = _holerite_competencia_mm_aaaa(resultado.get("competencia"))
     validas = _holerite_competencias_validas()
 
@@ -2260,9 +2341,8 @@ def _normalizar_holerite(resultado):
     else:
         incertos += ["bruta", "liquido_original"]
 
-    # CNPJ com dígitos verificadores.
-    if not _cnpj_valido(cnpj):
-        incertos.append("cnpj")
+    # CNPJ/CPF da fonte pagadora conferido pelos dígitos verificadores.
+    incertos += fonte["incertos"]
 
     # Admissão: data válida, ano de 4 dígitos e antes da competência.
     admissao_txt = str(resultado.get("data_admissao") or "").strip()
@@ -2282,9 +2362,18 @@ def _normalizar_holerite(resultado):
 
     return {
         "caracteristica_renda": "COMPROVADA",
-        "tipo_fonte": "JURIDICA",
-        "documento": "CONTRACHEQUE/HOLLERITH",
-        "cnpj": cnpj,
+        "tipo_renda": fonte["tipo"],
+        "tipo_renda_nome": TIPOS_RENDA.get(fonte["tipo"], ""),
+        "tipo_fonte": fonte["tipo_fonte"],
+        "documento_fonte": fonte["documento_fonte"],
+        "documento_fonte_rotulo": fonte["rotulo"],
+        "documento": fonte["documento"],
+        "cpf_funcionario": fonte["cpf_funcionario"],
+        "cnpj": fonte["documento_fonte"] if fonte["rotulo"] == "CNPJ" else "",
+        "numero_beneficio": re.sub(r"\D", "", str(resultado.get("numero_beneficio") or ""))
+        if fonte["tipo"] == "INSS" else "",
+        "especie_beneficio": str(resultado.get("especie_beneficio") or "").strip().upper()
+        if fonte["tipo"] == "INSS" else "",
         "data_admissao": admissao_txt,
         "competencia": competencia,
         "bruta": _holerite_valor(bruta),
