@@ -335,10 +335,68 @@ def login():
 
 
 # ---------- Contador de leituras por usuário ----------
-# Guardado na memória do servidor (zera quando o servidor reinicia) e
-# registrado no log ([USO]), até ligarmos um banco de dados pequeno.
+# Com DATABASE_URL (Postgres do Neon) os números ficam guardados no banco;
+# sem ele (ou se o banco falhar), ficam na memória e zeram ao reiniciar.
+# Só guarda contagens (dia, usuário, tipo, quantidade) — nenhum dado de
+# documento ou cliente.
 _USO = defaultdict(int)
 _USO_DESDE = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
+_banco_pronto = {"tabela": False}
+
+
+def _conectar_banco():
+    url = os.getenv("DATABASE_URL", "").strip()
+    if not url:
+        return None
+    import ssl
+    import urllib.parse
+    import pg8000.native  # puro Python (sem compilar)
+
+    u = urllib.parse.urlparse(url)
+    return pg8000.native.Connection(
+        user=urllib.parse.unquote(u.username or ""),
+        password=urllib.parse.unquote(u.password or ""),
+        host=u.hostname,
+        port=u.port or 5432,
+        database=(u.path or "/").lstrip("/") or "postgres",
+        ssl_context=ssl.create_default_context(),
+        timeout=15,
+    )
+
+
+def _no_banco(funcao):
+    """Abre a conexão, roda e fecha. Devolve None se não houver banco."""
+    con = _conectar_banco()
+    if con is None:
+        return None
+    try:
+        if not _banco_pronto["tabela"]:
+            con.run(
+                "CREATE TABLE IF NOT EXISTS uso_leituras ("
+                " dia DATE NOT NULL, usuario TEXT NOT NULL, tipo TEXT NOT NULL,"
+                " quantidade INTEGER NOT NULL DEFAULT 0,"
+                " PRIMARY KEY (dia, usuario, tipo))"
+            )
+            _banco_pronto["tabela"] = True
+        return funcao(con)
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _gravar_uso_no_banco(dia, usuario, tipo):
+    try:
+        _no_banco(lambda con: con.run(
+            "INSERT INTO uso_leituras (dia, usuario, tipo, quantidade)"
+            " VALUES (CAST(:dia AS DATE), :usuario, :tipo, 1)"
+            " ON CONFLICT (dia, usuario, tipo)"
+            " DO UPDATE SET quantidade = uso_leituras.quantidade + 1",
+            dia=dia, usuario=usuario, tipo=tipo,
+        ))
+    except Exception as e:
+        print(f"[USO] banco indisponível ({type(e).__name__}); contagem só na memória", flush=True)
 
 
 def _registrar_uso(tipo):
@@ -346,6 +404,11 @@ def _registrar_uso(tipo):
     dia = datetime.now(FUSO_BR).strftime("%Y-%m-%d")
     _USO[(dia, usuario, tipo)] += 1
     print(f"[USO] usuario={usuario} tipo={tipo}", flush=True)
+    if os.getenv("DATABASE_URL", "").strip():
+        # Em segundo plano: a leitura não espera o banco (o Neon "acorda"
+        # em até 1 s depois de 5 min parado).
+        import threading
+        threading.Thread(target=_gravar_uso_no_banco, args=(dia, usuario, tipo), daemon=True).start()
 
 
 @app.get("/uso")
@@ -354,12 +417,31 @@ def uso():
         conta = _usuarios().get(getattr(g, "usuario", ""), {})
         if not conta.get("admin"):
             return jsonify({"ok": False, "error": "Só o administrador vê o contador."}), 403
+    nomes = {u: str(c.get("nome") or u) for u, c in _usuarios().items()}
+
+    # Banco: este mês e o anterior.
+    hoje = datetime.now(FUSO_BR).date()
+    inicio = (hoje.replace(day=1) - timedelta(days=1)).replace(day=1)
+    try:
+        rows = _no_banco(lambda con: con.run(
+            "SELECT CAST(dia AS TEXT), usuario, tipo, quantidade FROM uso_leituras"
+            " WHERE dia >= CAST(:inicio AS DATE) ORDER BY dia, usuario, tipo",
+            inicio=inicio.isoformat(),
+        ))
+        if rows is not None:
+            linhas = [
+                {"dia": str(r[0])[:10], "usuario": r[1], "tipo": r[2], "quantidade": int(r[3])}
+                for r in rows
+            ]
+            return jsonify({"ok": True, "persistente": True, "desde": "", "linhas": linhas, "nomes": nomes})
+    except Exception as e:
+        print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
+
     linhas = [
         {"dia": dia, "usuario": usuario, "tipo": tipo, "quantidade": n}
         for (dia, usuario, tipo), n in sorted(_USO.items())
     ]
-    nomes = {u: str(c.get("nome") or u) for u, c in _usuarios().items()}
-    return jsonify({"ok": True, "desde": _USO_DESDE, "linhas": linhas, "nomes": nomes})
+    return jsonify({"ok": True, "persistente": False, "desde": _USO_DESDE, "linhas": linhas, "nomes": nomes})
 
 
 # ============================================================

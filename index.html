@@ -1524,14 +1524,19 @@
       const agora = new Date();
       const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
       const mes = hoje.slice(0, 7);
-      const doDia = {}, doMes = {};
+      const ant = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
+      const mesAnterior = `${ant.getFullYear()}-${String(ant.getMonth() + 1).padStart(2, "0")}`;
+      const doDia = {}, doMes = {}, doAnterior = {};
       (data.linhas || []).forEach(l => {
         if (l.dia === hoje) { doDia[l.usuario] = doDia[l.usuario] || {}; doDia[l.usuario][l.tipo] = (doDia[l.usuario][l.tipo] || 0) + l.quantidade; }
         if (String(l.dia).startsWith(mes)) { doMes[l.usuario] = doMes[l.usuario] || {}; doMes[l.usuario][l.tipo] = (doMes[l.usuario][l.tipo] || 0) + l.quantidade; }
+        if (String(l.dia).startsWith(mesAnterior)) { doAnterior[l.usuario] = doAnterior[l.usuario] || {}; doAnterior[l.usuario][l.tipo] = (doAnterior[l.usuario][l.tipo] || 0) + l.quantidade; }
       });
-      caixa.innerHTML = tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes);
-      document.getElementById("notaUso").textContent =
-        `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
+      caixa.innerHTML = tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes) +
+        (data.persistente ? tabelaUso("Mês passado", doAnterior) : "");
+      document.getElementById("notaUso").textContent = data.persistente
+        ? "Números guardados no banco de dados (só as contagens, nenhum dado de cliente)."
+        : `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
     } catch (e) {
       caixa.innerHTML = "";
       document.getElementById("notaUso").textContent = "Erro: " + (e.message || e);

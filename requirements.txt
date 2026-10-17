@@ -5,3 +5,4 @@ PyMuPDF==1.26.4
 gunicorn==23.0.0
 numpy==2.5.3
 opencv-python-headless==5.0.0.93
+pg8000>=1.30,<2
