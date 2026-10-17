@@ -88,7 +88,19 @@ def _groq_abrir(req, timeout=35):
             baixo = detalhe.lower()
             diario = "per day" in baixo or "(tpd)" in baixo or "(rpd)" in baixo
             espera = _espera_groq(detalhe)
-            print(f"[GROQ] limite {'diário' if diario else 'por minuto'}; espera={espera}", flush=True)
+            try:
+                cabecalho = float((e.headers or {}).get("retry-after") or "")
+            except (TypeError, ValueError):
+                cabecalho = None
+            if espera is None and cabecalho is not None:
+                espera = cabecalho
+            # A mensagem da Groq só fala de limites/tokens (sem dados do cliente).
+            try:
+                msg = json.loads(detalhe).get("error", {}).get("message", "")
+            except Exception:
+                msg = detalhe
+            print(f"[GROQ] 429 {'diário' if diario else 'por minuto'}; espera={espera}; "
+                  f"retry-after={cabecalho}; msg={msg[:300]!r}", flush=True)
             if tentativa == 0 and not diario and espera is not None and espera <= 20:
                 time.sleep(espera + 0.7)
                 continue
