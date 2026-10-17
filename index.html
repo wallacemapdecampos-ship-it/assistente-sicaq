@@ -545,6 +545,53 @@
     return saida.join(" ");
   }
 
+  // ---------- Envio seguro (servidor pode estar "dormindo") ----------
+  // No plano gratuito o servidor dorme e leva ~1 min para acordar. Se o
+  // arquivo for enviado nesse momento, o upload pode travar. Por isso:
+  // 1) confirma que o servidor está acordado (/health); 2) só então envia;
+  // 3) se a conexão cair ou travar, tenta mais uma vez automaticamente.
+  async function fetchComLimite(url, opcoes, ms) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
+    try {
+      return await fetch(url, { ...opcoes, signal: ctrl.signal });
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async function acordarServidor(avisar) {
+    const inicio = Date.now();
+    let avisou = false;
+    while (Date.now() - inicio < 100000) {
+      try {
+        const r = await fetchComLimite(API + "/health", { cache: "no-store" }, 8000);
+        if (r.ok) return true;
+      } catch (_) {}
+      if (!avisou && avisar) {
+        avisar("O servidor estava em repouso e está acordando (até 1 minuto). Aguarde, a leitura começa sozinha...", "warn");
+        avisou = true;
+      }
+      await new Promise(res => setTimeout(res, 4000));
+    }
+    return false;
+  }
+
+  async function postarComServidorAcordado(rota, form, avisar) {
+    for (let tentativa = 1; tentativa <= 2; tentativa++) {
+      const acordado = await acordarServidor(avisar);
+      if (!acordado) throw new Error("O servidor não respondeu. Tente de novo em instantes.");
+      try {
+        return await fetchComLimite(API + rota, { method: "POST", body: form }, 110000);
+      } catch (e) {
+        if (tentativa === 2) {
+          throw new Error("A conexão com o servidor caiu durante o envio. Clique de novo para tentar.");
+        }
+        if (avisar) avisar("A conexão oscilou; enviando de novo automaticamente...", "warn");
+      }
+    }
+  }
+
   // ---------- PIS/NIS (opcional) ----------
   function pisDigitos() {
     return String(document.getElementById("pis").value || "").replace(/\D/g, "");
@@ -597,7 +644,7 @@
     const form = new FormData();
     form.append("file", input.files[0]);
     try {
-      const resp = await fetch(API + "/ler-pis", { method: "POST", body: form });
+      const resp = await postarComServidorAcordado("/ler-pis", form, setMsgPis);
       let data;
       try { data = await resp.json(); } catch { throw new Error("Resposta inválida do servidor."); }
       if (!resp.ok || !data.ok) throw new Error(data.error || "Falha na leitura do PIS.");
@@ -902,10 +949,7 @@
     const inicio = performance.now();
 
     try {
-      const resp = await fetch(API + "/ler", {
-        method: "POST",
-        body: form
-      });
+      const resp = await postarComServidorAcordado("/ler", form, setMensagem);
 
       let data;
       try {
@@ -1067,10 +1111,7 @@
     const inicio = performance.now();
 
     try {
-      const resp = await fetch(API + "/ler-holerite", {
-        method: "POST",
-        body: form
-      });
+      const resp = await postarComServidorAcordado("/ler-holerite", form, setMensagemHolerite);
 
       let data;
       try {
