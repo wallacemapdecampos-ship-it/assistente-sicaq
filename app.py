@@ -448,6 +448,78 @@ def _pdf_area_documento(page):
         return None, None
 
 
+PAINEIS_PDF_DIGITAL = True
+
+
+def _pdf_paineis_lado_a_lado(page):
+    """
+    PDF digital do gov.br (CNH/CIN): o cartão vem como 2-4 imagens (painéis)
+    pequenas numa página A4. Monta uma faixa com os painéis LADO A LADO, na
+    resolução original, sem cabeçalho/QR code: as letras chegam à IA com
+    cerca do dobro do tamanho. Qualquer dúvida -> None (usa a página inteira).
+    """
+    try:
+        pagina = page.rect
+        paineis = []
+        for info in page.get_image_info():
+            larg_px = int(info.get("width") or 0)
+            alt_px = int(info.get("height") or 0)
+            comps = int(info.get("colorspace") or 0)
+            bpc = int(info.get("bpc") or 0)
+            if larg_px < 600 or alt_px < 350 or comps < 3 or bpc < 8:
+                continue
+            caixa = pymupdf.Rect(info["bbox"]) & pagina
+            if caixa.is_empty or caixa.width < 50 or caixa.height < 30:
+                continue
+            razao = max(caixa.width, caixa.height) / min(caixa.width, caixa.height)
+            if not (1.2 <= razao <= 1.95):
+                continue
+            paineis.append((caixa, larg_px))
+        if not (2 <= len(paineis) <= 4):
+            return None
+
+        # Dado do cliente escrito como texto FORA dos painéis: não arrisca.
+        for bloco in page.get_text("blocks"):
+            caixa_txt = pymupdf.Rect(bloco[:4])
+            if any(caixa_txt.intersects(c) for c, _ in paineis):
+                continue
+            if re.search(r"\d{2}/\d{2}/\d{4}|\d{3}\.?\d{3}\.?\d{3}-?\d{2}", str(bloco[4] or "")):
+                return None
+
+        paineis.sort(key=lambda p: (round(p[0].y0), p[0].x0))
+        imgs = []
+        for caixa, larg_px in paineis:
+            zoom = max(1.0, min(5.0, larg_px / caixa.width))
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=caixa, alpha=False)
+            imgs.append(Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB"))
+
+        altura = max(i.height for i in imgs)
+        imgs = [
+            i if i.height == altura else
+            i.resize((max(1, int(i.width * altura / i.height)), altura), Image.Resampling.LANCZOS)
+            for i in imgs
+        ]
+        gap = 16
+        largura = sum(i.width for i in imgs) + gap * (len(imgs) - 1)
+        faixa = Image.new("RGB", (largura, altura), "white")
+        x = 0
+        for i in imgs:
+            faixa.paste(i, (x, 0))
+            x += i.width + gap
+
+        # Painéis pequenos (CIN 650x410): amplia até ~1,6 MP, o tamanho que a IA usa.
+        fator = min(2.0, (1_600_000 / (largura * altura)) ** 0.5)
+        if fator > 1.05:
+            faixa = faixa.resize(
+                (int(largura * fator), int(altura * fator)), Image.Resampling.LANCZOS
+            )
+        print(f"[LER] PDF digital: {len(imgs)} painéis lado a lado {faixa.size}", flush=True)
+        return faixa
+    except Exception as e:
+        print(f"[LER] painéis do PDF não montados ({type(e).__name__}); usando a página", flush=True)
+        return None
+
+
 # Recorte do PDF digital (só os painéis do cartão) DESLIGADO: no teste real,
 # a imagem alta e estreita fez a IA errar uma letra da filiação, enquanto a
 # página inteira lia certo. Mantido o envio da página inteira, já validado.
@@ -456,6 +528,11 @@ RECORTE_PDF_DIGITAL = False
 
 def _pdf_pagina_para_imagem(page):
     """Renderiza a página. Devolve (imagem, pode_recortar_como_foto)."""
+    if PAINEIS_PDF_DIGITAL:
+        faixa = _pdf_paineis_lado_a_lado(page)
+        if faixa is not None:
+            return faixa, False
+
     clip, zoom = (
         _pdf_area_documento(page) if RECORTE_PDF_DIGITAL else (None, None)
     )
@@ -549,7 +626,7 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
         img, info = _recortar_documento(img)
         em_pe = info.startswith("recortado") and img.height > 1.15 * img.width
 
-    max_side = 2800
+    max_side = 3200
     scale = min(1.0, max_side / max(img.width, img.height))
     if scale < 1.0:
         img = img.resize(
@@ -564,6 +641,15 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
 
 def _jpeg_para_ia(img):
     """Mesmo tamanho/qualidade usados no envio de 1 arquivo."""
+    if img.width > 2 * img.height:
+        # Faixa de painéis (PDF digital): limita pela área, não pela largura.
+        area_max = 2_600_000
+        if img.width * img.height > area_max:
+            f = (area_max / (img.width * img.height)) ** 0.5
+            img = img.resize((int(img.width * f), int(img.height * f)), Image.Resampling.LANCZOS)
+        out = io.BytesIO()
+        img.convert("RGB").save(out, format="JPEG", quality=92)
+        return out.getvalue()
     max_w = 1650
     if img.width > max_w:
         img = img.resize(
