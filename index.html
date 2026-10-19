@@ -129,6 +129,44 @@
     }
     .dica { font-size: 12.5px; color: var(--tinta-2); }
     input[type="file"] { font: inherit; font-size: 13px; color: var(--tinta-2); width: 100%; min-width: 0; }
+    /* Área de arquivo em português (o botão padrão do navegador fica em inglês). */
+    .linha-arquivo > label.arquivo { font-weight: 400; }
+    .arquivo {
+      position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
+      padding: 3px; border: 1px dashed #b9cbdc; border-radius: var(--raio);
+      background: var(--folha); cursor: pointer; transition: background .12s, border-color .12s;
+    }
+    .arquivo:hover { background: #f5f9fc; border-color: #8fb0cf; }
+    .arquivo:focus-within { outline: 2px solid #6fb1ea; outline-offset: 2px; }
+    .arquivo.arrastando { background: var(--azul-claro); border-color: var(--azul); border-style: solid; }
+    .arquivo-input { position: absolute; inset: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+    .arquivo-botao {
+      flex: none; display: inline-flex; align-items: center; height: 28px; padding: 0 12px;
+      font-size: 13px; font-weight: 700; color: var(--azul);
+      background: var(--azul-claro); border-radius: calc(var(--raio) - 2px);
+    }
+    .arquivo-nome {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 13px; color: var(--tinta-2);
+    }
+    .arquivo.tem-arquivo .arquivo-nome { color: var(--tinta); font-weight: 600; }
+    .arquivo.recusado .arquivo-nome { color: #a3341f; font-weight: 600; }
+    /* ---------- Faixa do cliente ---------- */
+    .faixa-cliente {
+      display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap;
+      margin: 0 0 14px; padding: 9px 14px;
+      background: var(--folha); border: 1px solid var(--linha); border-left: 4px solid var(--azul);
+      border-radius: 10px; font-size: 13.5px;
+    }
+    .faixa-cliente .rotulo { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--tinta-2); }
+    .faixa-cliente strong { color: var(--tinta); }
+    .faixa-cliente .cpf { color: var(--tinta-2); font-variant-numeric: tabular-nums; }
+    .faixa-cliente .vazio-cliente { color: var(--tinta-2); }
+    .faixa-cliente .faixa-aviso {
+      font-size: 12.5px; font-weight: 700; color: #7a5200;
+      background: #fff4c2; border: 1px solid #f1d675; padding: 2px 9px; border-radius: 999px;
+    }
+    .faixa-cliente button { margin-left: auto; height: 30px; padding: 0 14px; font-size: 13px; }
     input[type="file"]::file-selector-button {
       font: inherit; font-weight: 700; font-size: 13px;
       height: 32px; margin-right: 10px; padding: 0 12px;
@@ -331,13 +369,19 @@
 </div>
 
 <main class="container">
+  <div id="faixaCliente" class="faixa-cliente" aria-live="polite">
+    <span class="rotulo">Cliente</span>
+    <span id="faixaDados" class="vazio-cliente">Nenhum cliente em andamento: leia o documento para começar.</span>
+    <span id="faixaAviso" class="faixa-aviso" hidden></span>
+    <button id="btnNovoCliente" type="button" class="secondary">Novo cliente</button>
+  </div>
   <section id="painelIdentificacao" class="painel active">
   <div class="card">
     <div class="card-topo"><h2>Arquivos do cliente</h2></div>
 
     <div class="linha-arquivo">
       <label for="documento">Documento<small>CNH, RG ou CIN</small></label>
-      <input type="file" id="documento" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
+      <label class="arquivo" data-arquivo="documento"><input type="file" class="arquivo-input" id="documento" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
       <span class="dica">PDF, foto ou print. Frente e verso: até 2 arquivos.</span>
       <button id="btnLer" type="button" disabled>Ler documento</button>
       <div id="mensagem" class="msg muted">Aguarde a conexão com o servidor.</div>
@@ -345,7 +389,7 @@
 
     <div class="linha-arquivo">
       <label for="pisArquivo">PIS/NIS<small>opcional</small></label>
-      <input type="file" id="pisArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp">
+      <label class="arquivo" data-arquivo="pisArquivo"><input type="file" class="arquivo-input" id="pisArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp"><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
       <input id="pis" type="text" inputmode="numeric" maxlength="14" placeholder="ou digite o número" aria-label="Número do PIS/NIS">
       <button id="btnLerPis" type="button" class="secondary">Ler PIS</button>
       <span id="msgPis" class="msg muted">Extrato do FGTS, Carteira de Trabalho Digital ou documento com o nº do PIS.</span>
@@ -353,7 +397,7 @@
 
     <div class="linha-arquivo">
       <label for="certidaoArquivo">Estado civil<small>opcional</small></label>
-      <input type="file" id="certidaoArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
+      <label class="arquivo" data-arquivo="certidaoArquivo"><input type="file" class="arquivo-input" id="certidaoArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
       <select id="estadoCivil" aria-label="Estado civil">
         <option value=""></option>
         <option>SOLTEIRO (A)</option>
@@ -501,7 +545,7 @@
       <div class="card-topo"><h2>Comprovante de renda</h2></div>
       <div class="linha-arquivo">
         <label for="holeriteArquivo">Comprovante<small>1 ou 2 arquivos</small></label>
-        <input type="file" id="holeriteArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
+        <label class="arquivo" data-arquivo="holeriteArquivo"><input type="file" class="arquivo-input" id="holeriteArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
         <span class="dica">Holerite (CNPJ, CEI, CAEPF ou CNO), recibo do eSocial ou extrato do INSS.</span>
         <button id="btnLerHolerite" type="button" disabled>Ler comprovante</button>
         <div id="mensagemHolerite" class="msg muted">Selecione o comprovante de renda para leitura.</div>
@@ -660,6 +704,7 @@
       el.classList.remove("destaque");
     });
     montarCidades("", "");
+    if (typeof atualizarFaixaCliente === "function") setTimeout(atualizarFaixaCliente, 0);
     document.getElementById("tipoOcupacao").value = "";
     montarOcupacaoDoc();
     ultimoDados = null;
@@ -1505,6 +1550,7 @@
       }
 
       preencher(data.dados || {});
+      atualizarFaixaCliente();
       const duvidosos = destacarIncertos((data.dados || {}).campos_incertos);
       const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const qtd = data.arquivos_lidos || input.files.length || 1;
@@ -2353,6 +2399,7 @@
 
       const dadosH = data.dados || {};
       const duvidososH = preencherHolerite(dadosH);
+      atualizarFaixaCliente();
       const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const qtdLidos = data.arquivos_lidos || input.files.length || 1;
       // Separa "contas não fecharam" de "campo para conferir" (ex.: admissão
@@ -2440,6 +2487,128 @@
   document.getElementById("natUf").addEventListener("change", (event) => {
     montarCidades(event.target.value, "");
   });
+
+  // ---------- Área de arquivo (português + arrastar e soltar) ----------
+  const VALOR_INPUT = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  function mostrarNomeArquivo(input, recusado) {
+    const caixa = input.closest(".arquivo");
+    if (!caixa) return;
+    const nome = caixa.querySelector(".arquivo-nome");
+    const fs = Array.from(input.files || []);
+    caixa.classList.toggle("tem-arquivo", fs.length > 0);
+    caixa.classList.toggle("recusado", !!recusado);
+    if (recusado) nome.textContent = recusado;
+    else if (!fs.length) nome.textContent = "Nenhum arquivo · ou arraste aqui";
+    else if (fs.length === 1) nome.textContent = fs[0].name;
+    else nome.textContent = `${fs.length} arquivos: ` + fs.map(f => f.name).join(", ");
+  }
+  function aceitaArquivo(input, arquivo) {
+    const aceitos = String(input.accept || "").toLowerCase().split(",").map(x => x.trim()).filter(Boolean);
+    if (!aceitos.length) return true;
+    const nome = String(arquivo.name || "").toLowerCase();
+    return aceitos.some(a => a.startsWith(".") ? nome.endsWith(a) : (arquivo.type || "").startsWith(a.replace("*", "")));
+  }
+  function prepararArquivo(input) {
+    const caixa = input.closest(".arquivo");
+    // Quando o código limpa o campo (input.value = ""), o nome some também.
+    Object.defineProperty(input, "value", {
+      configurable: true,
+      get() { return VALOR_INPUT.get.call(this); },
+      set(v) { VALOR_INPUT.set.call(this, v); mostrarNomeArquivo(this); }
+    });
+    input.addEventListener("change", () => mostrarNomeArquivo(input));
+    ["dragenter", "dragover"].forEach(ev => caixa.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      caixa.classList.add("arrastando");
+    }));
+    ["dragleave", "dragend"].forEach(ev => caixa.addEventListener(ev, () => caixa.classList.remove("arrastando")));
+    caixa.addEventListener("drop", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      caixa.classList.remove("arrastando");
+      let fs = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+      const total = fs.length;
+      fs = fs.filter(f => aceitaArquivo(input, f));
+      if (!fs.length) {
+        if (total) mostrarNomeArquivo(input, "Tipo de arquivo não aceito: use PDF, JPG, PNG ou WEBP.");
+        return;
+      }
+      if (!input.multiple) fs = fs.slice(0, 1);
+      const dt = new DataTransfer();
+      fs.forEach(f => dt.items.add(f));
+      input.files = dt.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    mostrarNomeArquivo(input);
+  }
+  document.querySelectorAll(".arquivo-input").forEach(prepararArquivo);
+  // Arquivo solto fora das áreas: o navegador não abre o PDF no lugar do site.
+  ["dragover", "drop"].forEach(ev => window.addEventListener(ev, (e) => {
+    if (!e.target.closest || !e.target.closest(".arquivo")) e.preventDefault();
+  }));
+
+  // ---------- Faixa do cliente + Novo cliente ----------
+  function formatarCpf(d) {
+    d = soDigitos(d);
+    return d.length === 11 ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}` : d;
+  }
+  function atualizarFaixaCliente() {
+    const nome = (document.getElementById("nome").value || "").trim();
+    const cpf = soDigitos(document.getElementById("cpf").value);
+    const dados = document.getElementById("faixaDados");
+    dados.innerHTML = "";
+    if (nome || cpf) {
+      dados.className = "";
+      const n = document.createElement("strong");
+      n.textContent = nome || "(sem nome)";
+      dados.append(n);
+      if (cpf) {
+        const c = document.createElement("span");
+        c.className = "cpf";
+        c.textContent = " · CPF " + formatarCpf(cpf);
+        dados.append(c);
+      }
+    } else if (ultimoHolerite) {
+      dados.className = "vazio-cliente";
+      dados.textContent = "Renda lida, sem documento de identificação.";
+    } else {
+      dados.className = "vazio-cliente";
+      dados.textContent = "Nenhum cliente em andamento: leia o documento para começar.";
+    }
+    // Holerite de outro CPF (ex.: arquivo de outro cliente).
+    const aviso = document.getElementById("faixaAviso");
+    const cpfHolerite = soDigitos((ultimoHolerite && ultimoHolerite.cpf_funcionario) || "");
+    const outro = cpf.length === 11 && cpfHolerite.length === 11 && cpf !== cpfHolerite;
+    aviso.hidden = !outro;
+    aviso.textContent = outro ? "Atenção: o holerite é do CPF " + formatarCpf(cpfHolerite) : "";
+  }
+
+  function temClienteNaTela() {
+    const algo = ["nome", "cpf"].some(id => (document.getElementById(id).value || "").trim());
+    const arquivos = ["documento", "pisArquivo", "certidaoArquivo", "holeriteArquivo"]
+      .some(id => (document.getElementById(id).files || []).length);
+    return algo || arquivos || !!ultimoHolerite || !!(document.getElementById("pis").value || "").trim();
+  }
+
+  function novoCliente() {
+    if (temClienteNaTela() &&
+        !confirm("Começar um novo cliente? Os dados deste cliente serão apagados da tela (o SICAQ não muda).")) return;
+    document.getElementById("documento").value = "";
+    limparCampos();
+    limparPis();
+    limparCertidao();
+    ajustarCampos("");
+    setMensagem("Selecione um documento e clique em Ler documento.", "muted");
+    document.getElementById("holeriteArquivo").value = "";
+    limparHolerite();
+    setMensagemHolerite("Selecione o comprovante de renda para leitura.", "muted");
+    mostrarAba("identificacao");
+    atualizarFaixaCliente();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  document.getElementById("btnNovoCliente").addEventListener("click", novoCliente);
+  ["nome", "cpf"].forEach(id => ["input", "change"].forEach(ev =>
+    document.getElementById(id).addEventListener(ev, atualizarFaixaCliente)));
+
   carregarMunicipios();
   montarOcupacoes();
   montarOcupacaoDoc();
