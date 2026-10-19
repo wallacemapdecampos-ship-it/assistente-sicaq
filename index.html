@@ -156,6 +156,7 @@
     }
     .campo { grid-column: span var(--span, 4); min-width: 0; }
     .campo label { display: block; font-size: 12.5px; font-weight: 700; color: var(--tinta-2); margin-bottom: 3px; }
+    .campo label .opcional { font-weight: 400; font-size: 11.5px; }
     .campo input, .campo select {
       width: 100%; height: 34px; padding: 0 10px;
       border: 1px solid #c7d2d9; border-radius: var(--raio);
@@ -584,7 +585,14 @@
           <input id="hAdiantamento" type="text">
         </div>
 
-        <div class="campo" style="--span: 12">
+        <div class="campo" style="--span: 6">
+          <label for="hOcupacao">Ocupação <span class="opcional">você escolhe · opcional</span></label>
+          <input id="hOcupacao" type="text" list="listaOcupacoes" autocomplete="off" spellcheck="false"
+                 placeholder="Digite para buscar (ex.: vendedor, auxiliar)">
+          <datalist id="listaOcupacoes"></datalist>
+        </div>
+
+        <div class="campo" style="--span: 6">
           <label for="hDescricaoAdiantamento">Descrição do adiantamento</label>
           <input id="hDescricaoAdiantamento" type="text">
         </div>
@@ -596,7 +604,7 @@
       </div>
 
       <div class="acoes">
-        <span id="msgRenda" class="dica">Abra a tela Renda Formal do SICAQ. A ocupação você escolhe lá, e o Salvar também.</span>
+        <span id="msgRenda" class="dica">Abra a tela Renda Formal do SICAQ. O Salvar fica com você.</span>
         <button id="btnRenda" type="button" disabled>Preencher renda no SICAQ</button>
       </div>
     </div>
@@ -1335,7 +1343,15 @@
       terminarRenda();
       const r = msg.result || {};
       if (r.ok) {
-        setMsgRenda("Renda preenchida no SICAQ. Escolha a ocupação, confira e clique em Salvar.", "ok");
+        const marcouOcupacao = (r.preenchidos || []).some(x => semAcento(x).startsWith("OCUPACAO"));
+        if (!ocupacaoPedida) {
+          setMsgRenda("Renda preenchida no SICAQ. Escolha a ocupação lá, confira e clique em Salvar.", "ok");
+        } else if (marcouOcupacao) {
+          setMsgRenda("Renda preenchida no SICAQ, com a ocupação. Confira e clique em Salvar.", "ok");
+        } else {
+          setMsgRenda("Renda preenchida, mas a ocupação não foi marcada: a extensão está sem o content.js novo. " +
+            "Escolha a ocupação no SICAQ e atualize a extensão.", "warn");
+        }
       } else {
         setMsgRenda("SICAQ: " + ((r.erros || []).join(" | ") || "o preenchimento não foi concluído."), "erro");
       }
@@ -1559,9 +1575,200 @@
   const holeriteIds = [
     "hCnpj","hAdmissao","hCompetencia","hBruta","hLiquida","hIrrf",
     "hLiquidoOriginal","hAdiantamento","hDescricaoAdiantamento",
-    "hTipoFonte","hDocumento"
+    "hTipoFonte","hDocumento","hOcupacao"
   ];
   let ultimoHolerite = null;
+  let ocupacaoPedida = "";
+
+  // Lista de Ocupação do SICAQ (texto exato das opções). Quem escolhe é o
+  // analista, pela regra interna; a extensão só marca no SICAQ.
+  const OCUPACOES_SICAQ = [
+    "ADMINISTRADOR",
+    "ADVOGADO",
+    "AGENCIADOR DE PROPAGANDA",
+    "AGENTE ADMINISTRATIVO",
+    "AGENTE DE SERVICOS FUNERARIOS E EMBALSAMADOR",
+    "AGENTE DE VIAGEM E GUIA DE TURISMO",
+    "AGRONOMO",
+    "ALFAIATE",
+    "ANALISTA DE SISTEMAS",
+    "APOSENTADO EXCETO FUNCIONARIO PUBLICO",
+    "ARQUITETO",
+    "ASSISTENTE SOCIAL",
+    "ASTRONOMO E METEOROLOGISTA",
+    "ATLETA PROFISSIONAL E TECNICO EM DESPORTOS",
+    "ATOR E DIRETOR DE ESPETACULOS PUBLICOS",
+    "ATUARIO E MATEMATICO",
+    "AUXILIAR DE ESCRITORIO E ASSEMELHADOS",
+    "AUXILIAR DE LABORATORIO",
+    "BANCARIO E ECONOMIARIO",
+    "BIBLIOTECARIO ARQUIVISTA MUSEOLOGO E ARQUEOLOGO",
+    "BIOLOGO E BIOMEDICO",
+    "BOLSISTA ESTAGIARIO E ASSEMELHADOS",
+    "BOMBEIRO E INSTALADOR DE GAS AGUA ESGOTO E ASSEMELHADOS",
+    "CABELEIREIRO BARBEIRO MANICURE PEDICURE MAQUILADOR ESTETICISTA E MASSAGISTA",
+    "CANTOR E COMPOSITOR",
+    "CAPITALISTA RECEBENDO RENDIMENTO DE APLICACAO DE CAPITAL EM ATIVOS FINANCEIROS",
+    "CHEFE INTERMEDIARIO",
+    "COMANDANTE DE EMBARCACOES",
+    "COMISSARIO DE BORDO",
+    "COMUNICOLOGO",
+    "CONTADOR",
+    "CONTRAMESTRE DE EMBARCACOES",
+    "COREOGRAFO E BAILARINO",
+    "CORRETOR DE IMOVEIS, SEGUROS, TITULOS E VALORES",
+    "DECORADOR",
+    "DELEGADO DE POLICIA",
+    "DEMONSTRADOR",
+    "DESENHISTA COMERCIAL",
+    "DESENHISTA INDUSTRIAL",
+    "DESENHISTA TECNICO",
+    "DESPACHANTE INCLUSIVE O ADUANEIRO",
+    "DIPLOMATA",
+    "DIRETOR DE EMPRESAS",
+    "DIRETOR DE ESTABELECIMENTO DE ENSINO",
+    "ECONOMISTA",
+    "ELETRICISTA E ASSEMELHADOS",
+    "ELETRICISTA MANUTENCAO VEICULO AUTO MAQ APARELHOS ELETRICO ELETRONICO E TELECOM",
+    "EMPREGADO DOMESTICO",
+    "EMPRESARIO E PRODUTOR DE ESPETACULOS PUBLICOS",
+    "ENFERMEIRO E NUTRICIONISTA",
+    "ENGENHEIRO",
+    "ESCULTOR, PINTOR E ASSEMELHADOS",
+    "ESPOLIO",
+    "ESTATISTICO",
+    "ESTIVADOR CARREGADOR EMBALADOR E ASSEMELHADOS",
+    "FARMACEUTICO",
+    "FEIRANTE",
+    "FISCAL",
+    "FISICO",
+    "FISIOTERAPEUTA E TERAPEUTA OCUPACIONAL",
+    "FONOAUDIOLOGO",
+    "FUNCIONARIO PUBLICO CIVIL APOSENTADO",
+    "GARIMPEIRO",
+    "GEOGRAFO",
+    "GEOLOGO",
+    "GERENTE",
+    "GOVERNANTA DE HOTEL CAMAREIRO PORTEIRO COZINHEIRO E GARCOM",
+    "JOALHEIROS E OURIVES",
+    "JORNALEIRO",
+    "JORNALISTA",
+    "LANTERNEIRO E PINTOR DE VEICULOS METALICOS",
+    "LEILOEIRO, AVALIADOR E ASSEMELHADOS",
+    "LOCUTOR E COMENTARISTA DE RADIO E TELEVISAO E RADIALISTA",
+    "MAQUINISTA E FOGUISTA DE EMBARCACOES, LOCOMOTIVAS E ASSEMELH",
+    "MARINHEIRO E ASSEMELHADOS",
+    "MECANICO DE MANUTENCAO DE VEICULOS AUTOMOTORES E MAQUINAS",
+    "MECANICO MANUTENCAO MONTADOR PREPARADOR OPERADOR DE MAQ E APARELHOS PROD INDUST",
+    "MEDICO",
+    "MESTRE E CONTRAMESTRE",
+    "MILITAR EM GERAL",
+    "MILITAR REFORMADO",
+    "MODELO DE MODAS",
+    "MOTORISTA DE VEICULOS DE TRANSPORTE DE CARGA",
+    "MOTORISTA DE VEICULOS DE TRANSPORTE DE PASSAGEIROS",
+    "MUSICO",
+    "OCUPANTE DE CARGO DE DIRECAO E ASSESSORAMENTO INTERMEDIARIO",
+    "OCUPANTE DE CARGO DE DIRECAO E ASSESSORAMENTO SUPERIOR",
+    "ODONTOLOGO",
+    "OFICIAIS DAS FORCAS ARMADAS E FORCAS AUXILIARES",
+    "OPERADOR DE CAMERAS DE CINEMA E TELEVISAO",
+    "OUTROS TRABALHADORES DE NIVEL SUPERIOR LIGADOS AO ENSINO",
+    "PENSIONISTA",
+    "PILOTO DE AERONAVES",
+    "PODER EXECUTIVO PRESIDENTE MINISTRO GOVERNADOR SECRETARIO E MEMBROS DO MP",
+    "PODER JUDICIARIO MINISTRO DE TRIBUNAL SUPERIOR DESEMBARGADOR E JUIZ",
+    "PODER LEGISLATIVO SENADOR DEPUTADO FEDERAL DEPUTADO ESTADUAL E VEREADOR",
+    "PORTEIRO DE EDIFICIO ASCENSORISTA GARAGISTA E FAXINEIRO",
+    "PROCURADOR E ASSEMELHADOS",
+    "PROFESSORES DE ENSINO DE PRIMEIRO E SEGUNDO GRAUS",
+    "PROFESSORES DE ENSINO SUPERIOR",
+    "PROFISSIONAIS DE LETRAS E DE ARTES",
+    "PROPRIETARIO DE ESTABELECIMENTO AGRICOLA DA PECUARIA FLORESTAL",
+    "PROPRIETARIO DE ESTABELECIMENTO COMERCIAL",
+    "PROPRIETARIO DE ESTABELECIMENTO DE PRESTACAO DE SERVICOS",
+    "PROPRIETARIO DE ESTABELECIMENTO INDUSTRIAL",
+    "PROPRIETARIO DE IMOVEL, RECEBENDO RENDIMENTO DE ALUGUEL",
+    "PROPRIETARIO DE MICROEMPRESA",
+    "PROTETICO",
+    "PSICOLOGO",
+    "PUBLICITARIO",
+    "QUIMICO",
+    "RELACOES PUBLICAS",
+    "SACERDOTES OU MEMBROS DE ORDENS OU SEITAS RELIGIOSAS",
+    "SECRETARIO ESTENOGRAFO DATILOGRAFO RECEPCIONISTA TELEFONISTA E ASSEMELHADOS",
+    "SECURITARIO",
+    "SERVENTUARIO DE JUSTICA",
+    "SERVIDOR PUBLICO ESTADUAL",
+    "SERVIDOR PUBLICO FEDERAL",
+    "SERVIDOR PUBLICO MUNICIPAL",
+    "SOCIOLOGO",
+    "SUPERVISOR, INSPETOR E AGENTE DE COMPRAS E VENDAS",
+    "TABELIAO",
+    "TECNICO DE BIOLOGIA",
+    "TECNICO DE CONTABILIDADE E DE ESTATISTICA",
+    "TECNICO DE ELETRICIDADE, ELETRONICA E TELECOMUNICACOES",
+    "TECNICO DE LABORATORIO E RAIO X",
+    "TECNICO DE MECANICA",
+    "TECNICO DE QUIMICA",
+    "TECNICO EM AGRONOMIA E AGRIMENSURA",
+    "TECNOLOGO",
+    "TRABALHADOR AGRICOLA",
+    "TRABALHADOR DA PECUARIA",
+    "TRABALHADOR DA PESCA",
+    "TRABALHADOR DE ARTES GRAFICAS",
+    "TRABALHADOR DE CONSTRUCAO CIVIL",
+    "TRABALHADOR DE FABRICACAO DE ARTEFATOS DE MADEIRA",
+    "TRABALHADOR DE FABRICACAO DE CALCADOS E ARTEFATOS DE COURO",
+    "TRABALHADOR DE FABRICACAO DE PAPEL E PAPELAO",
+    "TRABALHADOR DE FABRICACAO DE PRODUTOS DE BORRACHA E PLASTICO",
+    "TRABALHADOR DE FABRICACAO DE PRODUTOS TEXTEIS EXCETO ROUPAS",
+    "TRABALHADOR DE FABRICACAO DE ROUPAS",
+    "TRABALHADOR DE FABRICACAO E PREPARACAO DE ALIMENTOS E BEBIDA",
+    "TRABALHADOR DE INSTALACOES DE PROCESSAMENTO QUIMICO",
+    "TRABALHADOR DE TRATAMENTO DE FUMO E DE FABRICACAO DE CIGARROS E CHARUTOS",
+    "TRABALHADOR DE USINAGEM DE METAIS",
+    "TRABALHADOR DOS SERVICOS DE CONTABILIDADE DE CAIXA E TRABALHADORES ASSEMELHADOS",
+    "TRABALHADOR FLORESTAL",
+    "TRABALHADOR METALURGICO E SIDERURGICO",
+    "TRABALHADORES DOS SERVICOS DE PROTECAO E SEGURANCA EXCETO MILITAR",
+    "VENDEDOR DE COMERCIO VAREJISTA E ATACADISTA",
+    "VENDEDOR PRACISTA REPRESENTANTE COMERCIAL CAIXEIRO VIAJANTE E ASSEMELHADOS",
+    "VETERINARIO E ZOOTECNISTA"
+  ];
+
+  function semAcento(txt) {
+    return String(txt || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
+  }
+
+  function montarOcupacoes() {
+    const lista = document.getElementById("listaOcupacoes");
+    lista.innerHTML = "";
+    OCUPACOES_SICAQ.forEach(o => {
+      const op = document.createElement("option");
+      op.value = o;
+      lista.append(op);
+    });
+  }
+
+  // Texto digitado -> opção exata da lista ("" se não achar uma só).
+  function ocupacaoDaLista(valor) {
+    const alvo = semAcento(valor);
+    if (!alvo) return "";
+    const exata = OCUPACOES_SICAQ.find(o => semAcento(o) === alvo);
+    if (exata) return exata;
+    const contem = OCUPACOES_SICAQ.filter(o => semAcento(o).includes(alvo));
+    return contem.length === 1 ? contem[0] : "";
+  }
+
+  function conferirOcupacao() {
+    const campo = document.getElementById("hOcupacao");
+    if (!campo.value.trim()) { campo.classList.remove("destaque"); return true; }
+    const certa = ocupacaoDaLista(campo.value);
+    if (certa) { campo.value = certa; campo.classList.remove("destaque"); return true; }
+    campo.classList.add("destaque");
+    return false;
+  }
   let aguardandoRenda = false;
   let esperaRenda = null;
 
@@ -1740,7 +1947,7 @@
     selo.hidden = true;
     document.getElementById("hAdmissaoRotulo").textContent = "Data de admissão";
     ajustarRotuloFonte();
-    setMsgRenda("Abra a tela Renda Formal do SICAQ. A ocupação você escolhe lá, e o Salvar também.");
+    setMsgRenda("Abra a tela Renda Formal do SICAQ. O Salvar fica com você.");
     atualizarBotaoRenda();
   }
 
@@ -1830,7 +2037,8 @@
       liquida: v("hLiquida"),
       documento_comprovante: v("hDocumento"),
       data_comprovante: v("hCompetencia"),
-      irrf: v("hIrrf") || "0,00"
+      irrf: v("hIrrf") || "0,00",
+      ocupacao: ocupacaoDaLista(v("hOcupacao"))
     };
   }
 
@@ -1856,6 +2064,11 @@
       setMsgRenda("Faltam a renda bruta ou o documento de comprovante.", "erro");
       return;
     }
+    if (!conferirOcupacao()) {
+      setMsgRenda("Escolha a ocupação na lista (digite parte do nome e clique na opção), ou deixe em branco.", "erro");
+      return;
+    }
+    ocupacaoPedida = p.ocupacao;
 
     aguardandoRenda = true;
     atualizarBotaoRenda();
@@ -1986,6 +2199,8 @@
   document.getElementById("tabUso").addEventListener("click", () => mostrarAba("uso"));
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
   document.getElementById("formLogin").addEventListener("submit", entrar);
+  document.getElementById("hOcupacao").addEventListener("change", conferirOcupacao);
+  document.getElementById("hOcupacao").addEventListener("blur", conferirOcupacao);
   document.getElementById("btnSair").addEventListener("click", sair);
   document.getElementById("btnTrocarSenha").addEventListener("click", () => mostrarTrocaSenha(false));
   document.getElementById("formSenha").addEventListener("submit", salvarSenha);
@@ -2029,6 +2244,7 @@
     montarCidades(event.target.value, "");
   });
   carregarMunicipios();
+  montarOcupacoes();
   ajustarCampos("");
   checarServidor();
 
