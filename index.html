@@ -2063,6 +2063,8 @@
       document.getElementById(tab).classList.toggle("active", chave === nome);
       document.getElementById(painel).classList.toggle("active", chave === nome);
     });
+    // A faixa do cliente só faz sentido no atendimento (não na aba Uso).
+    document.getElementById("faixaCliente").hidden = nome === "uso";
     if (nome === "uso") carregarUso();
   }
 
