@@ -931,6 +931,38 @@
     }
   }
 
+  // Mensagem do servidor ao derrubar a sessão (ex.: entrou em outro computador).
+  async function motivoSaida(resp, padrao) {
+    try {
+      const data = await resp.clone().json();
+      if (data && data.code === "OUTRO_PC" && data.error) return data.error;
+    } catch (_) {}
+    return padrao;
+  }
+
+  // Um computador por login: confere a cada 2 min (e ao voltar para a aba)
+  // se este computador ainda é o que está com o login.
+  let checandoSessao = false;
+  async function checarSessao() {
+    if (!loginObrigatorio || !SESSAO || !SESSAO.token || checandoSessao) return;
+    checandoSessao = true;
+    try {
+      const resp = await fetchComLimite(API + "/sessao", { headers: cabecalhoLogin(), cache: "no-store" }, 15000);
+      if (resp.status === 401) {
+        const motivo = await motivoSaida(resp, "Sua sessão terminou. Entre de novo.");
+        apagarSessao();
+        mostrarLogin(motivo, "erro");
+      }
+    } catch (_) {
+      // Sem conexão ou servidor acordando: tenta de novo na próxima.
+    } finally {
+      checandoSessao = false;
+    }
+  }
+  setInterval(checarSessao, 2 * 60 * 1000);
+  window.addEventListener("focus", checarSessao);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checarSessao(); });
+
   function sair() {
     apagarSessao();
     senhaDoLogin = "";
@@ -1061,9 +1093,10 @@
         continue;
       }
       if (resp.status === 401 && loginObrigatorio) {
+        const motivo = await motivoSaida(resp, "Sua sessão terminou. Entre de novo e clique outra vez.");
         apagarSessao();
-        mostrarLogin("Sua sessão terminou. Entre de novo e clique outra vez.");
-        throw new Error("Sua sessão terminou: entre de novo e clique outra vez.");
+        mostrarLogin(motivo);
+        throw new Error(motivo);
       }
       if (await pedeTrocaSenha(resp)) throw new Error("Crie a sua senha e clique outra vez.");
       return resp;
@@ -2171,9 +2204,10 @@
   async function postarOuObter(rota) {
     const resp = await fetchComLimite(API + rota, { headers: cabecalhoLogin(), cache: "no-store" }, 30000);
     if (resp.status === 401 && loginObrigatorio) {
+      const motivo = await motivoSaida(resp, "Sua sessão terminou. Entre de novo.");
       apagarSessao();
-      mostrarLogin("Sua sessão terminou. Entre de novo.");
-      throw new Error("Sua sessão terminou.");
+      mostrarLogin(motivo);
+      throw new Error(motivo);
     }
     if (await pedeTrocaSenha(resp)) throw new Error("Crie a sua senha para continuar.");
     return resp;

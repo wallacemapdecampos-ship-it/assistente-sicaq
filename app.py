@@ -279,8 +279,10 @@ def _fim_do_dia():
     return int(agora.replace(hour=23, minute=59, second=59, microsecond=0).timestamp())
 
 
-def _token_novo(usuario, trocar=False):
+def _token_novo(usuario, trocar=False, sid=""):
     dados = {"u": usuario, "exp": _fim_do_dia()}
+    if sid:
+        dados["s"] = sid  # sessão (computador) que fez o login
     if trocar:
         dados["t"] = 1  # ainda com a senha inicial: só pode criar a senha própria
     corpo = _b64(json.dumps(dados).encode())
@@ -289,25 +291,63 @@ def _token_novo(usuario, trocar=False):
 
 
 def _dados_do_token(token):
-    """(usuario, precisa_trocar_senha) ou (None, False)."""
+    """(usuario, precisa_trocar_senha, sid) ou (None, False, "")."""
     try:
         corpo, assinatura = str(token or "").split(".", 1)
         certa = _b64(hmac.new(_segredo(), corpo.encode(), hashlib.sha256).digest())
         if not hmac.compare_digest(certa, assinatura):
-            return None, False
+            return None, False, ""
         dados = json.loads(_de_b64(corpo))
         usuario = str(dados.get("u") or "").lower()
         if int(dados.get("exp") or 0) < time.time():
-            return None, False
+            return None, False, ""
         if usuario not in _usuarios():  # removido = bloqueado
-            return None, False
-        return usuario, bool(dados.get("t"))
+            return None, False, ""
+        return usuario, bool(dados.get("t")), str(dados.get("s") or "")
     except Exception:
-        return None, False
+        return None, False, ""
 
 
 def _usuario_do_token(token):
     return _dados_do_token(token)[0]
+
+
+# ---------- Um computador por login ----------
+# Cada login novo vira a sessão ativa daquele usuário; o computador que
+# estava usando antes é derrubado no próximo acesso (ou na checagem que o
+# site faz a cada 2 minutos). Fica na memória e no banco (sobrevive ao
+# servidor reiniciar). Banco fora do ar: não derruba ninguém.
+_SESSOES = {}
+
+
+def _sessao_atual(usuario):
+    """sid da sessão ativa ("" = nenhuma registrada; None = não deu para saber)."""
+    if usuario in _SESSOES:
+        return _SESSOES[usuario]
+    if not os.getenv("DATABASE_URL", "").strip():
+        return ""
+    try:
+        linhas = _no_banco(lambda con: con.run(
+            "SELECT sid FROM sessoes_ativas WHERE usuario = :usuario", usuario=usuario)) or []
+        _SESSOES[usuario] = str(linhas[0][0]) if linhas else ""
+        return _SESSOES[usuario]
+    except Exception as e:
+        print(f"[SESSAO] banco indisponível ({type(e).__name__})", flush=True)
+        return None
+
+
+def _registrar_sessao(usuario):
+    sid = secrets.token_hex(8)
+    _SESSOES[usuario] = sid
+    if os.getenv("DATABASE_URL", "").strip():
+        try:
+            _no_banco(lambda con: con.run(
+                "INSERT INTO sessoes_ativas (usuario, sid) VALUES (:usuario, :sid)"
+                " ON CONFLICT (usuario) DO UPDATE SET sid = EXCLUDED.sid, criada_em = CURRENT_TIMESTAMP",
+                usuario=usuario, sid=sid))
+        except Exception as e:
+            print(f"[SESSAO] não gravou no banco ({type(e).__name__}); só na memória", flush=True)
+    return sid
 
 
 @app.before_request
@@ -316,15 +356,19 @@ def _guard():
         return None
     if not _origin_ok():
         return jsonify({"ok": False, "error": "Origem não autorizada."}), 403
-    if request.path != "/health" and not _rate_ok():
+    if request.path not in ("/health", "/sessao") and not _rate_ok():
         return jsonify({"ok": False, "error": "Muitas requisições. Aguarde um minuto."}), 429
     g.usuario = ""
     if request.path in ("/health", "/login") or not _login_ligado():
         return None
     cab = request.headers.get("Authorization", "")
-    usuario, trocar = _dados_do_token(cab[7:] if cab.startswith("Bearer ") else "")
+    usuario, trocar, sid = _dados_do_token(cab[7:] if cab.startswith("Bearer ") else "")
     if not usuario:
         return jsonify({"ok": False, "code": "LOGIN", "error": "Sua sessão terminou. Entre de novo."}), 401
+    atual = _sessao_atual(usuario)
+    if atual and sid != atual:
+        return jsonify({"ok": False, "code": "OUTRO_PC",
+                        "error": "Este usuário entrou em outro computador. Entre de novo."}), 401
     g.usuario = usuario
     if trocar and request.path != "/trocar-senha":
         return jsonify({"ok": False, "code": "TROCAR_SENHA",
@@ -361,9 +405,10 @@ def login():
 
 
 def _resposta_login(usuario, conta, trocar):
+    sid = _registrar_sessao(usuario)
     return {
         "ok": True,
-        "token": _token_novo(usuario, trocar),
+        "token": _token_novo(usuario, trocar, sid),
         "usuario": usuario,
         "nome": str(conta.get("nome") or usuario),
         "admin": bool(conta.get("admin")),
@@ -465,6 +510,12 @@ def trocar_senha():
     return jsonify(_resposta_login(usuario, conta, False))
 
 
+@app.get("/sessao")
+def sessao():
+    """O site pergunta a cada 2 min se a sessão ainda vale (o guard responde)."""
+    return jsonify({"ok": True, "usuario": getattr(g, "usuario", "")})
+
+
 @app.post("/resetar-senha")
 def resetar_senha():
     conta = _usuarios().get(getattr(g, "usuario", ""), {})
@@ -525,6 +576,11 @@ def _no_banco(funcao):
                 " dia DATE NOT NULL, usuario TEXT NOT NULL, tipo TEXT NOT NULL,"
                 " quantidade INTEGER NOT NULL DEFAULT 0,"
                 " PRIMARY KEY (dia, usuario, tipo))"
+            )
+            con.run(
+                "CREATE TABLE IF NOT EXISTS sessoes_ativas ("
+                " usuario TEXT PRIMARY KEY, sid TEXT NOT NULL,"
+                " criada_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
             con.run(
                 "CREATE TABLE IF NOT EXISTS senhas_usuarios ("
