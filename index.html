@@ -1422,11 +1422,15 @@
       const r = msg.result || {};
       const pediuOcupacao = !!document.getElementById("tipoOcupacao").value;
       const marcouOcupacao = (r.preenchidos || []).some(x => semAcento(x).startsWith("TIPO DE OCUPACAO"));
+      const linhaOcup = (r.preenchidos || []).filter(x => /^(Tipo de Ocupação|Ocupação) =/.test(x)).join(" · ");
       if (r.ok && pediuOcupacao && !marcouOcupacao) {
         setMensagem("Dados preenchidos no SICAQ, mas a ocupação não foi marcada: a extensão está sem o content.js novo. " +
           "Escolha a ocupação no SICAQ e atualize a extensão.", "warn");
+      } else if (r.ok && !pediuOcupacao) {
+        setMensagem("Dados preenchidos no SICAQ. O tipo de ocupação não foi escolhido aqui no site, " +
+          "então a ocupação ficou como estava no SICAQ.", "ok");
       } else if (r.ok) {
-        setMensagem("Dados preenchidos no SICAQ com sucesso.", "ok");
+        setMensagem("Dados preenchidos no SICAQ com sucesso. " + linhaOcup + ".", "ok");
       } else {
         const erros = (r.erros || []).join(" | ") || "O preenchimento não foi concluído.";
         setMensagem("SICAQ: " + erros, "erro");
