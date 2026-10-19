@@ -477,6 +477,16 @@
         <label for="mae">Mãe</label>
         <input id="mae" type="text">
       </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label for="tipoOcupacao">Tipo de ocupação <span class="opcional">você escolhe · opcional</span></label>
+        <select id="tipoOcupacao"><option value=""></option><option>FORMAL</option><option>INFORMAL</option></select>
+      </div>
+
+      <div class="campo" data-tipos="CNH RG CIN">
+        <label for="ocupacaoDoc">Ocupação</label>
+        <select id="ocupacaoDoc" disabled><option value="">Escolha antes o tipo de ocupação</option></select>
+      </div>
     </div>
 
     <div class="acoes">
@@ -650,6 +660,8 @@
       el.classList.remove("destaque");
     });
     montarCidades("", "");
+    document.getElementById("tipoOcupacao").value = "";
+    montarOcupacaoDoc();
     ultimoDados = null;
     atualizarBotaoSicaq();
   }
@@ -690,19 +702,19 @@
       CNH: [["documentoTipo", 2], ["nome", 7], ["numero_cnh", 3],
             ["nascimento", 2], ["sexo", 2], ["nacionalidade", 3], ["natUf", 5],
             ["uf", 3], ["primeira", 3], ["emissao", 3], ["validade", 3],
-            ["pai", 6], ["mae", 6]],
+            ["pai", 6], ["mae", 6], ["tipoOcupacao", 3], ["ocupacaoDoc", 9]],
       RG:  [["documentoTipo", 2], ["nome", 7], ["cpf", 3],
             ["rg", 3], ["orgao", 5], ["uf", 2], ["emissao", 2],
             ["nascimento", 2], ["sexo", 2], ["nacionalidade", 2], ["natUf", 4], ["validade", 2],
-            ["pai", 6], ["mae", 6]],
+            ["pai", 6], ["mae", 6], ["tipoOcupacao", 3], ["ocupacaoDoc", 9]],
       CIN: [["documentoTipo", 2], ["nome", 7], ["cpf", 3],
             ["orgao", 5], ["uf", 2], ["emissao", 2], ["validade", 3],
             ["nascimento", 2], ["sexo", 2], ["nacionalidade", 3], ["natUf", 5],
-            ["pai", 6], ["mae", 6]],
+            ["pai", 6], ["mae", 6], ["tipoOcupacao", 3], ["ocupacaoDoc", 9]],
       TODOS: [["documentoTipo", 2], ["nome", 7], ["cpf", 3],
             ["rg", 3], ["numero_cnh", 3], ["orgao", 4], ["uf", 2],
             ["nascimento", 2], ["primeira", 2], ["emissao", 2], ["validade", 2], ["sexo", 2], ["nacionalidade", 2],
-            ["natUf", 4], ["pai", 4], ["mae", 4]]
+            ["natUf", 4], ["pai", 4], ["mae", 4], ["tipoOcupacao", 3], ["ocupacaoDoc", 9]]
     };
     const posicao = {};
     (LAYOUT[t] || []).forEach(([id, span], i) => { posicao[id] = [i + 1, span]; });
@@ -1255,6 +1267,8 @@
       pis: pisValido(pisDigitos()) ? pisDigitos() : "",
       // Vazio: a extensão não mexe no Estado Civil do SICAQ.
       estado_civil: document.getElementById("estadoCivil").value || "",
+      tipo_ocupacao: document.getElementById("tipoOcupacao").value || "",
+      ocupacao: document.getElementById("tipoOcupacao").value ? (document.getElementById("ocupacaoDoc").value || "") : "",
       checkboxes: [
         "Movimentação de Conta de Depósito/Poupança",
         "Empréstimos/Financiamentos",
@@ -1361,7 +1375,12 @@
       document.getElementById("btnSicaq").textContent = "Preencher SICAQ";
       atualizarBotaoSicaq();
       const r = msg.result || {};
-      if (r.ok) {
+      const pediuOcupacao = !!document.getElementById("tipoOcupacao").value;
+      const marcouOcupacao = (r.preenchidos || []).some(x => semAcento(x).startsWith("TIPO DE OCUPACAO"));
+      if (r.ok && pediuOcupacao && !marcouOcupacao) {
+        setMensagem("Dados preenchidos no SICAQ, mas a ocupação não foi marcada: a extensão está sem o content.js novo. " +
+          "Escolha a ocupação no SICAQ e atualize a extensão.", "warn");
+      } else if (r.ok) {
         setMensagem("Dados preenchidos no SICAQ com sucesso.", "ok");
       } else {
         const erros = (r.erros || []).join(" | ") || "O preenchimento não foi concluído.";
@@ -1735,6 +1754,185 @@
     "VETERINARIO E ZOOTECNISTA"
   ];
 
+  // Ocupação INFORMAL (só existe nos Dados Cadastrais do SICAQ).
+  const OCUPACOES_INFORMAIS = [
+    "ACOUGUEIRO",
+    "ACUPUNTURISTA",
+    "ADESTRADOR DE ANIMAIS",
+    "ADMINISTRADOR",
+    "ADVOGADO",
+    "AFIADOR",
+    "AGRICULTOR",
+    "AGRONOMO",
+    "ALAMBIQUEIRO",
+    "ALFAIATE",
+    "ANALISTA DE SISTEMA",
+    "ARQUITETO",
+    "ARTISTA DE CIRCO",
+    "ARTISTA DE DANÇA",
+    "ARTISTA VISUAL",
+    "ASTROLOGO E NUMEROLOGO",
+    "ATIVIDADES RELIGIOSAS",
+    "ATLETA",
+    "ATOR",
+    "AUXILIAR GERAL",
+    "BABA",
+    "BARBEIRO",
+    "BIOLOGO",
+    "BIOMEDICO",
+    "BORDADOR",
+    "BORRACHEIRO",
+    "CABELEIREIRO(A)",
+    "CAMAREIRO(A)",
+    "CAMINHONEIRO AUTONOMO",
+    "CANTOR(A)",
+    "CARPINTEIRO",
+    "CARREGADOR DE MERCADORIAS",
+    "CARROCEIRO",
+    "CARTOGRAFO",
+    "CATADORES DE MATERIAL RECICLAVEL",
+    "CERAMISTA",
+    "CHAVEIRO",
+    "COBRADOR",
+    "COMENTARISTA DE RADIO E TELEVISAO",
+    "COMPOSITOR",
+    "CONFEITEIRO(A)",
+    "CONSERTADOR DE APARELHO ELETRONICO ELETRODOMESTICO",
+    "CONSULTOR",
+    "CONTADOR",
+    "CORRETOR",
+    "COSTUREIRO(A)",
+    "COZINHEIRO(A)",
+    "CROCHETEIRO A MAO",
+    "CUIDADOR DE IDOSOS",
+    "DECORADOR(A)",
+    "DEDETIZADOR",
+    "DEPOSITOS PCI PAI",
+    "DESENHISTA",
+    "DESPACHANTE",
+    "DIGITADOR",
+    "ECONOMISTA",
+    "ELETRICISTA",
+    "ENCANADOR",
+    "ENFERMEIRO(A)",
+    "ENGENHEIRO",
+    "ENGRAXATE",
+    "ESOTERICO E PARANORMAL",
+    "ESTETICISTA",
+    "ESTOFADOR",
+    "EXTRATIVISTA",
+    "FARMACEUTICO",
+    "FAXINEIRO(A)",
+    "FEIRANTE",
+    "FISIOTERAPEUTA",
+    "FONAUDIOLOGO",
+    "FOTOGRAFO(A)",
+    "FUNILEIRO",
+    "GANDULA",
+    "GARCOM GARCONETE",
+    "GEOLOGO",
+    "GESSEIRO",
+    "GUARDADOR DE VEÍCULOS (FLANELINHA)",
+    "GUIA DE TURISMO",
+    "INTERPRETE",
+    "JARDINEIRO",
+    "JOALHEIRO E OURIVES",
+    "JORNALEIRO",
+    "JORNALISTA",
+    "LADRILHEIRO",
+    "LAVADOR DE VEÍCULOS",
+    "LAVADOR E PASSADOR DE ROUPAS",
+    "LIMPADOR DE FACHADAS",
+    "MANICURE, PEDICURE",
+    "MANOBRISTA",
+    "MAQUIADOR",
+    "MARCENEIRO",
+    "MASSAGISTA",
+    "MECÂNICO",
+    "MINHOCULTOR",
+    "MODELO.",
+    "MONTADOR DE MÓVEIS",
+    "MOTOBOY",
+    "MOTORISTA",
+    "MUSICO",
+    "MÉDICO",
+    "NUTRICIONISTA",
+    "ODONTOLOGO",
+    "OLEIRO (FAB TELHAS E TIJOLOS)",
+    "OPERADOR DE CÂMERA",
+    "PADEIRO",
+    "PECUARISTA",
+    "PEDREIRO",
+    "PENSÃO INFORMAL",
+    "PESCADOR.",
+    "PESQUISADOR",
+    "PILOTO DE AERONAVE",
+    "PINTOR",
+    "PIPOQUEIRO",
+    "PODÓLOGO",
+    "POETA",
+    "PORTEIRO, VIGIA",
+    "PROFESSOR",
+    "PROFISSIONAL DO SEXO",
+    "PROGRAMADOR",
+    "PROMOTOR DE EVENTOS",
+    "PROTÉTICO",
+    "PSICÓLOGO",
+    "PUBLICITÁRIO",
+    "QUIROPRAXISTA",
+    "RAIZEIRO",
+    "RELOJOEIRO",
+    "REPRESETANTE COMERCIAL",
+    "SACOLEIRA",
+    "SALVA-VIDAS",
+    "SAPATEIRO",
+    "SERRALHEIRO",
+    "SERVENTE DE OBRAS",
+    "SERVIÇOS GERAIS",
+    "SOCIO DE EMPRESA",
+    "SOLDADOR",
+    "TAXISTA",
+    "TELHADOR",
+    "TOPÓGRAFO",
+    "TRABALHADOR DOMÉSTICO",
+    "TRABALHADOR RURAL",
+    "TRADUTOR",
+    "TRATORISTA",
+    "VASSOUREIRO",
+    "VENDEDOR (DOMICÍLIO, AMBULANTES, BANCAS)",
+    "VETERINÁRIO",
+    "VIDRACEIRO",
+    "VIGILANTE E GUARDA DE SEGURANÇA",
+    "ZELADOR",
+    "ZOOTECNISTA"
+  ];
+
+  // Dados Cadastrais: Tipo de ocupação (FORMAL/INFORMAL) muda a lista.
+  function montarOcupacaoDoc() {
+    const tipo = document.getElementById("tipoOcupacao").value;
+    const sel = document.getElementById("ocupacaoDoc");
+    const atual = sel.value;
+    sel.innerHTML = "";
+    if (!tipo) {
+      sel.append(novaOpcao("", "Escolha antes o tipo de ocupação"));
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    sel.append(novaOpcao("", ""));
+    (tipo === "FORMAL" ? OCUPACOES_SICAQ : OCUPACOES_INFORMAIS).forEach(o => sel.append(novaOpcao(o)));
+    if (Array.from(sel.options).some(o => o.value === atual)) sel.value = atual;
+  }
+
+  // Ocupação formal escolhida na Identificação já vai para a aba Renda
+  // (se lá ainda estiver em branco). Dá para trocar na Renda.
+  function levarOcupacaoParaRenda() {
+    const tipo = document.getElementById("tipoOcupacao").value;
+    const ocup = document.getElementById("ocupacaoDoc").value;
+    const renda = document.getElementById("hOcupacao");
+    if (tipo === "FORMAL" && ocup && !renda.value) renda.value = ocup;
+  }
+
   function semAcento(txt) {
     return String(txt || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
   }
@@ -1944,6 +2142,7 @@
     selo.hidden = true;
     document.getElementById("hAdmissaoRotulo").textContent = "Data de admissão";
     ajustarRotuloFonte();
+    levarOcupacaoParaRenda();
     setMsgRenda("Abra a tela Renda Formal do SICAQ. O Salvar fica com você.");
     atualizarBotaoRenda();
   }
@@ -2197,6 +2396,8 @@
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
   document.getElementById("formLogin").addEventListener("submit", entrar);
   document.getElementById("hOcupacao").addEventListener("change", conferirOcupacao);
+  document.getElementById("tipoOcupacao").addEventListener("change", montarOcupacaoDoc);
+  document.getElementById("ocupacaoDoc").addEventListener("change", levarOcupacaoParaRenda);
   document.getElementById("btnSair").addEventListener("click", sair);
   document.getElementById("btnTrocarSenha").addEventListener("click", () => mostrarTrocaSenha(false));
   document.getElementById("formSenha").addEventListener("submit", salvarSenha);
@@ -2241,6 +2442,7 @@
   });
   carregarMunicipios();
   montarOcupacoes();
+  montarOcupacaoDoc();
   ajustarCampos("");
   checarServidor();
 
