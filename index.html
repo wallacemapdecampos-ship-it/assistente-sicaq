@@ -211,8 +211,19 @@
     }
     .cartao-login input:focus { border-color: var(--azul); background: #fff; outline: none; box-shadow: 0 0 0 3px #d4e6f6; }
     .cartao-login button { width: 100%; height: 40px; margin-top: 18px; font-size: 15px; }
-    #msgLogin { margin: 12px 0 0; font-size: 13px; min-height: 18px; }
-    #msgLogin.erro, #msgLogin.warn { font-weight: 700; }
+    #msgLogin, #msgSenha { margin: 12px 0 0; font-size: 13px; min-height: 18px; }
+    #msgLogin.erro, #msgLogin.warn, #msgSenha.erro, #msgSenha.warn { font-weight: 700; }
+    .cartao-login .explica { margin: -6px 0 6px; font-size: 13px; color: var(--tinta-2); line-height: 1.45; }
+    .cartao-login .botao-texto {
+      height: auto; margin-top: 10px; padding: 4px; background: transparent; color: var(--tinta-2);
+      font-size: 13px; font-weight: 600; border: 0; text-decoration: underline;
+    }
+    .cartao-login .botao-texto:hover:not(:disabled) { background: transparent; color: var(--tinta); }
+    .tabela-uso .resetar { height: 26px; padding: 0 10px; font-size: 12px; }
+    .tabela-senhas td, .tabela-senhas th { text-align: left !important; }
+    .tabela-senhas td:last-child { text-align: right !important; }
+    .tabela-uso .sim { color: var(--ok, #18794e); font-weight: 700; }
+    .tabela-uso .nao { color: #8a6100; font-weight: 700; }
     .conta { display: inline-flex; align-items: center; gap: 10px; color: #e3e9f0; font-weight: 700; white-space: nowrap; }
     header .sair {
       height: 28px; padding: 0 10px; font-size: 12.5px;
@@ -237,8 +248,9 @@
     @media (max-width: 720px) {
       header { height: auto; flex-wrap: wrap; padding: 8px 14px 0; position: static; }
       .tabs { order: 3; width: 100%; height: 40px; }
-      .estado-sistema { margin-left: auto; font-size: 12px; }
+      .estado-sistema { margin-left: 0; width: 100%; flex-wrap: wrap; row-gap: 6px; font-size: 12px; }
       .estado-sistema .status { font-size: 12px; }
+      .conta { margin-left: auto; gap: 6px; }
       .linha-arquivo { grid-template-columns: 1fr; }
       #mensagem, #msgPis, #msgCertidao, #mensagemHolerite { grid-column: 1; }
       .grid { grid-template-columns: 1fr; }
@@ -267,6 +279,7 @@
     <div id="statusExtensao" class="status warn">Extensão: verificando</div>
     <div id="contaUsuario" class="conta" hidden>
       <span id="nomeUsuario"></span>
+      <button id="btnTrocarSenha" class="sair" type="button">Trocar senha</button>
       <button id="btnSair" class="sair" type="button">Sair</button>
     </div>
   </div>
@@ -289,6 +302,30 @@
     <input id="loginSenha" name="password" type="password" autocomplete="current-password" required>
     <button id="btnEntrar" type="submit">Entrar</button>
     <p id="msgLogin" class="muted">Use o usuário e a senha que o administrador passou para você.</p>
+  </form>
+  <form id="formSenha" class="cartao-login" hidden>
+    <div class="marca-app">
+      <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+        <rect x="3" y="2" width="16" height="18" rx="2.5" fill="none" stroke="#0f5a9c" stroke-width="1.8"/>
+        <path d="M7 8h8M7 11.5h5" stroke="#4b5b6b" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M11.5 15.2l1.8 1.8 3.4-3.6" fill="none" stroke="#e2b500" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Assistente SICAQ
+    </div>
+    <h1 id="tituloSenha">Crie sua senha</h1>
+    <p id="explicaSenha" class="explica">Primeiro acesso: crie uma senha só sua, com pelo menos 6 caracteres. A senha inicial deixa de funcionar para você.</p>
+    <input id="senhaUsuario" name="username" autocomplete="username" hidden>
+    <div id="blocoSenhaAtual">
+      <label for="senhaAtual">Senha atual</label>
+      <input id="senhaAtual" type="password" autocomplete="current-password">
+    </div>
+    <label for="senhaNova">Senha nova</label>
+    <input id="senhaNova" type="password" autocomplete="new-password" minlength="6" required>
+    <label for="senhaNova2">Repita a senha nova</label>
+    <input id="senhaNova2" type="password" autocomplete="new-password" minlength="6" required>
+    <button id="btnSalvarSenha" type="submit">Salvar senha</button>
+    <button id="btnCancelarSenha" class="botao-texto" type="button">Cancelar</button>
+    <p id="msgSenha" class="muted"></p>
   </form>
 </div>
 
@@ -749,7 +786,8 @@
   // 3) se a conexão cair ou travar, tenta mais uma vez automaticamente.
   // ---------- Login (um usuário por analista) ----------
   const CHAVE_SESSAO = "assistente_sicaq_sessao";
-  let SESSAO = null;          // {token, usuario, nome, admin, expira}
+  let SESSAO = null;          // {token, usuario, nome, admin, expira, trocar}
+  let senhaDoLogin = "";      // só na memória, até criar a senha própria
   let loginObrigatorio = false;
 
   function lerSessao() {
@@ -775,11 +813,14 @@
   }
   function mostrarLogin(msg, classe) {
     document.getElementById("telaLogin").hidden = false;
+    document.getElementById("formLogin").hidden = false;
+    document.getElementById("formSenha").hidden = true;
     if (msg) setMsgLogin(msg, classe || "warn");
     setTimeout(() => document.getElementById(
       document.getElementById("loginUsuario").value ? "loginSenha" : "loginUsuario").focus(), 50);
   }
   function aplicarSessao() {
+    if (SESSAO && SESSAO.trocar) { mostrarTrocaSenha(true); return; }
     document.getElementById("telaLogin").hidden = true;
     document.getElementById("nomeUsuario").textContent = SESSAO ? SESSAO.nome : "";
     document.getElementById("contaUsuario").hidden = !SESSAO;
@@ -808,8 +849,10 @@
       let data = {};
       try { data = await resp.json(); } catch (_) {}
       if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível entrar.");
-      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin, expira: data.expira };
+      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin,
+                 expira: data.expira, trocar: !!data.trocar_senha };
       salvarSessao(SESSAO);
+      senhaDoLogin = SESSAO.trocar ? senha : "";
       document.getElementById("loginSenha").value = "";
       setMsgLogin("Use o usuário e a senha que o administrador passou para você.");
       aplicarSessao();
@@ -824,7 +867,90 @@
 
   function sair() {
     apagarSessao();
+    senhaDoLogin = "";
     mostrarLogin("Você saiu. Entre de novo para continuar.", "muted");
+  }
+
+  // ---------- Senha própria ----------
+  function setMsgSenha(texto, classe = "muted") {
+    const el = document.getElementById("msgSenha");
+    el.textContent = texto;
+    el.className = classe;
+  }
+  // obrigatoria = primeiro acesso (ainda com a senha inicial).
+  function mostrarTrocaSenha(obrigatoria) {
+    document.getElementById("telaLogin").hidden = false;
+    document.getElementById("formLogin").hidden = true;
+    document.getElementById("formSenha").hidden = false;
+    document.getElementById("senhaUsuario").value = SESSAO ? SESSAO.usuario : "";
+    document.getElementById("tituloSenha").textContent = obrigatoria ? "Crie sua senha" : "Trocar senha";
+    document.getElementById("explicaSenha").textContent = obrigatoria
+      ? "Primeiro acesso: crie uma senha só sua, com pelo menos 6 caracteres. A senha inicial deixa de funcionar para você."
+      : "Escolha uma senha nova, com pelo menos 6 caracteres.";
+    // No primeiro acesso a senha atual é a que acabou de digitar no login.
+    const temAtual = obrigatoria && !!senhaDoLogin;
+    document.getElementById("blocoSenhaAtual").hidden = temAtual;
+    document.getElementById("senhaAtual").value = temAtual ? senhaDoLogin : "";
+    document.getElementById("senhaNova").value = "";
+    document.getElementById("senhaNova2").value = "";
+    const cancelar = document.getElementById("btnCancelarSenha");
+    cancelar.textContent = obrigatoria ? "Sair" : "Cancelar";
+    cancelar.dataset.modo = obrigatoria ? "sair" : "cancelar";
+    setMsgSenha("");
+    setTimeout(() => document.getElementById(temAtual ? "senhaNova" : "senhaAtual").focus(), 50);
+  }
+
+  async function salvarSenha(evento) {
+    evento.preventDefault();
+    const atual = document.getElementById("senhaAtual").value;
+    const nova = document.getElementById("senhaNova").value;
+    const nova2 = document.getElementById("senhaNova2").value;
+    if (!atual) { setMsgSenha("Digite a senha atual.", "erro"); return; }
+    if (nova.length < 6) { setMsgSenha("A senha nova precisa ter pelo menos 6 caracteres.", "erro"); return; }
+    if (nova !== nova2) { setMsgSenha("As duas senhas novas não são iguais.", "erro"); return; }
+    const btn = document.getElementById("btnSalvarSenha");
+    btn.disabled = true;
+    btn.textContent = "Salvando…";
+    try {
+      if (!(await acordarServidor(setMsgSenha))) throw new Error("O servidor não respondeu. Tente de novo.");
+      const resp = await fetchComLimite(API + "/trocar-senha", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...cabecalhoLogin() },
+        body: JSON.stringify({ senha_atual: atual, senha_nova: nova })
+      }, 30000);
+      let data = {};
+      try { data = await resp.json(); } catch (_) {}
+      if (resp.status === 401) { apagarSessao(); mostrarLogin("Sua sessão terminou. Entre de novo."); return; }
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível salvar a senha.");
+      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin,
+                 expira: data.expira, trocar: false };
+      salvarSessao(SESSAO);
+      senhaDoLogin = "";
+      ["senhaAtual", "senhaNova", "senhaNova2"].forEach(id => { document.getElementById(id).value = ""; });
+      aplicarSessao();
+      setMensagem("Senha salva. Use a senha nova nas próximas vezes que entrar.", "ok");
+    } catch (e) {
+      setMsgSenha(e.message || String(e), "erro");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Salvar senha";
+    }
+  }
+
+  function cancelarSenha() {
+    if (document.getElementById("btnCancelarSenha").dataset.modo === "sair") { sair(); return; }
+    aplicarSessao();
+  }
+
+  // Resposta 403 "crie sua senha" (ex.: página recarregada antes de criar).
+  async function pedeTrocaSenha(resp) {
+    if (resp.status !== 403) return false;
+    let data = {};
+    try { data = await resp.clone().json(); } catch (_) {}
+    if (data.code !== "TROCAR_SENHA") return false;
+    if (SESSAO) { SESSAO.trocar = true; salvarSessao(SESSAO); }
+    mostrarTrocaSenha(true);
+    return true;
   }
 
   async function fetchComLimite(url, opcoes, ms) {
@@ -873,6 +999,7 @@
         mostrarLogin("Sua sessão terminou. Entre de novo e clique outra vez.");
         throw new Error("Sua sessão terminou: entre de novo e clique outra vez.");
       }
+      if (await pedeTrocaSenha(resp)) throw new Error("Crie a sua senha e clique outra vez.");
       return resp;
     }
   }
@@ -1533,12 +1660,51 @@
         if (String(l.dia).startsWith(mesAnterior)) { doAnterior[l.usuario] = doAnterior[l.usuario] || {}; doAnterior[l.usuario][l.tipo] = (doAnterior[l.usuario][l.tipo] || 0) + l.quantidade; }
       });
       caixa.innerHTML = tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes) +
-        (data.persistente ? tabelaUso("Mês passado", doAnterior) : "");
+        (data.persistente ? tabelaUso("Mês passado", doAnterior) : "") + tabelaSenhas(data.senhas);
       document.getElementById("notaUso").textContent = data.persistente
         ? "Números guardados no banco de dados (só as contagens, nenhum dado de cliente)."
         : `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
     } catch (e) {
       caixa.innerHTML = "";
+      document.getElementById("notaUso").textContent = "Erro: " + (e.message || e);
+    }
+  }
+
+  function tabelaSenhas(senhas) {
+    if (!senhas) return "";
+    const lista = Object.keys(senhas).sort((a, b) =>
+      String(NOMES_USO[a] || a).localeCompare(String(NOMES_USO[b] || b), "pt-BR"));
+    if (!lista.length) return "";
+    const linhas = lista.map(u => {
+      const nome = String(NOMES_USO[u] || u).replace(/[<>&"]/g, "");
+      const uSeguro = String(u).replace(/[^a-z0-9._-]/gi, "");
+      const status = senhas[u]
+        ? '<span class="sim">Criou a senha</span>'
+        : '<span class="nao">Ainda com a senha inicial</span>';
+      const botao = senhas[u]
+        ? `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>`
+        : "";
+      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${status}</td><td>${botao}</td></tr>`;
+    }).join("");
+    return `<div class="uso-bloco"><h3>Senhas</h3><table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Situação</th><th></th></tr></thead>` +
+           `<tbody>${linhas}</tbody></table>` +
+           `<p class="dica">Esqueceu a senha? Clique em Resetar: a pessoa entra com a senha inicial e cria outra.</p></div>`;
+  }
+
+  async function resetarSenha(usuario, nome) {
+    if (!confirm(`Resetar a senha de ${nome}? Ela vai entrar com a senha inicial e criar uma senha nova.`)) return;
+    try {
+      const resp = await fetchComLimite(API + "/resetar-senha", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...cabecalhoLogin() },
+        body: JSON.stringify({ usuario })
+      }, 30000);
+      let data = {};
+      try { data = await resp.json(); } catch (_) {}
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível resetar.");
+      await carregarUso();
+      document.getElementById("notaUso").textContent = `Senha de ${nome} resetada. Ela entra com a senha inicial e cria outra.`;
+    } catch (e) {
       document.getElementById("notaUso").textContent = "Erro: " + (e.message || e);
     }
   }
@@ -1550,6 +1716,7 @@
       mostrarLogin("Sua sessão terminou. Entre de novo.");
       throw new Error("Sua sessão terminou.");
     }
+    if (await pedeTrocaSenha(resp)) throw new Error("Crie a sua senha para continuar.");
     return resp;
   }
 
@@ -1817,6 +1984,13 @@
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
   document.getElementById("formLogin").addEventListener("submit", entrar);
   document.getElementById("btnSair").addEventListener("click", sair);
+  document.getElementById("btnTrocarSenha").addEventListener("click", () => mostrarTrocaSenha(false));
+  document.getElementById("formSenha").addEventListener("submit", salvarSenha);
+  document.getElementById("btnCancelarSenha").addEventListener("click", cancelarSenha);
+  document.getElementById("conteudoUso").addEventListener("click", (e) => {
+    const b = e.target.closest("button.resetar");
+    if (b) resetarSenha(b.dataset.usuario, b.dataset.nome);
+  });
   document.getElementById("btnLerHolerite").addEventListener("click", lerHolerite);
   document.getElementById("btnRenda").addEventListener("click", preencherRenda);
   document.getElementById("hTipoFonte").addEventListener("change", ajustarRotuloFonte);

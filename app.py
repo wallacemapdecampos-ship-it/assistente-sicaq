@@ -145,6 +145,10 @@ Regras:
 - RG/CIN: procure CPF, REGISTRO GERAL/RG, FILIAÇÃO, NASCIMENTO, SEXO,
   ÓRGÃO EXPEDIDOR e DATA DE EXPEDIÇÃO/EMISSÃO.
 - Para RG/CIN: filiacao_1 = PAI e filiacao_2 = MÃE.
+  Muitas vezes a FILIAÇÃO vem corrida, "PAI E MÃE", e a quebra de linha cai
+  no meio do nome da mãe (ex.: "JOSE DA SILVA E MARIA" / "APARECIDA SOUZA").
+  Separe pelo " E ", não pela linha: pai "JOSE DA SILVA", mãe "MARIA
+  APARECIDA SOUZA". Não deixe o " E " nem parte da mãe no nome do pai.
   Se houver duas linhas sem rótulo, identifique pai/mãe apenas quando estiver claro.
   Se ficar ambíguo, deixe os campos vazios e inclua-os em campos_incertos.
 - cpf: somente dígitos.
@@ -275,25 +279,35 @@ def _fim_do_dia():
     return int(agora.replace(hour=23, minute=59, second=59, microsecond=0).timestamp())
 
 
-def _token_novo(usuario):
-    corpo = _b64(json.dumps({"u": usuario, "exp": _fim_do_dia()}).encode())
+def _token_novo(usuario, trocar=False):
+    dados = {"u": usuario, "exp": _fim_do_dia()}
+    if trocar:
+        dados["t"] = 1  # ainda com a senha inicial: só pode criar a senha própria
+    corpo = _b64(json.dumps(dados).encode())
     assinatura = _b64(hmac.new(_segredo(), corpo.encode(), hashlib.sha256).digest())
     return f"{corpo}.{assinatura}"
 
 
-def _usuario_do_token(token):
+def _dados_do_token(token):
+    """(usuario, precisa_trocar_senha) ou (None, False)."""
     try:
         corpo, assinatura = str(token or "").split(".", 1)
         certa = _b64(hmac.new(_segredo(), corpo.encode(), hashlib.sha256).digest())
         if not hmac.compare_digest(certa, assinatura):
-            return None
+            return None, False
         dados = json.loads(_de_b64(corpo))
         usuario = str(dados.get("u") or "").lower()
         if int(dados.get("exp") or 0) < time.time():
-            return None
-        return usuario if usuario in _usuarios() else None  # removido = bloqueado
+            return None, False
+        if usuario not in _usuarios():  # removido = bloqueado
+            return None, False
+        return usuario, bool(dados.get("t"))
     except Exception:
-        return None
+        return None, False
+
+
+def _usuario_do_token(token):
+    return _dados_do_token(token)[0]
 
 
 @app.before_request
@@ -308,10 +322,13 @@ def _guard():
     if request.path in ("/health", "/login") or not _login_ligado():
         return None
     cab = request.headers.get("Authorization", "")
-    usuario = _usuario_do_token(cab[7:] if cab.startswith("Bearer ") else "")
+    usuario, trocar = _dados_do_token(cab[7:] if cab.startswith("Bearer ") else "")
     if not usuario:
         return jsonify({"ok": False, "code": "LOGIN", "error": "Sua sessão terminou. Entre de novo."}), 401
     g.usuario = usuario
+    if trocar and request.path != "/trocar-senha":
+        return jsonify({"ok": False, "code": "TROCAR_SENHA",
+                        "error": "Crie a sua senha para continuar."}), 403
     return None
 
 
@@ -333,20 +350,137 @@ def login():
         return jsonify({"ok": False, "error": "Muitas tentativas. Aguarde 10 minutos."}), 429
 
     conta = _usuarios().get(usuario)
-    if not conta or not _senha_confere(senha, conta.get("senha")):
+    certo, trocar = _conferir_senha_login(usuario, conta, senha)
+    if not certo:
         falhas.append(agora)
         print("[LOGIN] senha ou usuário incorretos", flush=True)
         return jsonify({"ok": False, "error": "Usuário ou senha incorretos."}), 401
 
-    print(f"[LOGIN] entrou: {usuario}", flush=True)
-    return jsonify({
+    print(f"[LOGIN] entrou: {usuario}" + (" (senha inicial)" if trocar else ""), flush=True)
+    return jsonify(_resposta_login(usuario, conta, trocar))
+
+
+def _resposta_login(usuario, conta, trocar):
+    return {
         "ok": True,
-        "token": _token_novo(usuario),
+        "token": _token_novo(usuario, trocar),
         "usuario": usuario,
         "nome": str(conta.get("nome") or usuario),
         "admin": bool(conta.get("admin")),
         "expira": _fim_do_dia(),
-    })
+        "trocar_senha": bool(trocar),
+    }
+
+
+# ---------- Senha própria de cada analista ----------
+# A lista USUARIOS (no Render) tem a senha INICIAL. No primeiro acesso cada
+# analista cria a sua senha, que fica só como "hash" no banco (Neon), na
+# tabela senhas_usuarios. O administrador pode "resetar": a pessoa volta a
+# entrar com a senha inicial e cria outra. Sem banco, fica como antes.
+SENHA_MINIMO = 6
+_SENHAS = {"dados": None, "quando": 0.0}
+
+
+def _senhas_proprias(atualizar=False):
+    """{usuario: hash} das senhas criadas. None quando não há banco."""
+    if not os.getenv("DATABASE_URL", "").strip():
+        return None
+    agora = time.time()
+    if atualizar or _SENHAS["dados"] is None or agora - _SENHAS["quando"] > 60:
+        try:
+            linhas = _no_banco(lambda con: con.run("SELECT usuario, senha FROM senhas_usuarios")) or []
+            _SENHAS["dados"] = {str(u): str(s) for u, s in linhas}
+            _SENHAS["quando"] = agora
+        except Exception as e:
+            # Banco fora do ar: usa a última lista conhecida.
+            print(f"[SENHA] banco indisponível ({type(e).__name__})", flush=True)
+    return _SENHAS["dados"]
+
+
+def _conferir_senha_login(usuario, conta, senha):
+    """(senha certa?, precisa criar a senha própria?)"""
+    if not conta:
+        return False, False
+    proprias = _senhas_proprias(atualizar=True)
+    propria = (proprias or {}).get(usuario)
+    if propria:
+        return _senha_confere(senha, propria), False
+    certa = _senha_confere(senha, conta.get("senha"))
+    # Só obriga a trocar quando dá para guardar a senha nova.
+    return certa, bool(certa and proprias is not None)
+
+
+def _problema_senha_nova(usuario, conta, nova):
+    if len(nova) < SENHA_MINIMO:
+        return f"A senha precisa ter pelo menos {SENHA_MINIMO} caracteres."
+    if len(nova) > 72:
+        return "Senha muito longa."
+    if nova.strip().lower() == usuario:
+        return "A senha não pode ser igual ao usuário."
+    if _senha_confere(nova, conta.get("senha")):
+        return "Escolha uma senha diferente da senha inicial."
+    return ""
+
+
+@app.post("/trocar-senha")
+def trocar_senha():
+    if not _login_ligado():
+        return jsonify({"ok": False, "error": "Login não configurado no servidor."}), 400
+    if _senhas_proprias(atualizar=True) is None:
+        return jsonify({"ok": False, "error": "Não consegui falar com o banco de senhas. Tente de novo em 1 minuto."}), 503
+    usuario = g.usuario
+    conta = _usuarios().get(usuario) or {}
+    dados = request.get_json(silent=True) or {}
+    atual = str(dados.get("senha_atual") or "")
+    nova = str(dados.get("senha_nova") or "")
+
+    agora = time.time()
+    falhas = _falhas_login[(_ip(), usuario)]
+    while falhas and falhas[0] < agora - 600:
+        falhas.popleft()
+    if len(falhas) >= 8:
+        return jsonify({"ok": False, "error": "Muitas tentativas. Aguarde 10 minutos."}), 429
+
+    certo, _ = _conferir_senha_login(usuario, conta, atual)
+    if not certo:
+        falhas.append(agora)
+        return jsonify({"ok": False, "error": "A senha atual não confere."}), 400
+    problema = _problema_senha_nova(usuario, conta, nova)
+    if problema:
+        return jsonify({"ok": False, "error": problema}), 400
+    if nova == atual:
+        return jsonify({"ok": False, "error": "A senha nova é igual à atual."}), 400
+
+    try:
+        _no_banco(lambda con: con.run(
+            "INSERT INTO senhas_usuarios (usuario, senha) VALUES (:usuario, :senha)"
+            " ON CONFLICT (usuario) DO UPDATE SET senha = EXCLUDED.senha, trocada_em = CURRENT_TIMESTAMP",
+            usuario=usuario, senha=_hash_senha(nova),
+        ))
+    except Exception as e:
+        print(f"[SENHA] não gravou ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Não consegui salvar a senha agora. Tente de novo em 1 minuto."}), 503
+    _senhas_proprias(atualizar=True)
+    print(f"[SENHA] {usuario} criou/trocou a senha", flush=True)
+    return jsonify(_resposta_login(usuario, conta, False))
+
+
+@app.post("/resetar-senha")
+def resetar_senha():
+    conta = _usuarios().get(getattr(g, "usuario", ""), {})
+    if not conta.get("admin"):
+        return jsonify({"ok": False, "error": "Só o administrador pode resetar senhas."}), 403
+    alvo = str((request.get_json(silent=True) or {}).get("usuario") or "").strip().lower()
+    if alvo not in _usuarios():
+        return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    try:
+        _no_banco(lambda con: con.run("DELETE FROM senhas_usuarios WHERE usuario = :usuario", usuario=alvo))
+    except Exception as e:
+        print(f"[SENHA] reset falhou ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
+    _senhas_proprias(atualizar=True)
+    print(f"[SENHA] {g.usuario} resetou a senha de {alvo}", flush=True)
+    return jsonify({"ok": True})
 
 
 # ---------- Contador de leituras por usuário ----------
@@ -392,6 +526,11 @@ def _no_banco(funcao):
                 " quantidade INTEGER NOT NULL DEFAULT 0,"
                 " PRIMARY KEY (dia, usuario, tipo))"
             )
+            con.run(
+                "CREATE TABLE IF NOT EXISTS senhas_usuarios ("
+                " usuario TEXT PRIMARY KEY, senha TEXT NOT NULL,"
+                " trocada_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
             _banco_pronto["tabela"] = True
         return funcao(con)
     finally:
@@ -433,6 +572,9 @@ def uso():
         if not conta.get("admin"):
             return jsonify({"ok": False, "error": "Só o administrador vê o contador."}), 403
     nomes = {u: str(c.get("nome") or u) for u, c in _usuarios().items()}
+    # Quem já criou a senha própria (True) e quem ainda usa a inicial (False).
+    proprias = _senhas_proprias(atualizar=True)
+    senhas = None if proprias is None else {u: u in proprias for u in nomes}
 
     # Banco: este mês e o anterior.
     hoje = datetime.now(FUSO_BR).date()
@@ -448,7 +590,8 @@ def uso():
                 {"dia": str(r[0])[:10], "usuario": r[1], "tipo": r[2], "quantidade": int(r[3])}
                 for r in rows
             ]
-            return jsonify({"ok": True, "persistente": True, "desde": "", "linhas": linhas, "nomes": nomes})
+            return jsonify({"ok": True, "persistente": True, "desde": "", "linhas": linhas,
+                            "nomes": nomes, "senhas": senhas})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
@@ -456,7 +599,8 @@ def uso():
         {"dia": dia, "usuario": usuario, "tipo": tipo, "quantidade": n}
         for (dia, usuario, tipo), n in sorted(_USO.items())
     ]
-    return jsonify({"ok": True, "persistente": False, "desde": _USO_DESDE, "linhas": linhas, "nomes": nomes})
+    return jsonify({"ok": True, "persistente": False, "desde": _USO_DESDE, "linhas": linhas,
+                    "nomes": nomes, "senhas": senhas})
 
 
 # ============================================================
@@ -2249,9 +2393,59 @@ def _rg_sp_valido(rg):
     return r[8] == dv
 
 
+# Sobrenomes que aparecem ligados por "E" dentro de um mesmo nome
+# (ex.: SOUZA E SILVA). Depois do "E" vindo um destes, o "E" é do nome.
+_SOBRENOMES_COM_E = {
+    "SILVA", "SOUZA", "SOUSA", "SANTOS", "OLIVEIRA", "COSTA", "LIMA", "PEREIRA",
+    "ALMEIDA", "CASTRO", "MELO", "MELLO", "CUNHA", "SA", "SILVEIRA", "ARAUJO",
+    "BARROS", "CAMPOS", "MENEZES", "VASCONCELOS", "ALBUQUERQUE", "AZEVEDO",
+    "CARVALHO", "FARIA", "FREITAS", "MOURA", "PINTO", "RAMOS", "REIS", "ROCHA",
+    "SOARES", "TEIXEIRA", "VIEIRA", "GOMES", "MARTINS", "RIBEIRO", "RODRIGUES",
+    "FERREIRA", "ALVES", "BRITO", "MOTA", "MOTTA", "PAIVA", "PRADO", "QUEIROZ",
+    "SAMPAIO", "VALE", "CORDEIRO", "NOGUEIRA", "MACHADO", "MENDES", "BARBOSA",
+    "FONSECA", "ANDRADE", "MIRANDA", "MOREIRA", "NUNES", "LOPES", "CORREA",
+    "CORREIA", "FRANCO", "GUIMARAES", "LEITE", "MAIA", "MEDEIROS", "MONTEIRO",
+    "NASCIMENTO", "PACHECO", "PIRES", "TAVARES", "XAVIER", "SIQUEIRA", "BRAGA",
+}
+
+
+def _separar_filiacao(pai, mae):
+    """
+    RG com filiação corrida ("PAI E MÃE" quebrando linha no meio do nome da
+    mãe): a IA às vezes devolve pai "EDILSON ... SILVA E ELIZIA" e mãe
+    "FRANCISCA DE SOUZA SILVA". Move o que vem depois do " E " para a mãe.
+    Devolve (pai, mae, mudou).
+    """
+    pai = re.sub(r"\s+", " ", str(pai or "")).strip()
+    mae = re.sub(r"\s+", " ", str(mae or "")).strip()
+    mudou = False
+    # Linha que terminou no "E" ou mãe que começou com ele.
+    if re.search(r"\sE$", pai):
+        pai, mudou = pai[:-2].strip(), True
+    if re.match(r"^E\s", mae):
+        mae, mudou = mae[2:].strip(), True
+    partes = re.split(r"\s+E\s+", pai)
+    if len(partes) >= 2:
+        antes = " E ".join(partes[:-1]).strip()
+        depois = partes[-1].strip()
+        primeira = _tirar_acentos(depois.split(" ")[0]).upper() if depois else ""
+        if antes and depois and primeira not in _SOBRENOMES_COM_E and len(antes.split()) >= 2:
+            pai = antes
+            if not mae:
+                mae = depois
+            elif not _tirar_acentos(mae).upper().startswith(_tirar_acentos(depois).upper()):
+                mae = f"{depois} {mae}"
+            mudou = True
+    return pai, mae, mudou
+
+
 def _normalizar_saida(d):
     d = _corrigir_datas_cnh(d)
     d = dict(d or {})
+    pai, mae, mudou = _separar_filiacao(d.get("filiacao_1"), d.get("filiacao_2"))
+    if mudou:
+        d["filiacao_1"], d["filiacao_2"] = pai, mae
+        d["campos_incertos"] = list(d.get("campos_incertos") or []) + ["filiacao_1", "filiacao_2"]
     tipo = str(d.get("tipo_documento") or "").strip().upper()
     nacionalidade = str(d.get("nacionalidade") or "").strip().upper()
     # CIN imprime "BRA"; documentos bilíngues podem trazer BRAZIL/BRAZILIAN.
