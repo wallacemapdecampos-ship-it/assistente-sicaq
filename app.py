@@ -209,6 +209,7 @@ def _origin_ok():
 # LOGIN (um usuário por analista) — sem banco de dados
 # Usuários na variável USUARIOS do Render, em JSON:
 #   {"ana": {"nome": "Ana", "senha": "pbkdf2$...", "admin": false}, ...}
+# Pessoas novas podem ir numa lista extra USUARIOS_2, USUARIOS_3... (mesmo formato).
 # A sessão é um "crachá" assinado (HMAC com SEGREDO_SESSAO) que vale até
 # 23h59 do dia (horário de Brasília). Tirar o usuário da lista bloqueia na hora.
 # Sem USUARIOS configurado, o login fica desligado (funciona como antes).
@@ -224,12 +225,20 @@ def _segredo():
 
 
 def _usuarios():
-    try:
-        bruto = json.loads(os.getenv("USUARIOS", "").strip() or "{}")
-        return {str(k).strip().lower(): v for k, v in bruto.items() if isinstance(v, dict)}
-    except Exception:
-        print("[LOGIN] variável USUARIOS inválida (JSON)", flush=True)
-        return {}
+    """
+    Junta a lista USUARIOS com as listas extras USUARIOS_<algo> (ex.:
+    USUARIOS_2). Assim dá para incluir alguém novo sem reescrever a lista
+    principal. Uma lista com JSON quebrado é ignorada sem derrubar as outras.
+    """
+    nomes = ["USUARIOS"] + sorted(k for k in os.environ if k.startswith("USUARIOS_"))
+    todos = {}
+    for nome in nomes:
+        try:
+            bruto = json.loads(os.getenv(nome, "").strip() or "{}")
+            todos.update({str(k).strip().lower(): v for k, v in bruto.items() if isinstance(v, dict)})
+        except Exception:
+            print(f"[LOGIN] variável {nome} inválida (JSON)", flush=True)
+    return todos
 
 
 def _login_ligado():
