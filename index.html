@@ -587,9 +587,7 @@
 
         <div class="campo" style="--span: 6">
           <label for="hOcupacao">Ocupação <span class="opcional">você escolhe · opcional</span></label>
-          <input id="hOcupacao" type="text" list="listaOcupacoes" autocomplete="off" spellcheck="false"
-                 placeholder="Digite para buscar (ex.: vendedor, auxiliar)">
-          <datalist id="listaOcupacoes"></datalist>
+          <select id="hOcupacao"><option value=""></option></select>
         </div>
 
         <div class="campo" style="--span: 6">
@@ -1741,14 +1739,13 @@
     return String(txt || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, " ").trim();
   }
 
+  // Lista suspensa igual às outras (Tipo de fonte etc.). Com ela aberta,
+  // digitar as primeiras letras pula para a profissão.
   function montarOcupacoes() {
-    const lista = document.getElementById("listaOcupacoes");
-    lista.innerHTML = "";
-    OCUPACOES_SICAQ.forEach(o => {
-      const op = document.createElement("option");
-      op.value = o;
-      lista.append(op);
-    });
+    const sel = document.getElementById("hOcupacao");
+    sel.innerHTML = "";
+    sel.append(novaOpcao("", ""));
+    OCUPACOES_SICAQ.forEach(o => sel.append(novaOpcao(o)));
   }
 
   // Texto digitado -> opção exata da lista ("" se não achar uma só).
@@ -2065,7 +2062,7 @@
       return;
     }
     if (!conferirOcupacao()) {
-      setMsgRenda("Escolha a ocupação na lista (digite parte do nome e clique na opção), ou deixe em branco.", "erro");
+      setMsgRenda("Escolha a ocupação na lista, ou deixe em branco.", "erro");
       return;
     }
     ocupacaoPedida = p.ocupacao;
@@ -2200,7 +2197,6 @@
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
   document.getElementById("formLogin").addEventListener("submit", entrar);
   document.getElementById("hOcupacao").addEventListener("change", conferirOcupacao);
-  document.getElementById("hOcupacao").addEventListener("blur", conferirOcupacao);
   document.getElementById("btnSair").addEventListener("click", sair);
   document.getElementById("btnTrocarSenha").addEventListener("click", () => mostrarTrocaSenha(false));
   document.getElementById("formSenha").addEventListener("submit", salvarSenha);
