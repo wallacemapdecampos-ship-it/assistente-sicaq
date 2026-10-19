@@ -1134,9 +1134,10 @@
       const partes = [data.motivo || "Certidão lida"];
       if (data.averbacoes) partes.push("Averbações: " + data.averbacoes);
       (data.avisos || []).forEach(a => partes.push(a));
+      if (data.aviso_pasta) partes.push(data.aviso_pasta);
       if (!sel.value) partes.push("Escolha o estado civil manualmente");
       const texto = partes.map(p => String(p).trim().replace(/\.+$/, "")).filter(Boolean).join(". ") + ".";
-      setMsgCertidao(texto, !sel.value ? "erro" : (data.incerto ? "warn" : "ok"));
+      setMsgCertidao(texto, !sel.value ? "erro" : ((data.incerto || data.aviso_pasta) ? "warn" : "ok"));
     } catch (e) {
       setMsgCertidao("Erro: " + (e.message || e), "erro");
     } finally {
@@ -1478,8 +1479,9 @@
         `${qtd > 1 ? qtd + " arquivos lidos" : "Documento lido"} em ${total} s. ` +
         (duvidosos
           ? `Confira no documento o${duvidosos > 1 ? "s campos" : " campo"} em amarelo antes de preencher.`
-          : "Revise os dados antes de preencher."),
-        duvidosos ? "warn" : "ok"
+          : "Revise os dados antes de preencher.") +
+        (data.aviso_pasta ? " " + data.aviso_pasta : ""),
+        (duvidosos || data.aviso_pasta) ? "warn" : "ok"
       );
     } catch (e) {
       setMensagem("Erro: " + (e.message || e), "erro");
@@ -1967,8 +1969,9 @@
           : "As contas não fecharam: confira os valores em amarelo no comprovante.") +
         (conferir.length ? " Confira em amarelo: " + conferir.join(", ") + "." : "") +
         (ultimoHolerite && ultimoHolerite.cpfDaIdentificacao
-          ? " O CPF do cliente veio do documento de identificação." : ""),
-        (!contasOk || duvidososH) ? "warn" : "ok"
+          ? " O CPF do cliente veio do documento de identificação." : "") +
+        (data.aviso_pasta ? " " + data.aviso_pasta : ""),
+        (!contasOk || duvidososH || data.aviso_pasta) ? "warn" : "ok"
       );
     } catch (e) {
       setMensagemHolerite("Erro: " + (e.message || e), "erro");

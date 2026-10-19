@@ -3168,6 +3168,133 @@ def _normalizar_holerite(resultado):
     }
 
 
+# ============================================================
+# AVISO DE "PASTA" (PDF com vários documentos juntos)
+# A leitura continua igual (só as primeiras páginas). Aqui só se olha o
+# TEXTO de cada página, sem IA, para avisar quando o PDF parece uma pasta:
+# - o documento pedido está numa página que a leitura não usa -> não gasta
+#   IA e pede para mandar só o documento;
+# - a parte lida mistura outros documentos -> lê e avisa para conferir.
+# PDF escaneado (sem texto) não dá para classificar: só avisa se tiver
+# mais páginas do que a leitura usa.
+# ============================================================
+
+_SINAIS_PAGINA = [
+    ("renda", (r"\bVENCIMENTOS\b|\bPROVENTOS\b", r"\bDESCONTOS\b")),
+    ("renda", (r"CONTRACHEQUE|CONTRA-CHEQUE|HOLERITE|HOLERITH|RECIBO DE PAGAMENTO|DEMONSTRATIVO DE PAGAMENTO",)),
+    ("renda", (r"\bINSS\b|PREVIDENCIA SOCIAL", r"BENEFICIO", r"COMPETENCIA|CREDITO|VALOR LIQUIDO|MENSALIDADE")),
+    ("identidade", (r"SENATRAN|CARTEIRA NACIONAL DE HABILITACAO|PERMISSAO PARA DIRIGIR",)),
+    ("identidade", (r"REGISTRO GERAL|CARTEIRA DE IDENTIDADE|IDENTIDADE NACIONAL",)),
+    ("certidao", (r"CERTIDAO DE (NASCIMENTO|CASAMENTO|OBITO)|REGISTRO CIVIL DAS PESSOAS NATURAIS",)),
+    ("trabalho", (r"CARTEIRA DE TRABALHO|\bFGTS\b",)),
+    ("conta", (r"NOTA FISCAL|FATURA|CONTA DE (ENERGIA|LUZ|AGUA|GAS)|CODIGO DE BARRAS",)),
+]
+
+_NOME_DOC_PASTA = {
+    "renda": ("o holerite / comprovante de renda", "só o holerite (ou só a página dele)"),
+    "identidade": ("o documento (CNH, RG ou CIN)", "só o documento (ou só a página dele)"),
+    "certidao": ("a certidão", "só a certidão (ou só a página dela)"),
+}
+
+
+def _classe_pagina(texto):
+    t = _tirar_acentos(str(texto or "")).upper()
+    if len(t.strip()) < 40:
+        return ""  # sem texto (escaneada/foto)
+    for classe, padroes in _SINAIS_PAGINA:
+        if all(re.search(p, t) for p in padroes):
+            return classe
+    return "outro"
+
+
+_CLASSES_CONHECIDAS = {"renda", "identidade", "certidao", "trabalho", "conta"}
+
+
+def _nas_paginas(nums):
+    nums = sorted(nums)
+    return f"na página {nums[0]}" if len(nums) == 1 else f"nas páginas {_faixa_paginas(nums)}"
+
+
+def _faixa_paginas(nums):
+    nums = sorted(nums)
+    if not nums:
+        return ""
+    grupos, ini, ant = [], nums[0], nums[0]
+    for n in nums[1:] + [None]:
+        if n is not None and n == ant + 1:
+            ant = n
+            continue
+        if ini == ant:
+            grupos.append(f"{ini}")
+        else:
+            grupos.append(f"{ini} e {ant}" if ant == ini + 1 else f"{ini} a {ant}")
+        if n is not None:
+            ini = ant = n
+    return ", ".join(grupos)
+
+
+def _classes_pdf(item, maximo=60):
+    """(nº de páginas, [classe de cada página]) de um PDF; None se não for PDF."""
+    if PathLikeSuffix(item.get("filename", "")) != ".pdf" and item.get("mimetype") != "application/pdf":
+        return None
+    try:
+        doc = pymupdf.open(stream=item["data"], filetype="pdf")
+    except Exception:
+        return None
+    try:
+        classes = []
+        for i in range(min(len(doc), maximo)):
+            try:
+                classes.append(_classe_pagina(doc[i].get_text("text") or ""))
+            except Exception:
+                classes.append("")
+        return len(doc), classes
+    finally:
+        doc.close()
+
+
+def _avaliar_pasta(arquivos, quer, lidas=None):
+    """
+    quer: 'renda', 'identidade' ou 'certidao'. lidas: quantas páginas a
+    leitura usa (None = holerite: 8 com texto, 3 escaneado).
+    Devolve (bloqueio, aviso): bloqueio = mensagem para NÃO ler (o documento
+    está fora das páginas lidas); aviso = ler e pedir conferência.
+    """
+    nome, mandar = _NOME_DOC_PASTA.get(quer, ("o documento", "só o documento"))
+    bloqueio, aviso = "", ""
+    for item in arquivos:
+        info = _classes_pdf(item)
+        if not info:
+            continue
+        n, classes = info
+        usa = lidas if lidas else (8 if any(classes[:2]) else 3)
+        alvo = [i + 1 for i, c in enumerate(classes) if c == quer]
+        # Outros documentos reconhecidos (CNH, conta, CTPS...) nas páginas lidas.
+        outros = [i + 1 for i, c in enumerate(classes) if c in _CLASSES_CONHECIDAS and c != quer]
+        misturado = any(i <= usa for i in outros)
+        if n <= usa and not misturado:
+            continue  # PDF comum (frente/verso, vários meses de holerite...)
+        so_usa = "a página 1" if usa == 1 else f"as {usa} primeiras páginas"
+        nas_lidas = "na página 1" if usa == 1 else f"nas {usa} primeiras páginas"
+        if alvo and not any(i <= usa for i in alvo):
+            bloqueio = (
+                f"Esse PDF parece uma pasta com {n} páginas: {nome} está {_nas_paginas(alvo)}, "
+                f"mas a leitura só usa {so_usa}. Mande {mandar}."
+            )
+            break
+        dentro = [i for i in alvo if i <= usa]
+        if dentro:
+            aviso = (f"Esse PDF tem {n} páginas e parece uma pasta. Li {nome} {_nas_paginas(dentro)}: "
+                     f"confira os dados. Se algo vier errado, mande {mandar}.")
+        elif misturado:
+            aviso = (f"Esse PDF tem {n} páginas e parece uma pasta: não reconheci {nome} {nas_lidas}, "
+                     f"que são as que eu leio. Confira o resultado; se vier errado, mande {mandar}.")
+        else:
+            aviso = (f"Esse PDF tem {n} páginas e eu leio só {so_usa}. "
+                     f"Se {nome} estiver depois, mande {mandar}.")
+    return bloqueio, aviso
+
+
 @app.post("/ler-holerite")
 def ler_holerite():
     recebidos = request.files.getlist("files")
@@ -3203,6 +3330,12 @@ def ler_holerite():
 
     inicio = time.perf_counter()
 
+    # PDF tipo "pasta" com o holerite fora das páginas lidas: não gasta IA.
+    bloqueio, aviso_pasta = _avaliar_pasta(arquivos, "renda")
+    if bloqueio:
+        print("[PASTA] holerite fora das páginas lidas", flush=True)
+        return jsonify({"ok": False, "code": "PASTA", "error": bloqueio}), 422
+
     try:
         resultado, modelo, tempo_api = _groq_holerite_call(arquivos)
         dados = _normalizar_holerite(resultado)
@@ -3211,6 +3344,7 @@ def ler_holerite():
         return jsonify({
             "ok": True,
             "dados": dados,
+            "aviso_pasta": aviso_pasta,
             "modelo": modelo,
             "arquivos_lidos": len(arquivos),
             "tempo_api": round(tempo_api, 3),
@@ -3356,6 +3490,18 @@ def ler_pis():
                     "ok": True, "pis": pis, "valido": True, "nome": "",
                     "fonte": "texto", "tempo_total": round(time.perf_counter() - inicio, 3),
                 })
+
+            # PDF digital tipo "pasta": o PIS pode estar depois das 8
+            # primeiras páginas, e a IA só veria as páginas 1 e 2.
+            info = _classes_pdf({"data": data, "filename": nome_arq, "mimetype": mime})
+            if info and info[0] > 8 and any(info[1][:2]):
+                print("[PASTA] PIS não achado nas 8 primeiras páginas", flush=True)
+                return jsonify({
+                    "ok": False, "code": "PASTA",
+                    "error": (f"Não achei o PIS nas 8 primeiras páginas desse PDF ({info[0]} páginas, "
+                              "parece uma pasta). Mande só o extrato do FGTS ou a Carteira de Trabalho, "
+                              "ou digite o número."),
+                }), 422
 
         # 2) Foto/print ou PDF escaneado: leitura curta da IA.
         imagem = _combinar_arquivos_identificacao(
@@ -3762,6 +3908,10 @@ def ler_certidao():
         return jsonify({"ok": False, "error": "Arquivo da certidão não enviado."}), 400
     nome_doc = str(request.form.get("nome") or "").strip()
     inicio = time.perf_counter()
+    bloqueio, aviso_pasta = _avaliar_pasta(arquivos, "certidao", 2)
+    if bloqueio:
+        print("[PASTA] certidão fora das páginas lidas", flush=True)
+        return jsonify({"ok": False, "code": "PASTA", "error": bloqueio}), 422
     try:
         conteudo, texto_pdf, n_imagens = _conteudo_certidao(arquivos)
         lido, tempo_api = _groq_json(conteudo, 320)
@@ -3774,6 +3924,7 @@ def ler_certidao():
         _registrar_uso("certidao")
         return jsonify({
             "ok": True, **r,
+            "aviso_pasta": aviso_pasta,
             "fonte": "texto" if texto_pdf and not n_imagens else "imagem",
             "tempo_api": round(tempo_api, 3),
             "tempo_total": round(time.perf_counter() - inicio, 3),
@@ -3834,6 +3985,10 @@ def ler():
         t_preparo = time.perf_counter()
         # PDF "CNH Digital" do gov.br: caminho próprio (campos + MRZ sem IA).
         cnh_digital = _cnh_digital_senatran(arquivos)
+        bloqueio, aviso_pasta = _avaliar_pasta(arquivos, "identidade", 1 if cnh_digital else 2)
+        if bloqueio:
+            print("[PASTA] documento fora das páginas lidas", flush=True)
+            return jsonify({"ok": False, "code": "PASTA", "error": bloqueio}), 422
         if cnh_digital:
             image_bytes, nota_ia = [cnh_digital["imagem"]], cnh_digital["nota"]
         else:
@@ -3878,6 +4033,7 @@ def ler():
 
         return jsonify({
             "ok": True,
+            "aviso_pasta": aviso_pasta,
             "dados": dados,
             "modelo": modelo,
             "arquivos_lidos": len(arquivos),
