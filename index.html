@@ -195,6 +195,8 @@
     .campo { grid-column: span var(--span, 4); min-width: 0; }
     .campo label { display: block; font-size: 12.5px; font-weight: 700; color: var(--tinta-2); margin-bottom: 3px; }
     .campo label .opcional { font-weight: 400; font-size: 11.5px; }
+    .conta-liquida { display: block; margin-top: 3px; font-size: 11.5px; color: var(--tinta-2); font-variant-numeric: tabular-nums; }
+    .conta-liquida:empty { display: none; }
     .campo input, .campo select {
       width: 100%; height: 34px; padding: 0 10px;
       border: 1px solid #c7d2d9; border-radius: var(--raio);
@@ -627,6 +629,7 @@
         <div class="campo">
           <label for="hLiquida">Líquida para o SICAQ</label>
           <input id="hLiquida" type="text">
+          <small id="contaLiquida" class="conta-liquida"></small>
         </div>
 
         <div class="campo">
@@ -2195,6 +2198,8 @@
     document.getElementById("hAdmissaoRotulo").textContent = "Data de admissão";
     ajustarRotuloFonte();
     levarOcupacaoParaRenda();
+    liquidaManual = false;
+    document.getElementById("contaLiquida").textContent = "";
     setMsgRenda("Abra a tela Renda Formal do SICAQ. O Salvar fica com você.");
     atualizarBotaoRenda();
   }
@@ -2267,8 +2272,50 @@
       document.getElementById("hTipoFonte").classList.add("destaque");
       duvidosos++;
     }
+    mostrarContaLiquida();
     atualizarBotaoRenda();
     return duvidosos;
+  }
+
+  // ---------- Calculadora: Líquida para o SICAQ = líquido + adiantamento ----------
+  // Aceita 1406,00 / 1.406,00 / 1406.00 / 1406.
+  function lerValorBR(v) {
+    let s = String(v || "").trim().replace(/[R$\s]/g, "");
+    if (!s) return null;
+    if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+    else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");
+    const n = Number(s);
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+  }
+  function valorCampo(n) {          // formato dos campos: 2682,35
+    return n.toFixed(2).replace(".", ",");
+  }
+  function valorLeitura(n) {        // formato da conta: 2.682,35
+    return n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  let liquidaManual = false;
+  function mostrarContaLiquida() {
+    const conta = document.getElementById("contaLiquida");
+    const liq = lerValorBR(document.getElementById("hLiquidoOriginal").value);
+    const ad = lerValorBR(document.getElementById("hAdiantamento").value) || 0;
+    const final = lerValorBR(document.getElementById("hLiquida").value);
+    if (liq === null || final === null) { conta.textContent = ""; return; }
+    const esperado = Math.round((liq + ad) * 100) / 100;
+    if (liquidaManual && Math.abs(final - esperado) > 0.004) {
+      conta.textContent = "Valor digitado à mão (a conta daria " + valorLeitura(esperado) + ")";
+    } else {
+      conta.textContent = valorLeitura(liq) + " + " + valorLeitura(ad) + " = " + valorLeitura(final);
+    }
+  }
+  function recalcularLiquida() {
+    const liq = lerValorBR(document.getElementById("hLiquidoOriginal").value);
+    if (liq === null) { mostrarContaLiquida(); return; }
+    const ad = lerValorBR(document.getElementById("hAdiantamento").value) || 0;
+    const campo = document.getElementById("hLiquida");
+    campo.value = valorCampo(Math.round((liq + ad) * 100) / 100);
+    campo.classList.remove("destaque");
+    liquidaManual = false;
+    mostrarContaLiquida();
   }
 
   // ---------- Preencher a Renda Formal no SICAQ (extensão) ----------
@@ -2449,6 +2496,9 @@
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
   document.getElementById("formLogin").addEventListener("submit", entrar);
   document.getElementById("hOcupacao").addEventListener("change", conferirOcupacao);
+  ["hLiquidoOriginal", "hAdiantamento"].forEach(id =>
+    document.getElementById(id).addEventListener("input", recalcularLiquida));
+  document.getElementById("hLiquida").addEventListener("input", () => { liquidaManual = true; mostrarContaLiquida(); });
   document.getElementById("tipoOcupacao").addEventListener("change", montarOcupacaoDoc);
   document.getElementById("ocupacaoDoc").addEventListener("change", levarOcupacaoParaRenda);
   document.getElementById("btnSair").addEventListener("click", sair);

@@ -2966,6 +2966,10 @@ def _eh_adiantamento_salarial(descricao):
     # Não é adiantamento do salário mensal:
     if re.search(r"FERIAS|13|DECIMO|EMPREST|CONSIG|TRANSP|REFEI|ALIMENT|PENS|INSS|IRRF", d):
         return False
+    # Sobras e acertos do adiantamento não entram (ex.: "DESCONTO TROCO
+    # ADTO. SAL." 0,78): só o desconto do adiantamento em si.
+    if re.search(r"TROCO|DIFEREN|\bDIF\b|ARREDOND|SALDO|ESTORNO|DEVOL|SOBRA|REEMB|RESTITU", d):
+        return False
     return True
 
 
@@ -3095,9 +3099,11 @@ def _normalizar_holerite(resultado):
                     incertos += ["irrf"]
 
         # Adiantamento e IRRF calculados pelas linhas (coluna DESCONTOS).
-        linhas_ad = [i for i in itens if _eh_adiantamento_salarial(i["descricao"])]
+        # Só a coluna DESCONTOS: o adiantamento volta ao líquido porque foi
+        # descontado; linha de provento com "adiant." não é esse desconto.
+        linhas_ad = [i for i in itens if i["desconto"] > 0 and _eh_adiantamento_salarial(i["descricao"])]
         if linhas_ad:
-            adiantamento = round(sum(i["desconto"] or i["provento"] for i in linhas_ad), 2)
+            adiantamento = round(sum(i["desconto"] for i in linhas_ad), 2)
             descricao_ad = " + ".join(i["descricao"] for i in linhas_ad)
         else:
             adiantamento, descricao_ad = 0.0, ""
