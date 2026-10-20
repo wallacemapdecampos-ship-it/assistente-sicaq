@@ -642,6 +642,11 @@
           <input id="hAdiantamento" type="text">
         </div>
 
+        <div class="campo" id="campoFonteIr" style="--span: 12" hidden>
+          <label for="hFonteIr">Fonte pagadora da declaração <span class="opcional">a declaração tem mais de uma: escolha qual vai para o SICAQ</span></label>
+          <select id="hFonteIr"></select>
+        </div>
+
         <div class="campo" style="--span: 6">
           <label for="hOcupacao">Ocupação <span class="opcional">você escolhe · opcional</span></label>
           <select id="hOcupacao"><option value=""></option></select>
@@ -2234,6 +2239,10 @@
     levarOcupacaoParaRenda();
     liquidaManual = false;
     document.getElementById("contaLiquida").textContent = "";
+    document.getElementById("hIrrf").disabled = false;
+    document.getElementById("hIrrf").placeholder = "";
+    document.getElementById("campoFonteIr").hidden = true;
+    document.getElementById("hFonteIr").innerHTML = "";
     setMsgRenda("Abra a tela Renda Formal do SICAQ. O Salvar fica com você.");
     atualizarBotaoRenda();
   }
@@ -2281,6 +2290,20 @@
     document.getElementById("hLiquidoOriginal").value = d.liquido_original || "";
     document.getElementById("hAdiantamento").value = d.adiantamento || "";
     document.getElementById("hDescricaoAdiantamento").value = d.descricao_adiantamento || "";
+
+    // Declaração de IR: o SICAQ bloqueia o IR retido; e pode ter várias fontes.
+    const ehIrpf = tipo === "IRPF";
+    const campoIr = document.getElementById("hIrrf");
+    campoIr.disabled = ehIrpf;
+    campoIr.placeholder = ehIrpf ? "não se aplica (declaração)" : "";
+    const fontesIr = ehIrpf ? (d.fontes_ir || []) : [];
+    const selFonte = document.getElementById("hFonteIr");
+    selFonte.innerHTML = "";
+    fontesIr.forEach((f, i) => {
+      const rot = f.rotulo === "CPF" ? "CPF" : "CNPJ";
+      selFonte.append(novaOpcao(String(i), `${f.nome || "(sem nome)"} · ${rot} ${f.documento || "?"} · ${f.anual} ÷ 12 = ${f.mensal}`));
+    });
+    document.getElementById("campoFonteIr").hidden = fontesIr.length < 2;
 
     const ad = Number(String(d.adiantamento || "0").replace(".", "").replace(",", "."));
     if (ad > 0) {
@@ -2366,7 +2389,8 @@
       liquida: v("hLiquida"),
       documento_comprovante: v("hDocumento"),
       data_comprovante: v("hCompetencia"),
-      irrf: v("hIrrf") || "0,00",
+      // Declaração de IR: o SICAQ bloqueia o campo; não envia nada.
+      irrf: (ultimoHolerite && ultimoHolerite.tipo_renda === "IRPF") ? "" : (v("hIrrf") || "0,00"),
       ocupacao: ocupacaoDaLista(v("hOcupacao"))
     };
   }
@@ -2391,6 +2415,12 @@
     }
     if (!p.bruta || !p.documento_comprovante) {
       setMsgRenda("Faltam a renda bruta ou o documento de comprovante.", "erro");
+      return;
+    }
+    const rotAdm = document.getElementById("hAdmissaoRotulo").textContent;
+    if (!/^\d{2}\/\d{2}\/\d{4}$/.test(p.data_admissao)) {
+      document.getElementById("hAdmissao").classList.add("destaque");
+      setMsgRenda(`Preencha a ${rotAdm.toLowerCase()} (DD/MM/AAAA): o SICAQ pede esse campo.`, "erro");
       return;
     }
     if (!conferirOcupacao()) {
@@ -2505,6 +2535,18 @@
       if (document.getElementById("hIrrf").classList.contains("destaque")) conferir.push("imposto de renda");
       if (document.getElementById("hAdiantamento").classList.contains("destaque")) conferir.push("adiantamento");
       if (!document.getElementById("hTipoFonte").value) conferir.push("tipo de fonte");
+      if (dadosH.tipo_renda === "IRPF") {
+        const fs = dadosH.fontes_ir || [];
+        const p0 = fs[0] || {};
+        setMensagemHolerite(
+          `Declaração de IR (exercício ${dadosH.exercicio}) lida em ${total} s pelo texto do PDF. ` +
+          `Renda: ${valorLeitura(lerValorBR(p0.anual) || 0)} ÷ 12 = ${valorLeitura(lerValorBR(p0.mensal) || 0)} (bruta = líquida). ` +
+          (fs.length > 1 ? `Tem ${fs.length} fontes pagadoras: escolha qual vai para o SICAQ. ` : "") +
+          "Preencha a data de admissão.",
+          "warn"
+        );
+        return;
+      }
       setMensagemHolerite(
         `${qtdLidos > 1 ? qtdLidos + " arquivos lidos" : "Comprovante lido"} em ${total} s. ` +
         (contasOk
@@ -2530,6 +2572,17 @@
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
   document.getElementById("formLogin").addEventListener("submit", entrar);
   document.getElementById("hOcupacao").addEventListener("change", conferirOcupacao);
+  document.getElementById("hFonteIr").addEventListener("change", (e) => {
+    const f = ((ultimoHolerite && ultimoHolerite.fontes_ir) || [])[Number(e.target.value)];
+    if (!f) return;
+    document.getElementById("hTipoFonte").value = f.tipo_fonte || "JURÍDICA";
+    ajustarRotuloFonte();
+    document.getElementById("hCnpj").value = f.documento || "";
+    document.getElementById("hCnpj").classList.toggle("destaque", !f.documento);
+    document.getElementById("hBruta").value = f.mensal;
+    document.getElementById("hLiquidoOriginal").value = f.mensal;
+    recalcularLiquida();
+  });
   ["hLiquidoOriginal", "hAdiantamento"].forEach(id =>
     document.getElementById(id).addEventListener("input", recalcularLiquida));
   document.getElementById("hLiquida").addEventListener("input", () => { liquidaManual = true; mostrarContaLiquida(); });

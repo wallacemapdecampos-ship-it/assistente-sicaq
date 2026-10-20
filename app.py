@@ -3231,6 +3231,170 @@ def _normalizar_holerite(resultado):
 
 
 # ============================================================
+# DECLARAÇÃO DE IMPOSTO DE RENDA (PDF da Receita) — sem IA
+# Regra da equipe: a renda é a soma de "Rendimentos tributáveis recebidos de
+# pessoa jurídica pelo titular" de cada fonte, dividida por 12. Na declaração
+# bruta = líquida. Tipo de fonte pelo documento (CNPJ = JURÍDICA). Data do
+# comprovante = mês anterior ao atual. Só vale a declaração do exercício do
+# ano atual (ex.: em 2026, exercício 2026 / ano-calendário 2025). O SICAQ
+# bloqueia o IR retido nesse tipo de comprovante, então ele não é enviado.
+# ============================================================
+
+def _mes_anterior():
+    agora = datetime.now(FUSO_BR)
+    m, a = agora.month - 1, agora.year
+    if m == 0:
+        m, a = 12, a - 1
+    return f"{m:02d}/{a:04d}"
+
+
+def _linhas_por_posicao(palavras):
+    """Linhas do PDF montadas pela posição das palavras (texto, valores BR)."""
+    ws = sorted((w for w in palavras if str(w[4]).strip()), key=lambda w: ((w[1] + w[3]) / 2, w[0]))
+    linhas = []
+    for w in ws:
+        yc, alt = (w[1] + w[3]) / 2, max(1.0, w[3] - w[1])
+        if linhas and abs(linhas[-1]["y"] - yc) <= 0.45 * alt:
+            linhas[-1]["ws"].append(w)
+        else:
+            linhas.append({"y": yc, "ws": [w]})
+    return [" ".join(str(w[4]) for w in sorted(l["ws"], key=lambda w: w[0])) for l in linhas]
+
+
+def _valor_br(txt):
+    return float(str(txt).replace(".", "").replace(",", "."))
+
+
+def _irpf_do_pdf(arquivos):
+    """
+    PDF da Declaração de Ajuste Anual -> dados da renda, ou None se não for.
+    Lê as fontes de "Rendimentos tributáveis recebidos de pessoa jurídica pelo
+    titular": nome, CNPJ/CPF e rendimentos do ano.
+    """
+    for item in arquivos:
+        if PathLikeSuffix(item.get("filename", "")) != ".pdf" and item.get("mimetype") != "application/pdf":
+            continue
+        try:
+            doc = pymupdf.open(stream=item["data"], filetype="pdf")
+        except Exception:
+            continue
+        try:
+            textos, linhas = [], []
+            for i in range(min(len(doc), 20)):
+                pagina = doc[i]
+                txt = pagina.get_text("text") or ""
+                textos.append(txt)
+                try:
+                    ls = _linhas_por_posicao(pagina.get_text("words") or [])
+                except Exception:
+                    ls = []
+                linhas += ls or [l for l in txt.splitlines()]
+        finally:
+            doc.close()
+        tudo = _tirar_acentos("\n".join(textos)).upper()
+        if "DECLARACAO DE AJUSTE ANUAL" not in tudo or "IMPOSTO SOBRE A RENDA" not in tudo:
+            continue
+        m = re.search(r"EXERCICIO\s+(\d{4})\s+ANO-CALENDARIO\s+(\d{4})", tudo)
+        exercicio, ano_cal = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+        m = re.search(r"CPF:\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})", tudo)
+        cpf_titular = re.sub(r"\D", "", m.group(1)) if m else ""
+
+        fontes, total, dentro, atual = [], None, False, None
+        for bruto in linhas:
+            ln = _tirar_acentos(str(bruto)).upper().strip()
+            if not ln:
+                continue
+            if ln.startswith("RENDIMENTOS TRIBUTAVEIS RECEBIDOS DE PESSOA JURIDICA PELO TITULAR"):
+                # Só a seção principal (não a de exigibilidade suspensa).
+                dentro = "SUSPENSA" not in ln and "ACUMULAD" not in ln
+                atual = None
+                continue
+            if not dentro:
+                continue
+            if ln.startswith("RENDIMENTOS ") or ln.startswith("SEM INFORMA"):
+                dentro = False
+                continue
+            valores = re.findall(r"-?\d{1,3}(?:\.\d{3})*,\d{2}", ln)
+            if ln.startswith("TOTAL"):
+                if valores:
+                    total = _valor_br(valores[0])
+                dentro = False
+                continue
+            if ln.startswith("CNPJ/CPF") or ln.startswith("CPF/CNPJ"):
+                if atual is not None:
+                    atual["documento"] = re.sub(r"\D", "", ln.split(":", 1)[-1])
+                continue
+            if len(valores) >= 5:
+                nome = ln[: ln.find(valores[0])].strip() if valores[0] in ln else ""
+                atual = {"nome": nome, "documento": "", "anual": _valor_br(valores[0]),
+                         "irrf_anual": _valor_br(valores[2]) if len(valores) > 2 else 0.0}
+                fontes.append(atual)
+                continue
+            if atual is not None and not valores and not any(
+                    k in ln for k in ("NOME DA FONTE", "REND. RECEBIDOS", "DE PES. JURIDICA", "OFICIAL", "SALARIO")):
+                atual["nome"] = (atual["nome"] + " " + str(bruto).strip()).strip()
+        return {"exercicio": exercicio, "ano_calendario": ano_cal, "cpf_titular": cpf_titular,
+                "fontes": fontes, "total": total}
+    return None
+
+
+def _normalizar_irpf(info):
+    ano_atual = datetime.now(FUSO_BR).year
+    if info.get("exercicio") != ano_atual:
+        ex = info.get("exercicio") or "não identificado"
+        raise ValueError(
+            f"IRPF_FORA_PERIODO|Declaração do exercício {ex}. Só vale a do exercício {ano_atual} "
+            f"(ano-calendário {ano_atual - 1})."
+        )
+    fontes = [f for f in info.get("fontes") or [] if f.get("anual", 0) > 0]
+    if not fontes:
+        raise ValueError(
+            "A declaração não tem rendimentos tributáveis recebidos de pessoa jurídica pelo titular."
+        )
+    fontes.sort(key=lambda f: f["anual"], reverse=True)
+    lista = []
+    for f in fontes:
+        doc = f.get("documento", "")
+        lista.append({
+            "nome": re.sub(r"\s+", " ", f.get("nome", "")).strip(),
+            "documento": doc,
+            "tipo_fonte": "FÍSICA" if len(doc) == 11 else "JURÍDICA",
+            "rotulo": "CPF" if len(doc) == 11 else "CNPJ",
+            "anual": _holerite_valor(f["anual"]),
+            "mensal": _holerite_valor(round(f["anual"] / 12, 2)),
+        })
+    p = lista[0]
+    incertos = ["data_admissao"]
+    if not p["documento"]:
+        incertos.append("documento_fonte")
+    return {
+        "caracteristica_renda": "COMPROVADA",
+        "tipo_renda": "IRPF",
+        "tipo_renda_nome": f"Declaração de IR {info['exercicio']}",
+        "tipo_fonte": p["tipo_fonte"],
+        "documento_fonte": p["documento"],
+        "documento_fonte_rotulo": p["rotulo"],
+        "documento": "DECLARAÇÃO DE IMPOSTO DE RENDA",
+        "cpf_funcionario": info.get("cpf_titular", ""),
+        "cnpj": p["documento"] if p["rotulo"] == "CNPJ" else "",
+        "numero_beneficio": "",
+        "especie_beneficio": "",
+        "data_admissao": "",
+        "competencia": _mes_anterior(),
+        "bruta": p["mensal"],
+        "liquida": p["mensal"],
+        "irrf": "",
+        "liquido_original": p["mensal"],
+        "adiantamento": "0,00",
+        "descricao_adiantamento": "",
+        "fontes_ir": lista,
+        "exercicio": info["exercicio"],
+        "ano_calendario": info["ano_calendario"],
+        "campos_incertos": incertos,
+    }
+
+
+# ============================================================
 # AVISO DE "PASTA" (PDF com vários documentos juntos)
 # A leitura continua igual (só as primeiras páginas). Aqui só se olha o
 # TEXTO de cada página, sem IA, para avisar quando o PDF parece uma pasta:
@@ -3391,6 +3555,27 @@ def ler_holerite():
         return jsonify({"ok": False, "error": "Arquivo vazio."}), 400
 
     inicio = time.perf_counter()
+
+    # Declaração de Imposto de Renda (PDF da Receita): lida pelo texto, sem IA.
+    irpf = None
+    try:
+        irpf = _irpf_do_pdf(arquivos)
+    except Exception as e:
+        print(f"[IRPF] leitura falhou ({type(e).__name__})", flush=True)
+    if irpf is not None:
+        try:
+            dados = _normalizar_irpf(irpf)
+        except ValueError as e:
+            txt = str(e)
+            code = "IRPF_FORA_PERIODO" if txt.startswith("IRPF_FORA_PERIODO|") else ""
+            return jsonify({"ok": False, "code": code, "error": txt.split("|", 1)[-1]}), 422
+        _registrar_uso("renda")
+        print(f"[IRPF] exercício {irpf['exercicio']}, {len(dados['fontes_ir'])} fonte(s) PJ", flush=True)
+        return jsonify({
+            "ok": True, "dados": dados, "modelo": "texto do PDF", "arquivos_lidos": len(arquivos),
+            "tempo_api": 0, "tempo_total": round(time.perf_counter() - inicio, 3),
+            "competencias_validas": _holerite_competencias_validas(),
+        })
 
     # PDF tipo "pasta" com o holerite fora das páginas lidas: não gasta IA.
     bloqueio, aviso_pasta = _avaliar_pasta(arquivos, "renda")
