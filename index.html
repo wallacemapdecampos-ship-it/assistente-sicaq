@@ -2187,13 +2187,14 @@
           : '<span class="nao">Ainda com a senha inicial</span>');
       const botoes = [
         travado ? `<button type="button" class="secondary resetar desbloquear" data-usuario="${uSeguro}" data-nome="${nome}">Desbloquear</button>` : "",
-        senhas[u] ? `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>` : ""
+        // ADM reseta qualquer analista, quantas vezes quiser.
+        `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>`
       ].filter(Boolean).join(" ");
       return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${status}</td><td>${botoes}</td></tr>`;
     }).join("");
     return `<div class="uso-bloco"><h3>Senhas</h3><table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Situação</th><th></th></tr></thead>` +
            `<tbody>${linhas}</tbody></table>` +
-           `<p class="dica">A senha só é criada no 1º acesso; para trocar depois, clique em Resetar: a pessoa entra com a senha inicial e cria outra. ` +
+           `<p class="dica">O analista só cria a senha no 1º acesso. Você pode Resetar qualquer um, quantas vezes quiser: a pessoa entra com a senha inicial e cria outra. ` +
            `Errou a senha 3 vezes: fica bloqueado. Desbloquear libera com a mesma senha; Resetar libera e pede senha nova.</p></div>`;
   }
 
