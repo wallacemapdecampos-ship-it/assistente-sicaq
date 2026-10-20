@@ -229,6 +229,13 @@ def _segredo():
 
 
 def _usuarios():
+    """Usuários que podem entrar: os da lista do Render menos os excluídos pelo dono."""
+    todos = _usuarios_todos()
+    fora = _excluidos()
+    return {u: c for u, c in todos.items() if u not in fora or u == DONO_SISTEMA}
+
+
+def _usuarios_todos():
     """
     Junta a lista USUARIOS com as listas extras USUARIOS_<algo> (ex.:
     USUARIOS_2). Assim dá para incluir alguém novo sem reescrever a lista
@@ -246,7 +253,30 @@ def _usuarios():
 
 
 def _login_ligado():
-    return bool(_usuarios())
+    return bool(_usuarios_todos())
+
+
+# ---------- Logins excluídos pelo dono ----------
+# Os logins nascem na lista USUARIOS do Render. "Excluir" pelo painel guarda o
+# usuário na tabela usuarios_excluidos: ele não entra mais e some do painel
+# (dá para Restaurar). Sem banco, ninguém fica excluído.
+_EXCLUIDOS = {"dados": None, "quando": 0.0}
+
+
+def _excluidos(atualizar=False):
+    if not os.getenv("DATABASE_URL", "").strip():
+        return set()
+    agora = time.time()
+    if atualizar or _EXCLUIDOS["dados"] is None or agora - _EXCLUIDOS["quando"] > 60:
+        try:
+            linhas = _no_banco(lambda con: con.run("SELECT usuario FROM usuarios_excluidos")) or []
+            _EXCLUIDOS["dados"] = {str(r[0]) for r in linhas}
+            _EXCLUIDOS["quando"] = agora
+        except Exception as e:
+            # Banco fora do ar: usa a última lista conhecida.
+            print(f"[EXCLUIR] banco indisponível ({type(e).__name__})", flush=True)
+            _EXCLUIDOS["quando"] = agora
+    return _EXCLUIDOS["dados"] or set()
 
 
 def _hash_senha(senha, sal=None, voltas=200_000):
@@ -765,6 +795,56 @@ def empresa_do_analista():
     return jsonify({"ok": True})
 
 
+@app.post("/excluir-usuario")
+def excluir_usuario():
+    """Dono exclui um login: não entra mais; apaga senha, sessão, bloqueio e empresa."""
+    erro = _so_admin()
+    if erro:
+        return erro
+    alvo = str((request.get_json(silent=True) or {}).get("usuario") or "").strip().lower()
+    if alvo not in _usuarios():
+        return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    if alvo == DONO_SISTEMA or alvo == g.usuario:
+        return jsonify({"ok": False, "error": "Você não pode excluir o seu próprio login."}), 400
+
+    def apagar(con):
+        con.run("INSERT INTO usuarios_excluidos (usuario, excluido_por) VALUES (:usuario, :por)"
+                " ON CONFLICT (usuario) DO NOTHING", usuario=alvo, por=g.usuario)
+        for tabela in ("senhas_usuarios", "sessoes_ativas", "bloqueios_login", "empresa_usuarios"):
+            con.run(f"DELETE FROM {tabela} WHERE usuario = :usuario", usuario=alvo)
+    try:
+        _no_banco(apagar)
+    except Exception as e:
+        print(f"[EXCLUIR] falhou ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
+    _SESSOES.pop(alvo, None)
+    _BLOQUEIOS.pop(alvo, None)
+    _excluidos(atualizar=True)
+    _senhas_proprias(atualizar=True)
+    _dados_empresas(atualizar=True)
+    print(f"[EXCLUIR] {g.usuario} excluiu o login {alvo}", flush=True)
+    return jsonify({"ok": True})
+
+
+@app.post("/restaurar-usuario")
+def restaurar_usuario():
+    """Dono desfaz a exclusão: volta com a senha inicial e sem empresa."""
+    erro = _so_admin()
+    if erro:
+        return erro
+    alvo = str((request.get_json(silent=True) or {}).get("usuario") or "").strip().lower()
+    if alvo not in _usuarios_todos():
+        return jsonify({"ok": False, "error": "Esse login não existe mais na lista do servidor."}), 404
+    try:
+        _no_banco(lambda con: con.run("DELETE FROM usuarios_excluidos WHERE usuario = :usuario", usuario=alvo))
+    except Exception as e:
+        print(f"[EXCLUIR] restaurar falhou ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
+    _excluidos(atualizar=True)
+    print(f"[EXCLUIR] {g.usuario} restaurou o login {alvo}", flush=True)
+    return jsonify({"ok": True})
+
+
 # ---------- Bloqueio após 3 senhas erradas ----------
 # Vale para os analistas (o ADM fica de fora). Conta erros seguidos de
 # qualquer computador; acertar a senha zera. No 3º erro o usuário fica
@@ -905,6 +985,11 @@ def _no_banco(funcao):
                 con.run("INSERT INTO empresa_usuarios (usuario, empresa) VALUES (:usuario, :empresa)"
                         " ON CONFLICT (usuario) DO NOTHING", usuario=u, empresa=EMPRESA_INICIAL)
             con.run(
+                "CREATE TABLE IF NOT EXISTS usuarios_excluidos ("
+                " usuario TEXT PRIMARY KEY, excluido_por TEXT NOT NULL DEFAULT '',"
+                " excluido_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+            con.run(
                 "CREATE TABLE IF NOT EXISTS bloqueios_login ("
                 " usuario TEXT PRIMARY KEY, erros INTEGER NOT NULL DEFAULT 0,"
                 " atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
@@ -965,6 +1050,9 @@ def uso():
         empresas = {minha: empresas.get(minha, False)} if minha else {}
     lista_empresas = [{"nome": n, "pergunta_leme": l} for n, l in sorted(empresas.items())]
     empresa_de = {u: empresa_de.get(u, "") for u in nomes}
+    todos = _usuarios_todos()
+    excluidos = [{"usuario": u, "nome": str(todos[u].get("nome") or u)}
+                 for u in sorted(_excluidos(atualizar=True)) if u in todos] if dono else []
 
     # Banco: este mês e o anterior.
     hoje = datetime.now(FUSO_BR).date()
@@ -982,7 +1070,8 @@ def uso():
             ]
             return jsonify({"ok": True, "persistente": True, "desde": "", "linhas": linhas,
                             "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
-                            "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono})
+                            "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
+                            "excluidos": excluidos})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
@@ -992,7 +1081,8 @@ def uso():
     ]
     return jsonify({"ok": True, "persistente": False, "desde": _USO_DESDE, "linhas": linhas,
                     "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
-                            "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono})
+                            "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
+                            "excluidos": excluidos})
 
 
 # ============================================================

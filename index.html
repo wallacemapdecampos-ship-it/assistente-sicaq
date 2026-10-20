@@ -286,6 +286,24 @@
     .barra-empresa .nova-empresa { display: inline-flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
     .barra-empresa .nova-empresa input { height: 32px; width: 220px; max-width: 100%; }
     .barra-empresa .nova-empresa button { height: 32px; }
+    .grupo-empresa { border: 1px solid var(--linha); border-radius: var(--raio); background: var(--folha); }
+    .grupo-empresa + .grupo-empresa { margin-top: 8px; }
+    .grupo-empresa .cab-empresa {
+      display: flex; align-items: center; gap: 10px; width: 100%; height: auto; padding: 11px 14px;
+      background: transparent; border: 0; color: var(--tinta); font-size: 14px; font-weight: 700; text-align: left; cursor: pointer;
+    }
+    .grupo-empresa .cab-empresa:hover:not(:disabled) { background: var(--azul-claro); }
+    .grupo-empresa .cab-empresa:disabled { cursor: default; opacity: 1; }
+    .grupo-empresa .seta { display: inline-block; width: 12px; color: var(--azul); transition: transform .15s; }
+    .grupo-empresa.aberto .seta { transform: rotate(90deg); }
+    .grupo-empresa .qtd-empresa { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--tinta-2); }
+    .grupo-empresa .selo-leme, .grupo-empresa .selo-bloq { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+    .grupo-empresa .selo-leme { background: var(--azul-claro); color: var(--azul); }
+    .grupo-empresa .selo-bloq { background: #fde7e5; color: var(--erro); }
+    .grupo-empresa .corpo-empresa { padding: 0 12px 8px; border-top: 1px solid var(--linha); }
+    .grupo-empresa .corpo-empresa > .dica { margin: 10px 2px 4px; }
+    .grupo-empresa.sem-empresa .nome-empresa, .grupo-empresa.excluidos .nome-empresa { color: var(--tinta-2); }
+    .tabela-uso button.excluir { color: var(--erro); border-color: #e7b9b5; }
     .tabela-senhas .sel-empresa-analista { height: 28px; font-size: 12.5px; max-width: 190px; }
     .tabela-senhas .definir-senha { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; padding: 4px 0; }
     .tabela-senhas .definir-senha input { height: 28px; width: 170px; max-width: 100%; font-size: 13px; }
@@ -2198,7 +2216,7 @@
       const lista = (data.empresas || []).map(e => e.nome);
       if (EMPRESA_USO === null || (EMPRESA_USO !== "*" && EMPRESA_USO !== "" && !lista.includes(EMPRESA_USO))) {
         const minha = (SESSAO && SESSAO.empresa) || "";
-        EMPRESA_USO = lista.includes(minha) ? minha : (lista[0] || "*");
+        EMPRESA_USO = data.dono ? "*" : (lista.includes(minha) ? minha : (lista[0] || "*"));
       }
       desenharUso();
     } catch (e) {
@@ -2251,7 +2269,7 @@
     document.getElementById("conteudoUso").innerHTML =
       tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes) +
       (data.persistente ? tabelaUso("Mês passado", doAnterior) : "") +
-      tabelaSenhas(filtrar(data.senhas), data.bloqueados, empresaDe, dono ? empresas : null);
+      tabelaSenhas({ ...data, senhas: filtrar(data.senhas) }, sel, dono);
     document.getElementById("notaUso").textContent = data.persistente
       ? "Números guardados no banco de dados (só as contagens, nenhum dado de cliente)."
       : `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
@@ -2310,51 +2328,116 @@
     }
   }
 
-  function tabelaSenhas(senhas, bloqueados, empresaDe, empresasDono) {
+  // Senhas agrupadas por empresa: clica no nome da empresa e abrem os
+  // analistas dela. Guarda quais empresas estão abertas entre atualizações.
+  const EMPRESAS_ABERTAS = new Set();
+
+  function linhaAnalista(u, senhas, travados, empresaDe, empresasDono) {
+    const nome = escHtml(NOMES_USO[u] || u);
+    const uSeguro = String(u).replace(/[^a-z0-9._-]/gi, "");
+    const travado = travados.has(u);
+    const status = travado
+      ? '<span class="bloq">Bloqueado (3 senhas erradas)</span>'
+      : (senhas[u] ? '<span class="sim">Criou a senha</span>' : '<span class="nao">Ainda com a senha inicial</span>');
+    const souEu = SESSAO && SESSAO.usuario === u;
+    const botoes = [
+      travado ? `<button type="button" class="secondary resetar desbloquear" data-usuario="${uSeguro}" data-nome="${nome}">Desbloquear</button>` : "",
+      `<button type="button" class="secondary resetar definir" data-usuario="${uSeguro}" data-nome="${nome}">Definir senha</button>`,
+      // ADM reseta qualquer analista, quantas vezes quiser.
+      `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>`,
+      (empresasDono && !souEu) ? `<button type="button" class="secondary resetar excluir" data-usuario="${uSeguro}" data-nome="${nome}">Excluir</button>` : ""
+    ].filter(Boolean).join(" ");
+    const painel =
+      `<tr class="linha-definir" data-usuario="${uSeguro}" hidden><td colspan="5"><div class="definir-senha">` +
+      `<span>Nova senha de <b>${nome}</b>:</span>` +
+      `<input type="password" class="defNova" placeholder="Senha nova (mín. 6)" autocomplete="new-password">` +
+      `<input type="password" class="defNova2" placeholder="Repita a senha" autocomplete="new-password">` +
+      `<button type="button" class="resetar salvar-definir" data-usuario="${uSeguro}" data-nome="${nome}">Salvar</button>` +
+      `<button type="button" class="secondary resetar cancelar-definir">Cancelar</button>` +
+      `</div></td></tr>`;
+    const emp = empresaDe[u] || "";
+    const celEmpresa = empresasDono
+      ? `<select class="sel-empresa-analista" data-usuario="${uSeguro}" data-nome="${nome}" title="Mover para outra empresa">` +
+        `<option value=""${emp ? "" : " selected"}>Sem empresa</option>` +
+        empresasDono.map(e => `<option value="${escHtml(e.nome)}"${e.nome === emp ? " selected" : ""}>${escHtml(e.nome)}</option>`).join("") +
+        `</select>`
+      : escHtml(emp || "—");
+    return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${celEmpresa}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
+  }
+
+  function tabelaSenhas(data, sel, dono) {
+    const senhas = data.senhas;
     if (!senhas) return "";
-    const travados = new Set(bloqueados || []);
-    empresaDe = empresaDe || {};
-    const lista = Object.keys(senhas).sort((a, b) =>
-      String(NOMES_USO[a] || a).localeCompare(String(NOMES_USO[b] || b), "pt-BR"));
-    if (!lista.length) return `<div class="uso-bloco"><h3>Senhas</h3><p class="dica">Nenhum analista nesta empresa.</p></div>`;
-    const linhas = lista.map(u => {
-      const nome = String(NOMES_USO[u] || u).replace(/[<>&"]/g, "");
-      const uSeguro = String(u).replace(/[^a-z0-9._-]/gi, "");
-      const travado = travados.has(u);
-      const status = travado
-        ? '<span class="bloq">Bloqueado (3 senhas erradas)</span>'
-        : (senhas[u]
-          ? '<span class="sim">Criou a senha</span>'
-          : '<span class="nao">Ainda com a senha inicial</span>');
-      const botoes = [
-        travado ? `<button type="button" class="secondary resetar desbloquear" data-usuario="${uSeguro}" data-nome="${nome}">Desbloquear</button>` : "",
-        `<button type="button" class="secondary resetar definir" data-usuario="${uSeguro}" data-nome="${nome}">Definir senha</button>`,
-        // ADM reseta qualquer analista, quantas vezes quiser.
-        `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>`
-      ].filter(Boolean).join(" ");
-      const painel =
-        `<tr class="linha-definir" data-usuario="${uSeguro}" hidden><td colspan="5"><div class="definir-senha">` +
-        `<span>Nova senha de <b>${nome}</b>:</span>` +
-        `<input type="password" class="defNova" placeholder="Senha nova (mín. 6)" autocomplete="new-password">` +
-        `<input type="password" class="defNova2" placeholder="Repita a senha" autocomplete="new-password">` +
-        `<button type="button" class="resetar salvar-definir" data-usuario="${uSeguro}" data-nome="${nome}">Salvar</button>` +
-        `<button type="button" class="secondary resetar cancelar-definir">Cancelar</button>` +
-        `</div></td></tr>`;
-      const emp = empresaDe[u] || "";
-      const celEmpresa = empresasDono
-        ? `<select class="sel-empresa-analista" data-usuario="${uSeguro}" data-nome="${nome}">` +
-          `<option value=""${emp ? "" : " selected"}>Sem empresa</option>` +
-          empresasDono.map(e => `<option value="${escHtml(e.nome)}"${e.nome === emp ? " selected" : ""}>${escHtml(e.nome)}</option>`).join("") +
-          `</select>`
-        : escHtml(emp || "—");
-      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${celEmpresa}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
+    const travados = new Set(data.bloqueados || []);
+    const empresaDe = data.empresa_de || {};
+    const empresas = data.empresas || [];
+    const empresasDono = dono ? empresas : null;
+    const porNome = (a, b) => String(NOMES_USO[a] || a).localeCompare(String(NOMES_USO[b] || b), "pt-BR");
+    const usuarios = Object.keys(senhas);
+
+    // Grupos: todas as empresas (dono em "Todas"), ou só a escolhida.
+    let grupos = dono && sel === "*" ? empresas.map(e => e.nome) : [sel];
+    if (dono && sel === "*" && usuarios.some(u => !empresaDe[u])) grupos.push("");
+    const unico = grupos.length === 1;
+
+    const blocos = grupos.map(emp => {
+      const lista = usuarios.filter(u => (empresaDe[u] || "") === emp).sort(porNome);
+      const info = empresas.find(e => e.nome === emp);
+      const aberto = unico || EMPRESAS_ABERTAS.has(emp);
+      const qtd = lista.length === 1 ? "1 usuário" : `${lista.length} usuários`;
+      const travadosAqui = lista.filter(u => travados.has(u)).length;
+      const corpo = lista.length
+        ? `<table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Empresa</th><th>Situação</th><th></th></tr></thead>` +
+          `<tbody>${lista.map(u => linhaAnalista(u, senhas, travados, empresaDe, empresasDono)).join("")}</tbody></table>`
+        : `<p class="dica">Nenhum usuário nesta empresa${dono ? ". Para colocar alguém, abra a empresa onde ele está e troque na coluna Empresa." : "."}</p>`;
+      return `<div class="grupo-empresa${aberto ? " aberto" : ""}${emp ? "" : " sem-empresa"}">` +
+        `<button type="button" class="cab-empresa" data-empresa="${escHtml(emp)}" aria-expanded="${aberto}"${unico ? " disabled" : ""}>` +
+        `<span class="seta" aria-hidden="true">${unico ? "" : "▸"}</span>` +
+        `<span class="nome-empresa">${escHtml(emp || "Sem empresa (não conseguem entrar)")}</span>` +
+        (info && info.pergunta_leme ? `<span class="selo-leme">Pergunta Leme</span>` : "") +
+        (travadosAqui ? `<span class="selo-bloq">${travadosAqui} bloqueado${travadosAqui > 1 ? "s" : ""}</span>` : "") +
+        `<span class="qtd-empresa">${qtd}</span></button>` +
+        `<div class="corpo-empresa"${aberto ? "" : " hidden"}>${corpo}</div></div>`;
     }).join("");
-    return `<div class="uso-bloco"><h3>Senhas</h3><table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Empresa</th><th>Situação</th><th></th></tr></thead>` +
-           `<tbody>${linhas}</tbody></table>` +
-           `<p class="dica">O analista só cria a senha no 1º acesso. Definir senha: você escolhe a senha nova e ela já vale no próximo login. ` +
-           `Resetar: a pessoa volta para a senha inicial e cria outra. Os dois podem ser usados quantas vezes quiser. ` +
-           `Empresa com "Perguntar é Leme?" ligado: na aba Renda os analistas dela escolhem se o adiantamento é somado. ` +
-           `Errou a senha 3 vezes: fica bloqueado. Desbloquear libera com a mesma senha; Resetar libera e pede senha nova.</p></div>`;
+
+    // Logins excluídos (só o dono, em "Todas"): dá para restaurar.
+    const exc = dono && sel === "*" ? (data.excluidos || []) : [];
+    const blocoExc = exc.length
+      ? `<div class="grupo-empresa excluidos${EMPRESAS_ABERTAS.has("#exc") ? " aberto" : ""}">` +
+        `<button type="button" class="cab-empresa" data-empresa="#exc" aria-expanded="${EMPRESAS_ABERTAS.has("#exc")}">` +
+        `<span class="seta" aria-hidden="true">▸</span><span class="nome-empresa">Logins excluídos</span>` +
+        `<span class="qtd-empresa">${exc.length}</span></button>` +
+        `<div class="corpo-empresa"${EMPRESAS_ABERTAS.has("#exc") ? "" : " hidden"}><table class="tabela-uso tabela-senhas"><tbody>` +
+        exc.map(x => `<tr><td>${escHtml(x.nome)}</td><td>${escHtml(x.usuario)}</td><td colspan="2"><span class="bloq">Excluído</span></td>` +
+          `<td><button type="button" class="secondary resetar restaurar" data-usuario="${escHtml(x.usuario)}" data-nome="${escHtml(x.nome)}">Restaurar</button></td></tr>`).join("") +
+        `</tbody></table></div></div>`
+      : "";
+
+    return `<div class="uso-bloco"><h3>Usuários e senhas${dono && sel === "*" ? " por empresa" : ""}</h3>` + blocos + blocoExc +
+           `<p class="dica">${dono && sel === "*" ? "Clique no nome da empresa para ver os usuários dela. " : ""}` +
+           `O analista só cria a senha no 1º acesso. Definir senha: você escolhe a senha nova e ela já vale no próximo login. ` +
+           `Resetar: a pessoa volta para a senha inicial e cria outra. ` +
+           (dono ? `Excluir: o login não entra mais (dá para Restaurar em "Logins excluídos"). Quem fica sem empresa não consegue entrar. ` : "") +
+           `Errou a senha 3 vezes: fica bloqueado. Desbloquear libera com a mesma senha.</p></div>`;
+  }
+
+  async function excluirUsuario(usuario, nome) {
+    if (!confirm(`Excluir o login de ${nome} (${usuario})?\n\nEle não vai mais conseguir entrar. A senha e a empresa dele são apagadas. Dá para Restaurar depois em "Logins excluídos".`)) return;
+    try {
+      await postarAdmin("/excluir-usuario", { usuario });
+      EMPRESAS_ABERTAS.add("#exc");
+      await carregarUso();
+      document.getElementById("notaUso").textContent = `Login de ${nome} excluído.`;
+    } catch (e) { document.getElementById("notaUso").textContent = "Erro: " + (e.message || e); }
+  }
+
+  async function restaurarUsuario(usuario, nome) {
+    try {
+      await postarAdmin("/restaurar-usuario", { usuario });
+      EMPRESAS_ABERTAS.add("");
+      await carregarUso();
+      document.getElementById("notaUso").textContent = `Login de ${nome} restaurado. Ele entra com a senha inicial — coloque-o numa empresa para liberar o acesso.`;
+    } catch (e) { document.getElementById("notaUso").textContent = "Erro: " + (e.message || e); }
   }
 
   function abrirDefinirSenha(usuario) {
@@ -2879,9 +2962,22 @@
     if (e.target.id === "novaEmpresa" && e.key === "Enter") { e.preventDefault(); criarEmpresa(); }
   });
   document.getElementById("conteudoUso").addEventListener("click", (e) => {
+    const cab = e.target.closest("button.cab-empresa");
+    if (cab) {
+      const emp = cab.dataset.empresa;
+      if (EMPRESAS_ABERTAS.has(emp)) EMPRESAS_ABERTAS.delete(emp); else EMPRESAS_ABERTAS.add(emp);
+      const grupo = cab.closest(".grupo-empresa");
+      const aberto = EMPRESAS_ABERTAS.has(emp);
+      grupo.classList.toggle("aberto", aberto);
+      grupo.querySelector(".corpo-empresa").hidden = !aberto;
+      cab.setAttribute("aria-expanded", aberto);
+      return;
+    }
     const b = e.target.closest("button.resetar");
     if (!b) return;
-    if (b.classList.contains("definir")) abrirDefinirSenha(b.dataset.usuario);
+    if (b.classList.contains("excluir")) excluirUsuario(b.dataset.usuario, b.dataset.nome);
+    else if (b.classList.contains("restaurar")) restaurarUsuario(b.dataset.usuario, b.dataset.nome);
+    else if (b.classList.contains("definir")) abrirDefinirSenha(b.dataset.usuario);
     else if (b.classList.contains("salvar-definir")) salvarDefinirSenha(b);
     else if (b.classList.contains("cancelar-definir")) b.closest("tr.linha-definir").hidden = true;
     else if (b.classList.contains("desbloquear")) desbloquearUsuario(b.dataset.usuario, b.dataset.nome);
