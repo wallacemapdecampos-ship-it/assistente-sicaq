@@ -2354,7 +2354,7 @@
       await postarAdmin("/cadastrar-usuario", corpo);
       ["cadNome", "cadUsuario", "cadSenha"].forEach(id => { document.getElementById(id).value = ""; });
       document.getElementById("cadAdmin").checked = false;
-      EMPRESAS_ABERTAS.add(corpo.empresa);
+      abrirGrupo(corpo.empresa);
       await carregarUso();
       document.getElementById("notaUso").textContent =
         `${corpo.nome} cadastrado na ${corpo.empresa}${corpo.admin ? " como ADM" : ""}. Login: ${corpo.usuario}. Ele entra com a senha inicial e cria a dele no 1º acesso.`;
@@ -2395,7 +2395,10 @@
 
   // Senhas agrupadas por empresa: clica no nome da empresa e abrem os
   // analistas dela. Guarda quais empresas estão abertas entre atualizações.
-  const EMPRESAS_ABERTAS = new Set();
+  const EMPRESAS_ABERTAS = new Set();   // abertas pelo clique
+  const EMPRESAS_FECHADAS = new Set();  // fechadas pelo clique
+
+  function abrirGrupo(emp) { EMPRESAS_ABERTAS.add(emp); EMPRESAS_FECHADAS.delete(emp); }
 
   function linhaAnalista(u, senhas, travados, empresaDe, empresasDono) {
     const nome = escHtml(NOMES_USO[u] || u);
@@ -2443,12 +2446,16 @@
     // Grupos: todas as empresas (dono em "Todas"), ou só a escolhida.
     let grupos = dono && sel === "*" ? empresas.map(e => e.nome) : [sel];
     if (dono && sel === "*" && usuarios.some(u => !empresaDe[u])) grupos.push("");
-    const unico = grupos.length === 1;
+    // Sem clique ainda: dono vê tudo fechado (em "Todas"); escolheu uma
+    // empresa no seletor ou é ADM de empresa: começa aberta. Sempre dá para
+    // abrir e fechar clicando no nome.
+    const abertaPorPadrao = !dono || sel !== "*";
+    const estaAberta = (emp) => EMPRESAS_ABERTAS.has(emp) || (abertaPorPadrao && !EMPRESAS_FECHADAS.has(emp));
 
     const blocos = grupos.map(emp => {
       const lista = usuarios.filter(u => (empresaDe[u] || "") === emp).sort(porNome);
       const info = empresas.find(e => e.nome === emp);
-      const aberto = unico || EMPRESAS_ABERTAS.has(emp);
+      const aberto = estaAberta(emp);
       const qtd = lista.length === 1 ? "1 usuário" : `${lista.length} usuários`;
       const travadosAqui = lista.filter(u => travados.has(u)).length;
       const corpo = lista.length
@@ -2456,8 +2463,8 @@
           `<tbody>${lista.map(u => linhaAnalista(u, senhas, travados, empresaDe, empresasDono)).join("")}</tbody></table>`
         : `<p class="dica">Nenhum usuário nesta empresa${dono ? ". Para colocar alguém, abra a empresa onde ele está e troque na coluna Empresa." : "."}</p>`;
       return `<div class="grupo-empresa${aberto ? " aberto" : ""}${emp ? "" : " sem-empresa"}">` +
-        `<button type="button" class="cab-empresa" data-empresa="${escHtml(emp)}" aria-expanded="${aberto}"${unico ? " disabled" : ""}>` +
-        `<span class="seta" aria-hidden="true">${unico ? "" : "▸"}</span>` +
+        `<button type="button" class="cab-empresa" data-empresa="${escHtml(emp)}" aria-expanded="${aberto}" title="Clique para ${aberto ? "esconder" : "ver"} os usuários">` +
+        `<span class="seta" aria-hidden="true">▸</span>` +
         `<span class="nome-empresa">${escHtml(emp || "Sem empresa (não conseguem entrar)")}</span>` +
         (info && info.pergunta_leme ? `<span class="selo-leme">Pergunta Leme</span>` : "") +
         (travadosAqui ? `<span class="selo-bloq">${travadosAqui} bloqueado${travadosAqui > 1 ? "s" : ""}</span>` : "") +
@@ -2490,7 +2497,7 @@
     if (!confirm(`Excluir o login de ${nome} (${usuario})?\n\nEle não vai mais conseguir entrar. A senha e a empresa dele são apagadas. Dá para Restaurar depois em "Logins excluídos".`)) return;
     try {
       await postarAdmin("/excluir-usuario", { usuario });
-      EMPRESAS_ABERTAS.add("#exc");
+      abrirGrupo("#exc");
       await carregarUso();
       document.getElementById("notaUso").textContent = `Login de ${nome} excluído.`;
     } catch (e) { document.getElementById("notaUso").textContent = "Erro: " + (e.message || e); }
@@ -2499,7 +2506,7 @@
   async function restaurarUsuario(usuario, nome) {
     try {
       await postarAdmin("/restaurar-usuario", { usuario });
-      EMPRESAS_ABERTAS.add("");
+      abrirGrupo("");
       await carregarUso();
       document.getElementById("notaUso").textContent = `Login de ${nome} restaurado. Ele entra com a senha inicial — coloque-o numa empresa para liberar o acesso.`;
     } catch (e) { document.getElementById("notaUso").textContent = "Erro: " + (e.message || e); }
@@ -3033,9 +3040,11 @@
     const cab = e.target.closest("button.cab-empresa");
     if (cab) {
       const emp = cab.dataset.empresa;
-      if (EMPRESAS_ABERTAS.has(emp)) EMPRESAS_ABERTAS.delete(emp); else EMPRESAS_ABERTAS.add(emp);
       const grupo = cab.closest(".grupo-empresa");
-      const aberto = EMPRESAS_ABERTAS.has(emp);
+      const aberto = !grupo.classList.contains("aberto");
+      if (aberto) { EMPRESAS_ABERTAS.add(emp); EMPRESAS_FECHADAS.delete(emp); }
+      else { EMPRESAS_FECHADAS.add(emp); EMPRESAS_ABERTAS.delete(emp); }
+      cab.title = `Clique para ${aberto ? "esconder" : "ver"} os usuários`;
       grupo.classList.toggle("aberto", aberto);
       grupo.querySelector(".corpo-empresa").hidden = !aberto;
       cab.setAttribute("aria-expanded", aberto);
