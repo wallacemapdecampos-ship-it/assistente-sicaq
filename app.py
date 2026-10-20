@@ -433,6 +433,7 @@ def _resposta_login(usuario, conta, trocar):
         "usuario": usuario,
         "nome": str(conta.get("nome") or usuario),
         "admin": bool(conta.get("admin")),
+        "map": _eh_map(usuario),
         "expira": _fim_do_dia(),
         "trocar_senha": bool(trocar),
     }
@@ -537,7 +538,8 @@ def trocar_senha():
 @app.get("/sessao")
 def sessao():
     """O site pergunta a cada 2 min se a sessão ainda vale (o guard responde)."""
-    return jsonify({"ok": True, "usuario": getattr(g, "usuario", "")})
+    usuario = getattr(g, "usuario", "")
+    return jsonify({"ok": True, "usuario": usuario, "map": _eh_map(usuario) if usuario else False})
 
 
 @app.post("/resetar-senha")
@@ -603,6 +605,60 @@ def desbloquear():
         return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
     print(f"[LOGIN] {g.usuario} desbloqueou {alvo}", flush=True)
     return jsonify({"ok": True})
+
+
+@app.post("/marcar-map")
+def marcar_map():
+    """ADM marca/desmarca o analista como da MAP (vê a pergunta de Leme na Renda)."""
+    conta = _usuarios().get(getattr(g, "usuario", ""), {})
+    if not conta.get("admin"):
+        return jsonify({"ok": False, "error": "Só o administrador pode mudar isso."}), 403
+    dados = request.get_json(silent=True) or {}
+    alvo = str(dados.get("usuario") or "").strip().lower()
+    if alvo not in _usuarios():
+        return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    valor = _sim(dados.get("map"))
+    if not os.getenv("DATABASE_URL", "").strip():
+        return jsonify({"ok": False, "error": "Sem banco configurado no servidor."}), 503
+    try:
+        _no_banco(lambda con: con.run(
+            "INSERT INTO usuarios_map (usuario, map) VALUES (:usuario, :map)"
+            " ON CONFLICT (usuario) DO UPDATE SET map = EXCLUDED.map, atualizado_em = CURRENT_TIMESTAMP",
+            usuario=alvo, map=valor))
+    except Exception as e:
+        print(f"[MAP] não gravou ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
+    _MAP["quando"] = 0.0
+    print(f"[MAP] {g.usuario} marcou {alvo} como MAP={valor}", flush=True)
+    return jsonify({"ok": True})
+
+
+# ---------- Analistas da MAP ----------
+# Quem é da MAP vê na aba Renda a pergunta "é Leme?" (em Leme o adiantamento
+# não é somado à líquida). O ADM marca/desmarca na aba Uso.
+MAP_INICIAIS = ("wallace", "geyce", "mirian")
+_MAP = {"dados": None, "quando": 0.0}
+
+
+def _usuarios_map():
+    """{usuario: True/False} marcados no banco (sem banco: os iniciais)."""
+    if not os.getenv("DATABASE_URL", "").strip():
+        return {u: True for u in MAP_INICIAIS}
+    agora = time.time()
+    if _MAP["dados"] is None or agora - _MAP["quando"] > 60:
+        try:
+            linhas = _no_banco(lambda con: con.run("SELECT usuario, map FROM usuarios_map")) or []
+            _MAP["dados"] = {str(u): bool(m) for u, m in linhas}
+            _MAP["quando"] = agora
+        except Exception as e:
+            print(f"[MAP] banco indisponível ({type(e).__name__})", flush=True)
+    if _MAP["dados"] is None:
+        return {u: True for u in MAP_INICIAIS}
+    return _MAP["dados"]
+
+
+def _eh_map(usuario):
+    return bool(_usuarios_map().get(str(usuario or "").lower()))
 
 
 # ---------- Bloqueio após 3 senhas erradas ----------
@@ -728,6 +784,16 @@ def _no_banco(funcao):
                 " trocada_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
             con.run(
+                "CREATE TABLE IF NOT EXISTS usuarios_map ("
+                " usuario TEXT PRIMARY KEY, map BOOLEAN NOT NULL DEFAULT TRUE,"
+                " atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+            # Primeiros analistas da MAP. Só entram se ainda não estiverem na
+            # tabela: se o ADM desmarcar, continua desmarcado.
+            for u in MAP_INICIAIS:
+                con.run("INSERT INTO usuarios_map (usuario, map) VALUES (:usuario, TRUE)"
+                        " ON CONFLICT (usuario) DO NOTHING", usuario=u)
+            con.run(
                 "CREATE TABLE IF NOT EXISTS bloqueios_login ("
                 " usuario TEXT PRIMARY KEY, erros INTEGER NOT NULL DEFAULT 0,"
                 " atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
@@ -777,6 +843,8 @@ def uso():
     proprias = _senhas_proprias(atualizar=True)
     senhas = None if proprias is None else {u: u in proprias for u in nomes}
     bloqueados = [u for u in _bloqueados() if u in nomes]
+    _MAP["quando"] = 0.0
+    marcados_map = {u: _eh_map(u) for u in nomes}
 
     # Banco: este mês e o anterior.
     hoje = datetime.now(FUSO_BR).date()
@@ -793,7 +861,7 @@ def uso():
                 for r in rows
             ]
             return jsonify({"ok": True, "persistente": True, "desde": "", "linhas": linhas,
-                            "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados})
+                            "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados, "map": marcados_map})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
@@ -802,7 +870,7 @@ def uso():
         for (dia, usuario, tipo), n in sorted(_USO.items())
     ]
     return jsonify({"ok": True, "persistente": False, "desde": _USO_DESDE, "linhas": linhas,
-                    "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados})
+                    "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados, "map": marcados_map})
 
 
 # ============================================================

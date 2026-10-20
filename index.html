@@ -233,7 +233,8 @@
     .pergunta-leme.respondida { background: var(--campo); border-color: var(--linha); font-size: 12.5px; color: var(--tinta-2); }
     .pergunta-leme .botoes-leme { display: flex; gap: 8px; }
     .pergunta-leme.respondida button { height: 26px; padding: 0 10px; font-size: 12px; }
-    .pergunta-leme button.escolhido { background: var(--azul); color: #fff; border-color: var(--azul); }
+    .pergunta-leme button.secondary.escolhido,
+    .pergunta-leme button.secondary.escolhido:hover:not(:disabled) { background: var(--azul); color: #fff; border-color: var(--azul); opacity: 1; }
     #msgRenda { font-size: 12.5px; max-width: 70ch; }
     #msgRenda.dica, #msgRenda.muted { color: var(--tinta-2); }
     #msgRenda.ok, #msgRenda.warn, #msgRenda.erro { font-weight: 700; }
@@ -276,6 +277,7 @@
     .tabela-uso .sim { color: var(--ok, #18794e); font-weight: 700; }
     .tabela-uso .nao { color: #8a6100; font-weight: 700; }
     .tabela-uso .bloq { color: var(--erro, #b3261e); font-weight: 700; }
+    .tabela-senhas .marca-map { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; cursor: pointer; }
     .tabela-senhas .definir-senha { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; padding: 4px 0; }
     .tabela-senhas .definir-senha input { height: 28px; width: 170px; max-width: 100%; font-size: 13px; }
     .conta { display: inline-flex; align-items: center; gap: 10px; color: #e3e9f0; font-weight: 700; white-space: nowrap; }
@@ -943,7 +945,7 @@
       let data = {};
       try { data = await resp.json(); } catch (_) {}
       if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível entrar.");
-      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin,
+      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin, map: !!data.map,
                  expira: data.expira, trocar: !!data.trocar_senha };
       salvarSessao(SESSAO);
       senhaDoLogin = SESSAO.trocar ? senha : "";
@@ -980,6 +982,14 @@
         const motivo = await motivoSaida(resp, "Sua sessão terminou. Entre de novo.");
         apagarSessao();
         mostrarLogin(motivo, "erro");
+      } else if (resp.ok) {
+        // O ADM pode marcar/desmarcar MAP: vale sem precisar sair e entrar.
+        const data = await resp.json().catch(() => null);
+        if (data && data.ok && SESSAO && !!data.map !== !!SESSAO.map) {
+          SESSAO.map = !!data.map;
+          salvarSessao(SESSAO);
+          recalcularLiquida();
+        }
       }
     } catch (_) {
       // Sem conexão ou servidor acordando: tenta de novo na próxima.
@@ -1048,7 +1058,7 @@
       try { data = await resp.json(); } catch (_) {}
       if (resp.status === 401) { apagarSessao(); mostrarLogin("Sua sessão terminou. Entre de novo."); return; }
       if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível salvar a senha.");
-      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin,
+      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin, map: !!data.map,
                  expira: data.expira, trocar: false };
       salvarSessao(SESSAO);
       senhaDoLogin = "";
@@ -2181,7 +2191,7 @@
         if (String(l.dia).startsWith(mesAnterior)) { doAnterior[l.usuario] = doAnterior[l.usuario] || {}; doAnterior[l.usuario][l.tipo] = (doAnterior[l.usuario][l.tipo] || 0) + l.quantidade; }
       });
       caixa.innerHTML = tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes) +
-        (data.persistente ? tabelaUso("Mês passado", doAnterior) : "") + tabelaSenhas(data.senhas, data.bloqueados);
+        (data.persistente ? tabelaUso("Mês passado", doAnterior) : "") + tabelaSenhas(data.senhas, data.bloqueados, data.map);
       document.getElementById("notaUso").textContent = data.persistente
         ? "Números guardados no banco de dados (só as contagens, nenhum dado de cliente)."
         : `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
@@ -2191,9 +2201,10 @@
     }
   }
 
-  function tabelaSenhas(senhas, bloqueados) {
+  function tabelaSenhas(senhas, bloqueados, marcadosMap) {
     if (!senhas) return "";
     const travados = new Set(bloqueados || []);
+    const map = marcadosMap || {};
     const lista = Object.keys(senhas).sort((a, b) =>
       String(NOMES_USO[a] || a).localeCompare(String(NOMES_USO[b] || b), "pt-BR"));
     if (!lista.length) return "";
@@ -2213,19 +2224,21 @@
         `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>`
       ].filter(Boolean).join(" ");
       const painel =
-        `<tr class="linha-definir" data-usuario="${uSeguro}" hidden><td colspan="4"><div class="definir-senha">` +
+        `<tr class="linha-definir" data-usuario="${uSeguro}" hidden><td colspan="5"><div class="definir-senha">` +
         `<span>Nova senha de <b>${nome}</b>:</span>` +
         `<input type="password" class="defNova" placeholder="Senha nova (mín. 6)" autocomplete="new-password">` +
         `<input type="password" class="defNova2" placeholder="Repita a senha" autocomplete="new-password">` +
         `<button type="button" class="resetar salvar-definir" data-usuario="${uSeguro}" data-nome="${nome}">Salvar</button>` +
         `<button type="button" class="secondary resetar cancelar-definir">Cancelar</button>` +
         `</div></td></tr>`;
-      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
+      const caixaMap = `<label class="marca-map"><input type="checkbox" class="chk-map" data-usuario="${uSeguro}" data-nome="${nome}"${map[u] ? " checked" : ""}> MAP</label>`;
+      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${caixaMap}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
     }).join("");
-    return `<div class="uso-bloco"><h3>Senhas</h3><table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Situação</th><th></th></tr></thead>` +
+    return `<div class="uso-bloco"><h3>Senhas</h3><table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Empresa</th><th>Situação</th><th></th></tr></thead>` +
            `<tbody>${linhas}</tbody></table>` +
            `<p class="dica">O analista só cria a senha no 1º acesso. Definir senha: você escolhe a senha nova e ela já vale no próximo login. ` +
            `Resetar: a pessoa volta para a senha inicial e cria outra. Os dois podem ser usados quantas vezes quiser. ` +
+           `MAP marcado: na aba Renda aparece a pergunta "é Leme?" (em Leme o adiantamento não é somado). ` +
            `Errou a senha 3 vezes: fica bloqueado. Desbloquear libera com a mesma senha; Resetar libera e pede senha nova.</p></div>`;
   }
 
@@ -2261,6 +2274,29 @@
     } catch (e) {
       nota.textContent = "Erro: " + (e.message || e);
       botao.disabled = false;
+    }
+  }
+
+  async function marcarMap(caixa) {
+    const usuario = caixa.dataset.usuario, nome = caixa.dataset.nome, valor = caixa.checked;
+    const nota = document.getElementById("notaUso");
+    caixa.disabled = true;
+    try {
+      const resp = await fetchComLimite(API + "/marcar-map", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...cabecalhoLogin() },
+        body: JSON.stringify({ usuario, map: valor })
+      }, 30000);
+      let data = {};
+      try { data = await resp.json(); } catch (_) {}
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível salvar.");
+      nota.textContent = valor ? `${nome} marcado como MAP (vê a pergunta de Leme).` : `${nome} não é mais MAP.`;
+      if (SESSAO && SESSAO.usuario === usuario) { SESSAO.map = valor; salvarSessao(SESSAO); recalcularLiquida(); }
+    } catch (e) {
+      caixa.checked = !valor;
+      nota.textContent = "Erro: " + (e.message || e);
+    } finally {
+      caixa.disabled = false;
     }
   }
 
@@ -2452,11 +2488,11 @@
   // ---------- Leme: lá o adiantamento NÃO é somado à líquida ----------
   // Quando há adiantamento, o site pergunta se o cliente é de Leme.
   // null = ainda não respondeu; true = Leme (não soma); false = soma.
-  // Só o login "map" tem essa opção; os outros sempre somam, sem pergunta.
-  const USUARIOS_COM_LEME = ["map"];
+  // Só os analistas da MAP (marcados pelo ADM na aba Uso) têm essa opção;
+  // os outros sempre somam, sem pergunta.
   let respostaLeme = null;
   function temOpcaoLeme() {
-    return !!(SESSAO && USUARIOS_COM_LEME.includes(String(SESSAO.usuario || "").toLowerCase()));
+    return !!(SESSAO && SESSAO.map);
   }
   function adiantamentoAtual() {
     return lerValorBR(document.getElementById("hAdiantamento").value) || 0;
@@ -2737,6 +2773,9 @@
   document.getElementById("btnTrocarSenha").addEventListener("click", () => mostrarTrocaSenha(false));
   document.getElementById("formSenha").addEventListener("submit", salvarSenha);
   document.getElementById("btnCancelarSenha").addEventListener("click", cancelarSenha);
+  document.getElementById("conteudoUso").addEventListener("change", (e) => {
+    if (e.target.classList && e.target.classList.contains("chk-map")) marcarMap(e.target);
+  });
   document.getElementById("conteudoUso").addEventListener("click", (e) => {
     const b = e.target.closest("button.resetar");
     if (!b) return;
