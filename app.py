@@ -2666,7 +2666,8 @@ Regras:
   No INSS, o total de créditos (valor bruto).
 - total_descontos: linha TOTAL da coluna de descontos.
 - liquido_original: TOTAL LÍQUIDO / LÍQUIDO A RECEBER (no INSS, VALOR LÍQUIDO).
-  Não use salário base, base INSS ou base FGTS como total.
+  Não use salário base, base INSS, base FGTS ou "Salário Contribuição" como
+  total.
 - Valores monetários no formato brasileiro, ex.: "2304,21".
 - folha_estado_sp: true SOMENTE se o cabeçalho for "GOVERNO DO ESTADO DE SÃO
   PAULO" com "Departamento de Despesa de Pessoal do Estado" (Demonstrativo
@@ -3162,6 +3163,15 @@ def _normalizar_holerite(resultado):
             bruta = soma_prov
         if not total_desc:
             total_desc = soma_desc
+
+        # Bruto lido do número errado do rodapé (ex.: "Salário Contribuição"
+        # no lugar do "Total Vencimentos"): se as contas não fecham com o
+        # bruto lido, mas fecham com a soma dos proventos, usa a soma.
+        if bruta and total_desc and liquido_original and soma_prov and \
+                abs(round(bruta - total_desc, 2) - liquido_original) > 0.05 and \
+                abs(round(soma_prov - total_desc, 2) - liquido_original) <= 0.05:
+            print("[HOLERITE] bruto trocado pela soma dos proventos (contas fecham)", flush=True)
+            bruta = soma_prov
 
         # Linha de desconto lida com a % da coluna Referência no lugar do
         # valor (ex.: IR 27,50 no lugar de 1.928,51). Se os totais do
