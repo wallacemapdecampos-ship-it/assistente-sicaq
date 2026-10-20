@@ -1048,12 +1048,25 @@
         apagarSessao();
         mostrarLogin(motivo, "erro");
       } else if (resp.ok) {
-        // O ADM pode marcar/desmarcar MAP: vale sem precisar sair e entrar.
+        // Perfil atualizado pelo servidor (ADM, empresa, Leme): vale sem
+        // precisar sair e entrar.
         const data = await resp.json().catch(() => null);
-        if (data && data.ok && SESSAO && !!data.leme !== !!SESSAO.leme) {
-          SESSAO.leme = !!data.leme;
-          salvarSessao(SESSAO);
-          recalcularLiquida();
+        if (data && data.ok && SESSAO && data.usuario) {
+          const mudouLeme = !!data.leme !== !!SESSAO.leme;
+          const mudouPerfil = !!data.admin !== !!SESSAO.admin || !!data.dono !== !!SESSAO.dono ||
+                              (data.empresa || "") !== (SESSAO.empresa || "") || (data.nome && data.nome !== SESSAO.nome);
+          if (mudouLeme || mudouPerfil) {
+            Object.assign(SESSAO, { admin: !!data.admin, dono: !!data.dono, leme: !!data.leme,
+                                    empresa: data.empresa || "", nome: data.nome || SESSAO.nome });
+            salvarSessao(SESSAO);
+            if (mudouPerfil) {
+              aplicarSessao();
+              // Perdeu o ADM com a aba Uso aberta: volta para Identificação.
+              if (!SESSAO.admin && document.getElementById("painelUso").classList.contains("active")) mostrarAba("identificacao");
+              if (SESSAO.admin && document.getElementById("painelUso").classList.contains("active")) { USO_DADOS = null; EMPRESA_USO = null; carregarUso(); }
+            }
+            if (mudouLeme) recalcularLiquida();
+          }
         }
       }
     } catch (_) {
@@ -1605,7 +1618,7 @@
       loginObrigatorio = !!data.login;
       if (loginObrigatorio) {
         SESSAO = SESSAO || lerSessao();
-        if (SESSAO) aplicarSessao(); else mostrarLogin();
+        if (SESSAO) { aplicarSessao(); checarSessao(); } else mostrarLogin();
       } else {
         SESSAO = null;
         aplicarSessao();

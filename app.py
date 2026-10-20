@@ -630,8 +630,17 @@ def trocar_senha():
 def sessao():
     """O site pergunta a cada 2 min se a sessão ainda vale (o guard responde)."""
     usuario = getattr(g, "usuario", "")
+    if not usuario:
+        return jsonify({"ok": True, "usuario": ""})
+    # Perfil atual: se o dono mudou ADM, empresa ou Leme, o site se ajusta
+    # sem a pessoa precisar sair e entrar.
+    conta = _usuarios().get(usuario, {})
     return jsonify({"ok": True, "usuario": usuario,
-                    "leme": _pergunta_leme(usuario) if usuario else False})
+                    "nome": str(conta.get("nome") or usuario),
+                    "admin": bool(conta.get("admin")),
+                    "dono": _eh_dono(usuario),
+                    "empresa": _empresa_de(usuario),
+                    "leme": _pergunta_leme(usuario)})
 
 
 @app.post("/resetar-senha")
