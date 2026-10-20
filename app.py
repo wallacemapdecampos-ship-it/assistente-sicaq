@@ -74,7 +74,7 @@ def _texto_espera(segundos):
     return f"Libera de novo em cerca de {round(minutos / 60)} horas."
 
 
-def _groq_abrir(req, timeout=35):
+def _groq_abrir(req, timeout=35, esperar_limite=True):
     """
     Envia o pedido à Groq. No limite POR MINUTO do plano gratuito, se a espera
     for curta (até 45 s), aguarda e tenta de novo sozinho; assim o analista
@@ -104,7 +104,7 @@ def _groq_abrir(req, timeout=35):
                 msg = detalhe
             print(f"[GROQ] 429 {'diário' if diario else 'por minuto'}; espera={espera}; "
                   f"retry-after={cabecalho}; msg={msg[:300]!r}", flush=True)
-            if tentativa == 0 and not diario and espera is not None and espera <= 45:
+            if esperar_limite and tentativa == 0 and not diario and espera is not None and espera <= 45:
                 time.sleep(espera + 0.7)
                 continue
             if diario:
@@ -3330,6 +3330,9 @@ Regras:
   dinheiro. provento = coluna PROVENTOS/VENCIMENTOS/CRÉDITOS; desconto =
   coluna DESCONTOS/DÉBITOS. Atenção no IR e no INSS: a % (ex.: 27,50; 7,50)
   é a referência; o valor descontado é o número da coluna DESCONTOS.
+  Alguns holerites REPETEM o valor na Referência e na coluna de descontos (ex.:
+  "DESC.ADIANT.SALARIAL  1.106,19 ... 1.106,19"): nesse caso o desconto é esse
+  valor; não deixe desconto 0,00 só porque o número também está na Referência.
   Se o texto trouxer marcações [REF: ...], [PROVENTO: ...] e [DESCONTO: ...],
   use exatamente essas colunas. Copie a descrição completa (ex.:
   ADIANTAMENTO SALARIAL, I.R.R.F., EMPRÉSTIMO CONSIGNADO).
@@ -3493,28 +3496,53 @@ def _pdf_texto_holerite(data):
         return ""
 
 
+NOTA_ROTACOES_HOLERITE = (
+    "ATENÇÃO: as 2 imagens a seguir são o MESMO holerite (foto tirada de lado), "
+    "giradas em sentidos opostos. Leia SÓ a imagem em que o texto está na posição "
+    "normal de leitura e siga cada linha da tabela até as colunas de valores."
+)
+
+
+def _jpeg_holerite(img, max_lado=1600, qualidade=90):
+    if max(img.size) > max_lado:
+        escala = max_lado / max(img.size)
+        img = img.resize(
+            (max(1, int(img.width * escala)), max(1, int(img.height * escala))),
+            Image.Resampling.LANCZOS,
+        )
+    out = io.BytesIO()
+    img.convert("RGB").save(out, format="JPEG", quality=qualidade, optimize=True)
+    return out.getvalue()
+
+
+def _foto_holerite(img):
+    """Foto do holerite: recorta o papel; de lado, vai nas 2 orientações."""
+    img, _ = _recortar_documento(img)
+    lado = _texto_de_lado(img)
+    if lado:
+        print("[HOLERITE] foto de lado: enviando 2 orientações", flush=True)
+        return [_jpeg_holerite(img.rotate(-90, expand=True)), _jpeg_holerite(img.rotate(90, expand=True))], NOTA_ROTACOES_HOLERITE
+    return [_jpeg_holerite(img)], ""
+
+
 def _imagem_holerite(data, filename, mimetype):
+    """Devolve (lista de JPEGs, nota para a IA)."""
     ext = PathLikeSuffix(filename)
     is_pdf = ext == ".pdf" or mimetype == "application/pdf"
 
     if not is_pdf:
-        # Foto: corrige a rotação do celular e recorta o papel quando ele
-        # está pequeno/torto na foto (mesma rotina dos documentos).
-        img = _abrir_imagem(data)
-        img, _ = _recortar_documento(img)
-        max_lado = 1600
-        if max(img.size) > max_lado:
-            escala = max_lado / max(img.size)
-            img = img.resize(
-                (max(1, int(img.width * escala)), max(1, int(img.height * escala))),
-                Image.Resampling.LANCZOS,
-            )
-        out = io.BytesIO()
-        img.save(out, format="JPEG", quality=90, optimize=True)
-        return out.getvalue()
+        # Foto: corrige a rotação do celular e recorta o papel.
+        return _foto_holerite(_abrir_imagem(data))
 
     doc = pymupdf.open(stream=data, filetype="pdf")
     try:
+        # PDF que é só uma foto (ex.: foto do celular salva em PDF): trata
+        # como foto (recorte do papel e correção se estiver de lado).
+        if len(doc) == 1 and _pdf_pagina_tem_foto(doc[0]):
+            pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(3.0, 3.0), alpha=False)
+            img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB").copy()
+            return _foto_holerite(img)
+
         paginas = []
         for i in range(min(len(doc), 3)):
             pix = doc[i].get_pixmap(matrix=pymupdf.Matrix(1.8, 1.8), alpha=False)
@@ -3539,12 +3567,35 @@ def _imagem_holerite(data, filename, mimetype):
 
         out = io.BytesIO()
         composta.save(out, format="JPEG", quality=87, optimize=True)
-        return out.getvalue()
+        return [out.getvalue()], ""
     finally:
         doc.close()
 
 
-def _groq_holerite_call(arquivos):
+PROMPT_HOLERITE_TABELA = """
+SEGUNDA CONFERÊNCIA deste comprovante de renda: as contas da primeira leitura
+NÃO fecharam (total de vencimentos - total de descontos tem que dar o líquido).
+Releia SÓ a tabela de eventos e os totais, com muita atenção às colunas, e
+devolva SOMENTE JSON: {"itens": [[descrição, referência, provento, desconto], ...],
+"total_proventos": "...", "total_descontos": "...", "liquido_original": "..."}.
+
+Regras:
+- Inclua TODAS as linhas da tabela, uma por evento, na ordem, sem pular
+  nenhuma (atenção às últimas linhas, ex.: contribuições, adiantamento,
+  empréstimo, pensão).
+- referência = coluna REFERÊNCIA/QTDE (dias, horas, %). provento = coluna
+  VENCIMENTOS/PROVENTOS. desconto = coluna DESCONTOS.
+- Alguns holerites REPETEM o mesmo número na Referência e na coluna de
+  descontos (ex.: "DESC.ADIANT.SALARIAL 1.106,19 ... 1.106,19"): o desconto é
+  esse valor, não 0,00.
+- Confira: a soma dos descontos tem que dar o TOTAL DE DESCONTOS impresso, e a
+  soma dos proventos o TOTAL DE VENCIMENTOS. Se não der, procure a linha que
+  faltou ou o valor que caiu na coluna errada.
+- Valores no formato brasileiro, ex.: "1106,19".
+""".strip()
+
+
+def _groq_holerite_call(arquivos, prompt=None, esperar_limite=True):
     """
     Lê 1 ou 2 arquivos de holerite na mesma chamada.
     Se houver dois meses diferentes, o prompt escolhe a competência
@@ -3555,7 +3606,7 @@ def _groq_holerite_call(arquivos):
         raise RuntimeError("GROQ_API_KEY não configurada no Render.")
 
     conteudo = [
-        {"type": "text", "text": _holerite_prompt()}
+        {"type": "text", "text": prompt or _holerite_prompt()}
     ]
 
     for idx, item in enumerate(arquivos[:2], start=1):
@@ -3578,16 +3629,17 @@ def _groq_holerite_call(arquivos):
                 ),
             })
         else:
-            imagem = _imagem_holerite(data, filename, mimetype)
-            b64 = base64.b64encode(imagem).decode("ascii")
+            imagens, nota_img = _imagem_holerite(data, filename, mimetype)
             conteudo.append({
                 "type": "text",
-                "text": f"\n\n===== HOLERITE / ARQUIVO {idx}: {filename} =====",
+                "text": f"\n\n===== HOLERITE / ARQUIVO {idx}: {filename} =====" + (f"\n{nota_img}" if nota_img else ""),
             })
-            conteudo.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-            })
+            for imagem in imagens:
+                b64 = base64.b64encode(imagem).decode("ascii")
+                conteudo.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                })
 
     models = [
         os.getenv("GROQ_MODEL", "").strip(),
@@ -3623,7 +3675,7 @@ def _groq_holerite_call(arquivos):
 
         try:
             t0 = time.perf_counter()
-            body = _groq_abrir(req)
+            body = _groq_abrir(req, esperar_limite=esperar_limite)
             elapsed = time.perf_counter() - t0
             content = body["choices"][0]["message"]["content"]
             dados = json.loads(content)
@@ -3805,6 +3857,23 @@ def _holerite_estado_sp_pdf(arquivos):
     return "GOVERNO DO ESTADO DE SAO PAULO" in txt and "DESPESA DE PESSOAL DO ESTADO" in txt
 
 
+def _subconjunto_que_soma(itens, alvo, chave="referencia", max_itens=16):
+    """
+    Linhas cujo valor de `chave` soma exatamente `alvo` (±0,05). Devolve a
+    combinação com MENOS linhas, só se for a única desse tamanho; senão None.
+    """
+    itens = itens[:max_itens]
+    from itertools import combinations
+    for tam in range(1, len(itens) + 1):
+        achados = [c for c in combinations(itens, tam)
+                   if abs(round(sum(i[chave] for i in c), 2) - alvo) <= 0.05]
+        if len(achados) == 1:
+            return list(achados[0])
+        if len(achados) > 1:
+            return None
+    return None
+
+
 def _normalizar_holerite(resultado):
     resultado = dict(resultado or {})
     fonte = _fonte_renda(resultado)
@@ -3845,6 +3914,24 @@ def _normalizar_holerite(resultado):
                 abs(round(soma_prov - total_desc, 2) - liquido_original) <= 0.05:
             print("[HOLERITE] bruto trocado pela soma dos proventos (contas fecham)", flush=True)
             bruta = soma_prov
+
+        # Valor lido só na Referência (alguns holerites repetem o valor nas
+        # duas colunas e a IA fica com a primeira): se os descontos (ou
+        # proventos) não fecham com o total, procura as linhas sem valor cuja
+        # referência cobre EXATAMENTE a diferença, sem ambiguidade.
+        for coluna, total in (("desconto", total_desc), ("provento", bruta)):
+            soma = round(sum(i[coluna] for i in itens), 2)
+            falta = round(total - soma, 2)
+            if not total or falta <= 0.05:
+                continue
+            cands = [i for i in itens if not i["provento"] and not i["desconto"] and i["referencia"] > 0.05]
+            achou = _subconjunto_que_soma(cands, falta)
+            if achou:
+                for i in achou:
+                    i[coluna] = i["referencia"]
+                print(f"[HOLERITE] {len(achou)} valor(es) da Referência movido(s) para {coluna} (contas fecham)", flush=True)
+        soma_prov = round(sum(i["provento"] for i in itens), 2)
+        soma_desc = round(sum(i["desconto"] for i in itens), 2)
 
         # Linha de desconto lida com a % da coluna Referência no lugar do
         # valor (ex.: IR 27,50 no lugar de 1.928,51). Se os totais do
@@ -4313,6 +4400,27 @@ def ler_holerite():
         if _holerite_estado_sp_pdf(arquivos):
             resultado = {**(resultado or {}), "folha_estado_sp": True}
         dados = _normalizar_holerite(resultado)
+
+        # Segunda olhada: as contas não fecharam -> relê só a tabela de valores
+        # e fica com a leitura que fecha (só nesses casos; 1 leitura a mais).
+        if any(c in dados.get("campos_incertos", []) for c in ("bruta", "liquido_original", "adiantamento", "irrf")):
+            try:
+                tabela, _, tempo2 = _groq_holerite_call(arquivos, PROMPT_HOLERITE_TABELA, esperar_limite=False)
+                tempo_api += tempo2
+                if isinstance(tabela, dict) and tabela.get("itens"):
+                    nova = {**resultado, **{k: v for k, v in tabela.items()
+                                            if k in ("itens", "total_proventos", "total_descontos", "liquido_original") and v}}
+                    dados2 = _normalizar_holerite(nova)
+                    ruins = lambda d: sum(c in d.get("campos_incertos", []) for c in ("bruta", "liquido_original", "adiantamento", "irrf"))
+                    if ruins(dados2) < ruins(dados):
+                        print("[HOLERITE] segunda olhada fechou as contas: usando a releitura", flush=True)
+                        dados = dados2
+                    else:
+                        print("[HOLERITE] segunda olhada não melhorou: mantendo a 1ª leitura", flush=True)
+            except GroqLimite:
+                print("[HOLERITE] segunda olhada pulada (limite da Groq)", flush=True)
+            except Exception as e:
+                print(f"[HOLERITE] segunda olhada falhou ({type(e).__name__})", flush=True)
         _registrar_uso("renda")
 
         return jsonify({
