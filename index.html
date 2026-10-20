@@ -122,8 +122,8 @@
     .linha-arquivo > label small { display: block; font-weight: 400; font-size: 12px; color: var(--tinta-2); }
     .linha-arquivo > button { width: 100%; }
     /* Mensagens: o JS troca a classe (ok/warn/erro/muted), por isso o seletor é pelo id. */
-    #mensagem, #msgPis, #msgCertidao, #mensagemHolerite { grid-column: 2 / -1; font-size: 12.5px; font-weight: 700; }
-    #mensagem.muted, #msgPis.muted, #msgCertidao.muted, #mensagemHolerite.muted { font-weight: 400; }
+    #mensagem, #msgPis, #msgCertidao, #mensagemHolerite, #mensagemEndereco { grid-column: 2 / -1; font-size: 12.5px; font-weight: 700; }
+    #mensagem.muted, #msgPis.muted, #msgCertidao.muted, #mensagemHolerite.muted, #mensagemEndereco.muted { font-weight: 400; }
     [hidden] { display: none !important; }
     .vazio {
       margin: 0; padding: 22px 16px; text-align: center;
@@ -244,6 +244,21 @@
 
     /* Holerite: 4 por linha. */
     #painelHolerite .campo { --span: 3; }
+    #painelEndereco .campo { --span: 3; }
+    .cep-linha { display: flex; gap: 6px; }
+    .cep-linha input { flex: 1 1 auto; min-width: 0; }
+    .cep-linha button { flex: 0 0 auto; height: auto; padding: 0 10px; font-size: 12.5px; }
+    .cep-status { margin: 0 0 12px; padding: 10px 14px; border-radius: var(--raio); border: 1px solid var(--linha); font-size: 13.5px; line-height: 1.45; }
+    .cep-status[hidden] { display: none; }
+    .cep-status.ok { background: #e8f5ee; border-color: #b7dcc6; color: #155c39; }
+    .cep-status.warn { background: var(--marca-fundo); border-color: #e2b500; color: var(--tinta); }
+    .cep-status.erro { background: #fde7e5; border-color: #f0b4ae; color: #8c1d16; }
+    .cep-status .sugestoes { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .cep-status .sugestao { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 10px; border-radius: 6px; background: var(--folha); border: 1px solid var(--linha); color: var(--tinta); }
+    .cep-status .sugestao.melhor { border-color: var(--azul); box-shadow: 0 0 0 1px var(--azul) inset; }
+    .cep-status .sugestao b { font-variant-numeric: tabular-nums; }
+    .cep-status .sugestao .detalhe { color: var(--tinta-2); font-size: 12.5px; }
+    .cep-status .sugestao button { margin-left: auto; height: 28px; padding: 0 12px; font-size: 12.5px; }
 
     /* ---------- Login ---------- */
     .tela-login {
@@ -343,7 +358,7 @@
       header { gap: 14px; padding: 0 14px; }
       .estado-sistema { gap: 10px; }
       .container { padding: 14px 14px 32px; }
-      #painelHolerite .campo { --span: 6; }
+      #painelHolerite .campo, #painelEndereco .campo { --span: 6; }
     }
     @media (max-width: 720px) {
       header { height: auto; flex-wrap: wrap; padding: 8px 14px 0; position: static; }
@@ -352,9 +367,9 @@
       .estado-sistema .status { font-size: 12px; }
       .conta { margin-left: auto; gap: 6px; }
       .linha-arquivo { grid-template-columns: 1fr; }
-      #mensagem, #msgPis, #msgCertidao, #mensagemHolerite { grid-column: 1; }
+      #mensagem, #msgPis, #msgCertidao, #mensagemHolerite, #mensagemEndereco { grid-column: 1; }
       .grid { grid-template-columns: 1fr; }
-      .campo, #painelHolerite .campo { grid-column: 1 / -1; }
+      .campo, #painelHolerite .campo, #painelEndereco .campo { grid-column: 1 / -1; }
     }
     @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
   </style>
@@ -371,6 +386,7 @@
   </div>
   <nav class="tabs" aria-label="Seções">
     <button id="tabIdentificacao" class="tab active" type="button">Identificação</button>
+    <button id="tabEndereco" class="tab" type="button">Endereço</button>
     <button id="tabHolerite" class="tab" type="button">Renda</button>
     <button id="tabUso" class="tab" type="button" hidden>Uso</button>
   </nav>
@@ -599,6 +615,83 @@
       <button id="btnSicaq" type="button" disabled>Preencher SICAQ</button>
     </div>
   </div>
+  </section>
+
+  <section id="painelEndereco" class="painel">
+    <div class="card">
+      <div class="card-topo"><h2>Comprovante de endereço</h2></div>
+      <div class="linha-arquivo">
+        <label for="enderecoArquivo">Comprovante<small>1 ou 2 arquivos</small></label>
+        <label class="arquivo" data-arquivo="enderecoArquivo"><input type="file" class="arquivo-input" id="enderecoArquivo" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
+        <span class="dica">Conta de luz, água, gás, telefone, internet, fatura de banco ou cartão.</span>
+        <button id="btnLerEndereco" type="button" disabled>Ler comprovante</button>
+        <div id="mensagemEndereco" class="msg muted">Selecione o comprovante de endereço para leitura.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-topo">
+        <h2>Endereço para o SICAQ</h2>
+        <span id="eEmissor" class="selo" hidden></span>
+        <span class="legenda"><i></i>Amarelo: confira no comprovante</span>
+      </div>
+
+      <div id="cepStatus" class="cep-status" hidden></div>
+
+      <div class="grid">
+        <div class="campo">
+          <label for="eCep">CEP</label>
+          <div class="cep-linha">
+            <input id="eCep" type="text" inputmode="numeric" maxlength="9" placeholder="00000-000">
+            <button id="btnConferirCep" type="button" class="secondary">Conferir</button>
+          </div>
+        </div>
+        <div class="campo">
+          <label for="eTipo">Tipo de logradouro</label>
+          <input id="eTipo" type="text" placeholder="RUA, AVENIDA…">
+        </div>
+        <div class="campo" style="--span: 6">
+          <label for="eLogradouro">Logradouro</label>
+          <input id="eLogradouro" type="text">
+        </div>
+        <div class="campo">
+          <label for="eNumero">Número</label>
+          <input id="eNumero" type="text">
+        </div>
+        <div class="campo">
+          <label for="eComplemento">Complemento</label>
+          <input id="eComplemento" type="text">
+        </div>
+        <div class="campo">
+          <label for="eBairro">Bairro</label>
+          <input id="eBairro" type="text">
+        </div>
+        <div class="campo">
+          <label for="eCidade">Cidade</label>
+          <input id="eCidade" type="text">
+        </div>
+        <div class="campo">
+          <label for="eUf">UF</label>
+          <input id="eUf" type="text" maxlength="2">
+        </div>
+        <div class="campo">
+          <label for="eReferencia">Mês da conta</label>
+          <input id="eReferencia" type="text" placeholder="MM/AAAA">
+        </div>
+        <div class="campo" style="--span: 6">
+          <label for="eTitular">Titular da conta</label>
+          <input id="eTitular" type="text">
+        </div>
+      </div>
+
+      <div class="nota">O SICAQ não aceita CEP genérico da cidade (ex.: 18100-000): ele dá erro e derruba a sessão.
+        Aqui o CEP é conferido e, se for genérico, aparece o CEP da rua para você escolher.</div>
+
+      <div class="acoes">
+        <span id="msgEnderecoSicaq" class="dica">Por enquanto, copie os dados para a tela de endereço do SICAQ.</span>
+        <button id="btnCopiarCep" type="button" class="secondary" disabled>Copiar CEP</button>
+      </div>
+    </div>
   </section>
 
   <section id="painelHolerite" class="painel">
@@ -1630,6 +1723,8 @@
 
       const hbtn = document.getElementById("btnLerHolerite");
       if (hbtn) hbtn.disabled = false;
+      const ebtn = document.getElementById("btnLerEndereco");
+      if (ebtn) ebtn.disabled = false;
       const hstatus = document.getElementById("statusServidorHolerite");
       if (hstatus) {
         hstatus.textContent = "Servidor online";
@@ -1649,6 +1744,8 @@
       btn.disabled = true;
       const hbtn = document.getElementById("btnLerHolerite");
       if (hbtn) hbtn.disabled = true;
+      const ebtn = document.getElementById("btnLerEndereco");
+      if (ebtn) ebtn.disabled = true;
       const hstatus = document.getElementById("statusServidorHolerite");
       if (hstatus) {
         hstatus.textContent = "Servidor indisponível";
@@ -2219,6 +2316,7 @@
 
   function mostrarAba(nome) {
     const abas = { identificacao: ["tabIdentificacao", "painelIdentificacao"],
+                   endereco: ["tabEndereco", "painelEndereco"],
                    holerite: ["tabHolerite", "painelHolerite"], uso: ["tabUso", "painelUso"] };
     Object.entries(abas).forEach(([chave, [tab, painel]]) => {
       document.getElementById(tab).classList.toggle("active", chave === nome);
@@ -2230,7 +2328,7 @@
   }
 
   // ---------- Contador de leituras (só administrador) ----------
-  const TIPOS_USO = [["documento", "Documento"], ["pis", "PIS"], ["certidao", "Certidão"], ["renda", "Renda"]];
+  const TIPOS_USO = [["documento", "Documento"], ["pis", "PIS"], ["certidao", "Certidão"], ["endereco", "Endereço"], ["renda", "Renda"]];
 
   let NOMES_USO = {};
   function tabelaUso(titulo, contas) {
@@ -2647,6 +2745,130 @@
     }
     if (await pedeTrocaSenha(resp)) throw new Error("Crie a sua senha para continuar.");
     return resp;
+  }
+
+  // ---------- Endereço: comprovante + conferência do CEP ----------
+  const enderecoIds = ["eCep", "eTipo", "eLogradouro", "eNumero", "eComplemento", "eBairro", "eCidade", "eUf", "eReferencia", "eTitular"];
+  let ultimoCep = null;
+  function setMensagemEndereco(texto, classe = "muted") {
+    const el = document.getElementById("mensagemEndereco");
+    el.textContent = texto;
+    el.className = classe;
+  }
+  function formatarCep(v) {
+    const d = soDigitos(v).slice(0, 8);
+    return d.length > 5 ? d.slice(0, 5) + "-" + d.slice(5) : d;
+  }
+  function limparEndereco() {
+    enderecoIds.forEach(id => { const el = document.getElementById(id); el.value = ""; el.classList.remove("destaque"); });
+    const selo = document.getElementById("eEmissor"); selo.textContent = ""; selo.hidden = true;
+    const st = document.getElementById("cepStatus"); st.hidden = true; st.innerHTML = "";
+    document.getElementById("btnCopiarCep").disabled = true;
+    ultimoCep = null;
+  }
+  function mostrarCep(conf) {
+    ultimoCep = conf || null;
+    const st = document.getElementById("cepStatus");
+    const campo = document.getElementById("eCep");
+    if (!conf) { st.hidden = true; return; }
+    const classe = conf.status === "ok" ? "ok" : (conf.status === "inexistente" ? "erro" : "warn");
+    const titulo = { ok: "CEP conferido", generico: "CEP genérico", inexistente: "CEP inválido", diferente: "CEP de outra rua",
+                     sem_cep: "Sem CEP no comprovante", indisponivel: "Não deu para conferir" }[conf.status] || "CEP";
+    const sugestoes = (conf.sugestoes || []).map((s, i) => {
+      const cabe = s.cabe === true ? " · o número cabe nesta faixa" : (s.cabe === false ? " · o número não cabe nesta faixa" : "");
+      const melhor = conf.sugerido && s.cep === conf.sugerido;
+      return `<div class="sugestao${melhor ? " melhor" : ""}"><b>${escHtml(s.cep)}</b>` +
+        `<span>${escHtml(s.logradouro)}${s.complemento ? " — " + escHtml(s.complemento) : ""}</span>` +
+        `<span class="detalhe">${escHtml(s.bairro || "")}${cabe}${melhor ? " · sugerido" : ""}</span>` +
+        `<button type="button" class="${melhor ? "" : "secondary"}" data-cep="${escHtml(s.cep)}" data-bairro="${escHtml(s.bairro || "")}">Usar este CEP</button></div>`;
+    }).join("");
+    st.className = "cep-status " + classe;
+    st.innerHTML = `<b>${titulo}:</b> ${escHtml(conf.mensagem || "")}` + (sugestoes ? `<div class="sugestoes">${sugestoes}</div>` : "");
+    st.hidden = false;
+    campo.classList.toggle("destaque", !conf.pode_usar);
+    document.getElementById("btnCopiarCep").disabled = !conf.pode_usar;
+  }
+  function preencherEndereco(d, conf) {
+    document.getElementById("eCep").value = formatarCep(d.cep);
+    document.getElementById("eTipo").value = d.tipo_logradouro || "";
+    document.getElementById("eLogradouro").value = d.logradouro || "";
+    document.getElementById("eNumero").value = d.numero || "";
+    document.getElementById("eComplemento").value = d.complemento || "";
+    document.getElementById("eBairro").value = d.bairro || "";
+    document.getElementById("eCidade").value = d.cidade || "";
+    document.getElementById("eUf").value = d.uf || "";
+    document.getElementById("eReferencia").value = d.referencia || "";
+    document.getElementById("eTitular").value = d.titular || "";
+    const selo = document.getElementById("eEmissor");
+    selo.textContent = d.emissor || ""; selo.hidden = !d.emissor;
+    const mapa = { cep: "eCep", tipo_logradouro: "eTipo", logradouro: "eLogradouro", numero: "eNumero", complemento: "eComplemento",
+                   bairro: "eBairro", cidade: "eCidade", uf: "eUf", referencia: "eReferencia", titular: "eTitular" };
+    (d.campos_incertos || []).forEach(c => { if (mapa[c]) document.getElementById(mapa[c]).classList.add("destaque"); });
+    mostrarCep(conf);
+  }
+  // Titular diferente do cliente (ex.: conta no nome do cônjuge ou dos pais).
+  function avisoTitular() {
+    const cliente = semAcentos(document.getElementById("nome").value || "").toUpperCase().trim();
+    const titular = semAcentos(document.getElementById("eTitular").value || "").toUpperCase().trim();
+    if (!cliente || !titular) return "";
+    const p1 = cliente.split(/\s+/)[0], p2 = titular.split(/\s+/)[0];
+    return p1 && p2 && p1 !== p2 ? ` A conta está no nome de ${titular}, não do cliente: confira se o SICAQ aceita (cônjuge, pais…).` : "";
+  }
+  async function lerEndereco() {
+    const input = document.getElementById("enderecoArquivo");
+    const btn = document.getElementById("btnLerEndereco");
+    if (!input.files.length) { setMensagemEndereco("Selecione o comprovante de endereço.", "erro"); return; }
+    if (input.files.length > 2) { setMensagemEndereco("Selecione no máximo 2 arquivos.", "erro"); input.value = ""; return; }
+    limparEndereco();
+    btn.disabled = true; btn.textContent = "Lendo…";
+    setMensagemEndereco("Lendo o comprovante e conferindo o CEP…", "warn");
+    const form = new FormData();
+    for (const arquivo of input.files) form.append("files", arquivo);
+    const inicio = performance.now();
+    try {
+      const resp = await postarComServidorAcordado("/ler-endereco", form, setMensagemEndereco);
+      let data;
+      try { data = await resp.json(); } catch { throw new Error("Resposta inválida do servidor."); }
+      if (!resp.ok || !data.ok) throw new Error((data && data.error) || "Falha na leitura do comprovante.");
+      preencherEndereco(data.dados || {}, data.cep);
+      const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
+      const conf = data.cep || {};
+      const okCep = conf.pode_usar && conf.status === "ok";
+      setMensagemEndereco(
+        `Comprovante lido em ${total} s. ` +
+        (okCep ? "CEP conferido." : "Veja o aviso do CEP abaixo antes de usar.") + avisoTitular() +
+        (data.aviso_pasta ? " " + data.aviso_pasta : ""),
+        okCep && !avisoTitular() && !data.aviso_pasta ? "ok" : "warn");
+    } catch (e) {
+      setMensagemEndereco("Erro: " + (e.message || e), "erro");
+    } finally {
+      btn.disabled = false; btn.textContent = "Ler comprovante";
+    }
+  }
+  async function conferirCepAgora() {
+    const v = (id) => document.getElementById(id).value.trim();
+    const btn = document.getElementById("btnConferirCep");
+    btn.disabled = true; btn.textContent = "…";
+    try {
+      const resp = await fetchComLimite(API + "/conferir-cep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...cabecalhoLogin() },
+        body: JSON.stringify({ cep: v("eCep"), tipo_logradouro: v("eTipo"), logradouro: v("eLogradouro"), numero: v("eNumero"),
+                               bairro: v("eBairro"), cidade: v("eCidade"), uf: v("eUf") })
+      }, 30000);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível conferir.");
+      mostrarCep(data.cep);
+    } catch (e) {
+      mostrarCep({ status: "indisponivel", mensagem: e.message || String(e), sugestoes: [], pode_usar: false });
+    } finally {
+      btn.disabled = false; btn.textContent = "Conferir";
+    }
+  }
+  function usarSugestaoCep(botao) {
+    document.getElementById("eCep").value = botao.dataset.cep;
+    if (botao.dataset.bairro && !document.getElementById("eBairro").value.trim()) document.getElementById("eBairro").value = botao.dataset.bairro.toUpperCase();
+    conferirCepAgora();
   }
 
   function setMensagemHolerite(texto, classe="muted") {
@@ -3246,9 +3468,10 @@
 
   function temClienteNaTela() {
     const algo = ["nome", "cpf"].some(id => (document.getElementById(id).value || "").trim());
-    const arquivos = ["documento", "pisArquivo", "certidaoArquivo", "holeriteArquivo"]
+    const arquivos = ["documento", "pisArquivo", "certidaoArquivo", "enderecoArquivo", "holeriteArquivo"]
       .some(id => (document.getElementById(id).files || []).length);
-    return algo || arquivos || !!ultimoHolerite || !!(document.getElementById("pis").value || "").trim();
+    return algo || arquivos || !!ultimoHolerite || !!(document.getElementById("pis").value || "").trim() ||
+           !!(document.getElementById("eCep").value || document.getElementById("eLogradouro").value || "").trim();
   }
 
   function novoCliente() {
@@ -3260,6 +3483,9 @@
     limparCertidao();
     ajustarCampos("");
     setMensagem("Selecione um documento e clique em Ler documento.", "muted");
+    document.getElementById("enderecoArquivo").value = "";
+    limparEndereco();
+    setMensagemEndereco("Selecione o comprovante de endereço para leitura.", "muted");
     document.getElementById("holeriteArquivo").value = "";
     limparHolerite();
     setMensagemHolerite("Selecione o comprovante de renda para leitura.", "muted");
@@ -3268,6 +3494,34 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   document.getElementById("btnNovoCliente").addEventListener("click", novoCliente);
+  document.getElementById("tabEndereco").addEventListener("click", () => mostrarAba("endereco"));
+  document.getElementById("btnLerEndereco").addEventListener("click", lerEndereco);
+  document.getElementById("btnConferirCep").addEventListener("click", conferirCepAgora);
+  document.getElementById("enderecoArquivo").addEventListener("change", (e) => {
+    limparEndereco();
+    const qtd = e.target.files.length;
+    if (qtd > 2) { setMensagemEndereco("Selecione no máximo 2 arquivos.", "erro"); e.target.value = ""; return; }
+    setMensagemEndereco(qtd ? "Clique em Ler comprovante." : "Selecione o comprovante de endereço para leitura.", "muted");
+  });
+  document.getElementById("cepStatus").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-cep]");
+    if (b) usarSugestaoCep(b);
+  });
+  document.getElementById("eCep").addEventListener("input", (e) => {
+    const f = formatarCep(e.target.value);
+    if (f !== e.target.value) e.target.value = f;
+    // CEP mudou à mão: precisa conferir de novo antes de copiar.
+    document.getElementById("btnCopiarCep").disabled = true;
+    if (ultimoCep) { e.target.classList.add("destaque"); }
+  });
+  document.getElementById("eCep").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); conferirCepAgora(); } });
+  enderecoIds.filter(id => id !== "eCep").forEach(id => ["input", "change"].forEach(ev =>
+    document.getElementById(id).addEventListener(ev, (e) => e.target.classList.remove("destaque"))));
+  document.getElementById("btnCopiarCep").addEventListener("click", async () => {
+    const cep = soDigitos(document.getElementById("eCep").value);
+    try { await navigator.clipboard.writeText(cep); document.getElementById("msgEnderecoSicaq").textContent = `CEP ${formatarCep(cep)} copiado. Cole no SICAQ.`; }
+    catch (_) { document.getElementById("msgEnderecoSicaq").textContent = "Não consegui copiar: selecione o CEP e copie com Ctrl+C."; }
+  });
   ["nome", "cpf"].forEach(id => ["input", "change"].forEach(ev =>
     document.getElementById(id).addEventListener(ev, atualizarFaixaCliente)));
 
