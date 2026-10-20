@@ -232,7 +232,7 @@ def _usuarios():
     """Usuários que podem entrar: os da lista do Render menos os excluídos pelo dono."""
     todos = _usuarios_todos()
     fora = _excluidos()
-    return {u: c for u, c in todos.items() if u not in fora or u == DONO_SISTEMA}
+    return {u: c for u, c in todos.items() if u not in fora or u in DONOS_SISTEMA}
 
 
 def _usuarios_todos():
@@ -254,8 +254,12 @@ def _usuarios_todos():
         todos.setdefault(u, conta)
     # ADM ligado/desligado pelo dono no painel (o dono é sempre ADM).
     for u, adm in _papeis().items():
-        if u in todos and u != DONO_SISTEMA:
+        if u in todos and u not in DONOS_SISTEMA:
             todos[u] = {**todos[u], "admin": adm}
+    # Donos do sistema são sempre ADM.
+    for u in DONOS_SISTEMA:
+        if u in todos:
+            todos[u] = {**todos[u], "admin": True}
     return todos
 
 
@@ -766,12 +770,13 @@ def _pergunta_leme(usuario):
 
 # Dono do sistema: o único que vê todas as empresas, cria empresas e move
 # analistas entre elas. Outro ADM (de uma empresa cliente) só vê a dele.
-DONO_SISTEMA = "wallace"
+DONOS_SISTEMA = ("wallace", "camila")
+DONO_SISTEMA = DONOS_SISTEMA[0]
 
 
 def _eh_dono(usuario=None):
     u = str(usuario if usuario is not None else getattr(g, "usuario", "")).lower()
-    return u == DONO_SISTEMA and bool(_usuarios().get(u, {}).get("admin"))
+    return u in DONOS_SISTEMA and u in _usuarios()
 
 
 def _pode_gerir(alvo):
@@ -781,7 +786,7 @@ def _pode_gerir(alvo):
     alvo = str(alvo or "").lower()
     # ADM de empresa só mexe em ANALISTAS da empresa dele: nunca no dono nem
     # em outro ADM (a própria senha ele troca em "Trocar senha").
-    if alvo == DONO_SISTEMA or _usuarios().get(alvo, {}).get("admin"):
+    if alvo in DONOS_SISTEMA or _usuarios().get(alvo, {}).get("admin"):
         return False
     meu = _empresa_de(getattr(g, "usuario", ""))
     return bool(meu) and _empresa_de(alvo) == meu
@@ -908,7 +913,7 @@ def tornar_admin():
     alvo = str(dados.get("usuario") or "").strip().lower()
     if alvo not in _usuarios():
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
-    if alvo == DONO_SISTEMA:
+    if alvo in DONOS_SISTEMA:
         return jsonify({"ok": False, "error": "O dono é sempre ADM."}), 400
     adm = _sim(dados.get("admin"))
     try:
@@ -941,7 +946,7 @@ def excluir_usuario():
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
     if alvo == g.usuario:
         return jsonify({"ok": False, "error": "Você não pode excluir o seu próprio login."}), 400
-    if alvo == DONO_SISTEMA:
+    if alvo in DONOS_SISTEMA:
         return jsonify({"ok": False, "error": "Esse login não pode ser excluído."}), 403
     if not _eh_dono():
         if conta_alvo.get("admin"):
@@ -1227,7 +1232,8 @@ def uso():
             return jsonify({"ok": True, "persistente": True, "desde": "", "linhas": linhas,
                             "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
-                            "excluidos": excluidos, "admins": admins})
+                            "excluidos": excluidos, "admins": admins,
+                            "donos": list(DONOS_SISTEMA)})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
@@ -1238,7 +1244,8 @@ def uso():
     return jsonify({"ok": True, "persistente": False, "desde": _USO_DESDE, "linhas": linhas,
                     "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
-                            "excluidos": excluidos, "admins": admins})
+                            "excluidos": excluidos, "admins": admins,
+                            "donos": list(DONOS_SISTEMA)})
 
 
 # ============================================================
