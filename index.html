@@ -277,7 +277,16 @@
     .tabela-uso .sim { color: var(--ok, #18794e); font-weight: 700; }
     .tabela-uso .nao { color: #8a6100; font-weight: 700; }
     .tabela-uso .bloq { color: var(--erro, #b3261e); font-weight: 700; }
-    .tabela-senhas .marca-map { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; cursor: pointer; }
+    .barra-empresa { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin: 0 0 14px; padding: 10px 12px;
+      border: 1px solid var(--linha); border-radius: var(--raio); background: var(--campo); font-size: 13px; }
+    .barra-empresa[hidden] { display: none; }
+    .barra-empresa .rot-empresa { font-weight: 700; color: var(--tinta-2); text-transform: uppercase; font-size: 11.5px; letter-spacing: .03em; }
+    .barra-empresa select { height: 32px; min-width: 200px; font-weight: 700; }
+    .barra-empresa .leme-empresa { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+    .barra-empresa .nova-empresa { display: inline-flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+    .barra-empresa .nova-empresa input { height: 32px; width: 220px; max-width: 100%; }
+    .barra-empresa .nova-empresa button { height: 32px; }
+    .tabela-senhas .sel-empresa-analista { height: 28px; font-size: 12.5px; max-width: 190px; }
     .tabela-senhas .definir-senha { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; padding: 4px 0; }
     .tabela-senhas .definir-senha input { height: 28px; width: 170px; max-width: 100%; font-size: 13px; }
     .conta { display: inline-flex; align-items: center; gap: 10px; color: #e3e9f0; font-weight: 700; white-space: nowrap; }
@@ -699,6 +708,7 @@
         <h2>Leituras por analista</h2>
         <button id="btnAtualizarUso" type="button" class="secondary" style="margin-left:auto">Atualizar</button>
       </div>
+      <div id="barraEmpresa" class="barra-empresa" hidden></div>
       <div id="conteudoUso"><p class="vazio">Clique em Atualizar para ver as leituras.</p></div>
       <p id="notaUso" class="nota"></p>
     </div>
@@ -945,7 +955,7 @@
       let data = {};
       try { data = await resp.json(); } catch (_) {}
       if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível entrar.");
-      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin, map: !!data.map,
+      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin, dono: !!data.dono, leme: !!data.leme, empresa: data.empresa || "",
                  expira: data.expira, trocar: !!data.trocar_senha };
       salvarSessao(SESSAO);
       senhaDoLogin = SESSAO.trocar ? senha : "";
@@ -985,8 +995,8 @@
       } else if (resp.ok) {
         // O ADM pode marcar/desmarcar MAP: vale sem precisar sair e entrar.
         const data = await resp.json().catch(() => null);
-        if (data && data.ok && SESSAO && !!data.map !== !!SESSAO.map) {
-          SESSAO.map = !!data.map;
+        if (data && data.ok && SESSAO && !!data.leme !== !!SESSAO.leme) {
+          SESSAO.leme = !!data.leme;
           salvarSessao(SESSAO);
           recalcularLiquida();
         }
@@ -1058,7 +1068,7 @@
       try { data = await resp.json(); } catch (_) {}
       if (resp.status === 401) { apagarSessao(); mostrarLogin("Sua sessão terminou. Entre de novo."); return; }
       if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível salvar a senha.");
-      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin, map: !!data.map,
+      SESSAO = { token: data.token, usuario: data.usuario, nome: data.nome, admin: !!data.admin, dono: !!data.dono, leme: !!data.leme, empresa: data.empresa || "",
                  expira: data.expira, trocar: false };
       salvarSessao(SESSAO);
       senhaDoLogin = "";
@@ -2171,6 +2181,11 @@
            `<tbody>${linhas}</tbody><tfoot><tr><td>Total</td>${rod}<td>${soma.total || 0}</td></tr></tfoot></table></div>`;
   }
 
+  // Empresa escolhida na aba Uso ("*" = todas; "" = sem empresa).
+  let USO_DADOS = null;
+  let EMPRESA_USO = null;
+  const escHtml = (s) => String(s == null ? "" : s).replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+
   async function carregarUso() {
     const caixa = document.getElementById("conteudoUso");
     caixa.innerHTML = '<p class="vazio">Carregando…</p>';
@@ -2178,36 +2193,130 @@
       const resp = await postarOuObter("/uso");
       const data = await resp.json();
       if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível carregar.");
+      USO_DADOS = data;
       NOMES_USO = data.nomes || {};
-      const agora = new Date();
-      const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
-      const mes = hoje.slice(0, 7);
-      const ant = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
-      const mesAnterior = `${ant.getFullYear()}-${String(ant.getMonth() + 1).padStart(2, "0")}`;
-      const doDia = {}, doMes = {}, doAnterior = {};
-      (data.linhas || []).forEach(l => {
-        if (l.dia === hoje) { doDia[l.usuario] = doDia[l.usuario] || {}; doDia[l.usuario][l.tipo] = (doDia[l.usuario][l.tipo] || 0) + l.quantidade; }
-        if (String(l.dia).startsWith(mes)) { doMes[l.usuario] = doMes[l.usuario] || {}; doMes[l.usuario][l.tipo] = (doMes[l.usuario][l.tipo] || 0) + l.quantidade; }
-        if (String(l.dia).startsWith(mesAnterior)) { doAnterior[l.usuario] = doAnterior[l.usuario] || {}; doAnterior[l.usuario][l.tipo] = (doAnterior[l.usuario][l.tipo] || 0) + l.quantidade; }
-      });
-      caixa.innerHTML = tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes) +
-        (data.persistente ? tabelaUso("Mês passado", doAnterior) : "") + tabelaSenhas(data.senhas, data.bloqueados, data.map);
-      document.getElementById("notaUso").textContent = data.persistente
-        ? "Números guardados no banco de dados (só as contagens, nenhum dado de cliente)."
-        : `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
+      const lista = (data.empresas || []).map(e => e.nome);
+      if (EMPRESA_USO === null || (EMPRESA_USO !== "*" && EMPRESA_USO !== "" && !lista.includes(EMPRESA_USO))) {
+        const minha = (SESSAO && SESSAO.empresa) || "";
+        EMPRESA_USO = lista.includes(minha) ? minha : (lista[0] || "*");
+      }
+      desenharUso();
     } catch (e) {
       caixa.innerHTML = "";
       document.getElementById("notaUso").textContent = "Erro: " + (e.message || e);
     }
   }
 
-  function tabelaSenhas(senhas, bloqueados, marcadosMap) {
+  function desenharUso() {
+    const data = USO_DADOS;
+    if (!data) return;
+    const empresaDe = data.empresa_de || {};
+    const dono = !!data.dono;
+    const empresas = data.empresas || [];
+    const sel = dono ? EMPRESA_USO : ((empresas[0] && empresas[0].nome) || "");
+    // Quem aparece: os analistas da empresa escolhida.
+    const daEmpresa = (u) => dono && sel === "*" ? true : (empresaDe[u] || "") === sel;
+    const visiveis = new Set(Object.keys(NOMES_USO).filter(daEmpresa));
+    if (dono && sel === "*") visiveis.add("sem-login");
+
+    const barra = document.getElementById("barraEmpresa");
+    barra.hidden = false;
+    const empAtual = empresas.find(e => e.nome === sel);
+    if (dono) {
+      const opcoes = [`<option value="*"${sel === "*" ? " selected" : ""}>Todas as empresas</option>`]
+        .concat(empresas.map(e => `<option value="${escHtml(e.nome)}"${e.nome === sel ? " selected" : ""}>${escHtml(e.nome)}</option>`))
+        .concat([`<option value=""${sel === "" ? " selected" : ""}>Sem empresa</option>`]).join("");
+      barra.innerHTML =
+        `<label class="rot-empresa" for="selEmpresaUso">Empresa</label>` +
+        `<select id="selEmpresaUso">${opcoes}</select>` +
+        (empAtual ? `<label class="leme-empresa"><input type="checkbox" id="chkLemeEmpresa"${empAtual.pergunta_leme ? " checked" : ""}> Perguntar "é Leme?" na Renda</label>` : "") +
+        `<span class="nova-empresa"><input type="text" id="novaEmpresa" placeholder="Nova empresa (ex.: FINANCE)" maxlength="60">` +
+        `<button type="button" class="secondary" id="btnNovaEmpresa">Criar empresa</button></span>`;
+    } else {
+      barra.innerHTML = `<span class="rot-empresa">Empresa</span><b>${escHtml(sel || "—")}</b>`;
+    }
+
+    const agora = new Date();
+    const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
+    const mes = hoje.slice(0, 7);
+    const ant = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
+    const mesAnterior = `${ant.getFullYear()}-${String(ant.getMonth() + 1).padStart(2, "0")}`;
+    const doDia = {}, doMes = {}, doAnterior = {};
+    (data.linhas || []).filter(l => visiveis.has(l.usuario)).forEach(l => {
+      if (l.dia === hoje) { doDia[l.usuario] = doDia[l.usuario] || {}; doDia[l.usuario][l.tipo] = (doDia[l.usuario][l.tipo] || 0) + l.quantidade; }
+      if (String(l.dia).startsWith(mes)) { doMes[l.usuario] = doMes[l.usuario] || {}; doMes[l.usuario][l.tipo] = (doMes[l.usuario][l.tipo] || 0) + l.quantidade; }
+      if (String(l.dia).startsWith(mesAnterior)) { doAnterior[l.usuario] = doAnterior[l.usuario] || {}; doAnterior[l.usuario][l.tipo] = (doAnterior[l.usuario][l.tipo] || 0) + l.quantidade; }
+    });
+    const filtrar = (obj) => obj ? Object.fromEntries(Object.entries(obj).filter(([u]) => visiveis.has(u))) : obj;
+    document.getElementById("conteudoUso").innerHTML =
+      tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes) +
+      (data.persistente ? tabelaUso("Mês passado", doAnterior) : "") +
+      tabelaSenhas(filtrar(data.senhas), data.bloqueados, empresaDe, dono ? empresas : null);
+    document.getElementById("notaUso").textContent = data.persistente
+      ? "Números guardados no banco de dados (só as contagens, nenhum dado de cliente)."
+      : `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
+  }
+
+  async function postarAdmin(rota, corpo) {
+    const resp = await fetchComLimite(API + rota, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...cabecalhoLogin() },
+      body: JSON.stringify(corpo)
+    }, 30000);
+    let data = {};
+    try { data = await resp.json(); } catch (_) {}
+    if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível salvar.");
+    return data;
+  }
+
+  async function criarEmpresa() {
+    const campo = document.getElementById("novaEmpresa");
+    const nome = campo.value.trim();
+    const nota = document.getElementById("notaUso");
+    if (nome.length < 2) { nota.textContent = "Digite o nome da empresa."; campo.focus(); return; }
+    try {
+      const r = await postarAdmin("/empresa", { nome, pergunta_leme: false });
+      EMPRESA_USO = r.nome;
+      await carregarUso();
+      document.getElementById("notaUso").textContent = `Empresa ${r.nome} criada. Agora coloque os analistas nela pela coluna Empresa (em "Todas as empresas" ou "Sem empresa").`;
+    } catch (e) { nota.textContent = "Erro: " + (e.message || e); }
+  }
+
+  async function mudarLemeEmpresa(caixa) {
+    const nome = EMPRESA_USO, valor = caixa.checked;
+    caixa.disabled = true;
+    try {
+      await postarAdmin("/empresa", { nome, pergunta_leme: valor });
+      await carregarUso();
+      document.getElementById("notaUso").textContent = valor
+        ? `${nome}: os analistas veem a pergunta "é Leme?" na Renda.`
+        : `${nome}: sem a pergunta de Leme (o adiantamento é sempre somado).`;
+    } catch (e) {
+      caixa.checked = !valor; caixa.disabled = false;
+      document.getElementById("notaUso").textContent = "Erro: " + (e.message || e);
+    }
+  }
+
+  async function moverAnalista(sel) {
+    const usuario = sel.dataset.usuario, nome = sel.dataset.nome, empresa = sel.value;
+    sel.disabled = true;
+    try {
+      await postarAdmin("/empresa-do-analista", { usuario, empresa });
+      await carregarUso();
+      document.getElementById("notaUso").textContent = empresa ? `${nome} agora é da ${empresa}.` : `${nome} ficou sem empresa.`;
+    } catch (e) {
+      sel.disabled = false;
+      document.getElementById("notaUso").textContent = "Erro: " + (e.message || e);
+    }
+  }
+
+  function tabelaSenhas(senhas, bloqueados, empresaDe, empresasDono) {
     if (!senhas) return "";
     const travados = new Set(bloqueados || []);
-    const map = marcadosMap || {};
+    empresaDe = empresaDe || {};
     const lista = Object.keys(senhas).sort((a, b) =>
       String(NOMES_USO[a] || a).localeCompare(String(NOMES_USO[b] || b), "pt-BR"));
-    if (!lista.length) return "";
+    if (!lista.length) return `<div class="uso-bloco"><h3>Senhas</h3><p class="dica">Nenhum analista nesta empresa.</p></div>`;
     const linhas = lista.map(u => {
       const nome = String(NOMES_USO[u] || u).replace(/[<>&"]/g, "");
       const uSeguro = String(u).replace(/[^a-z0-9._-]/gi, "");
@@ -2231,14 +2340,20 @@
         `<button type="button" class="resetar salvar-definir" data-usuario="${uSeguro}" data-nome="${nome}">Salvar</button>` +
         `<button type="button" class="secondary resetar cancelar-definir">Cancelar</button>` +
         `</div></td></tr>`;
-      const caixaMap = `<label class="marca-map"><input type="checkbox" class="chk-map" data-usuario="${uSeguro}" data-nome="${nome}"${map[u] ? " checked" : ""}> MAP</label>`;
-      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${caixaMap}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
+      const emp = empresaDe[u] || "";
+      const celEmpresa = empresasDono
+        ? `<select class="sel-empresa-analista" data-usuario="${uSeguro}" data-nome="${nome}">` +
+          `<option value=""${emp ? "" : " selected"}>Sem empresa</option>` +
+          empresasDono.map(e => `<option value="${escHtml(e.nome)}"${e.nome === emp ? " selected" : ""}>${escHtml(e.nome)}</option>`).join("") +
+          `</select>`
+        : escHtml(emp || "—");
+      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${celEmpresa}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
     }).join("");
     return `<div class="uso-bloco"><h3>Senhas</h3><table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Empresa</th><th>Situação</th><th></th></tr></thead>` +
            `<tbody>${linhas}</tbody></table>` +
            `<p class="dica">O analista só cria a senha no 1º acesso. Definir senha: você escolhe a senha nova e ela já vale no próximo login. ` +
            `Resetar: a pessoa volta para a senha inicial e cria outra. Os dois podem ser usados quantas vezes quiser. ` +
-           `MAP marcado: na aba Renda aparece a pergunta "é Leme?" (em Leme o adiantamento não é somado). ` +
+           `Empresa com "Perguntar é Leme?" ligado: na aba Renda os analistas dela escolhem se o adiantamento é somado. ` +
            `Errou a senha 3 vezes: fica bloqueado. Desbloquear libera com a mesma senha; Resetar libera e pede senha nova.</p></div>`;
   }
 
@@ -2274,29 +2389,6 @@
     } catch (e) {
       nota.textContent = "Erro: " + (e.message || e);
       botao.disabled = false;
-    }
-  }
-
-  async function marcarMap(caixa) {
-    const usuario = caixa.dataset.usuario, nome = caixa.dataset.nome, valor = caixa.checked;
-    const nota = document.getElementById("notaUso");
-    caixa.disabled = true;
-    try {
-      const resp = await fetchComLimite(API + "/marcar-map", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...cabecalhoLogin() },
-        body: JSON.stringify({ usuario, map: valor })
-      }, 30000);
-      let data = {};
-      try { data = await resp.json(); } catch (_) {}
-      if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível salvar.");
-      nota.textContent = valor ? `${nome} marcado como MAP (vê a pergunta de Leme).` : `${nome} não é mais MAP.`;
-      if (SESSAO && SESSAO.usuario === usuario) { SESSAO.map = valor; salvarSessao(SESSAO); recalcularLiquida(); }
-    } catch (e) {
-      caixa.checked = !valor;
-      nota.textContent = "Erro: " + (e.message || e);
-    } finally {
-      caixa.disabled = false;
     }
   }
 
@@ -2488,11 +2580,11 @@
   // ---------- Leme: lá o adiantamento NÃO é somado à líquida ----------
   // Quando há adiantamento, o site pergunta se o cliente é de Leme.
   // null = ainda não respondeu; true = Leme (não soma); false = soma.
-  // Só os analistas da MAP (marcados pelo ADM na aba Uso) têm essa opção;
-  // os outros sempre somam, sem pergunta.
+  // Só os analistas de empresa com "Perguntar Leme" ligado (ex.: MAP DE
+  // CAMPOS) têm essa opção; os outros sempre somam, sem pergunta.
   let respostaLeme = null;
   function temOpcaoLeme() {
-    return !!(SESSAO && SESSAO.map);
+    return !!(SESSAO && SESSAO.leme);
   }
   function adiantamentoAtual() {
     return lerValorBR(document.getElementById("hAdiantamento").value) || 0;
@@ -2774,7 +2866,17 @@
   document.getElementById("formSenha").addEventListener("submit", salvarSenha);
   document.getElementById("btnCancelarSenha").addEventListener("click", cancelarSenha);
   document.getElementById("conteudoUso").addEventListener("change", (e) => {
-    if (e.target.classList && e.target.classList.contains("chk-map")) marcarMap(e.target);
+    if (e.target.classList && e.target.classList.contains("sel-empresa-analista")) moverAnalista(e.target);
+  });
+  document.getElementById("barraEmpresa").addEventListener("change", (e) => {
+    if (e.target.id === "selEmpresaUso") { EMPRESA_USO = e.target.value; desenharUso(); }
+    if (e.target.id === "chkLemeEmpresa") mudarLemeEmpresa(e.target);
+  });
+  document.getElementById("barraEmpresa").addEventListener("click", (e) => {
+    if (e.target.id === "btnNovaEmpresa") criarEmpresa();
+  });
+  document.getElementById("barraEmpresa").addEventListener("keydown", (e) => {
+    if (e.target.id === "novaEmpresa" && e.key === "Enter") { e.preventDefault(); criarEmpresa(); }
   });
   document.getElementById("conteudoUso").addEventListener("click", (e) => {
     const b = e.target.closest("button.resetar");

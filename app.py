@@ -433,7 +433,9 @@ def _resposta_login(usuario, conta, trocar):
         "usuario": usuario,
         "nome": str(conta.get("nome") or usuario),
         "admin": bool(conta.get("admin")),
-        "map": _eh_map(usuario),
+        "empresa": _empresa_de(usuario),
+        "dono": _eh_dono(usuario),
+        "leme": _pergunta_leme(usuario),
         "expira": _fim_do_dia(),
         "trocar_senha": bool(trocar),
     }
@@ -539,7 +541,8 @@ def trocar_senha():
 def sessao():
     """O site pergunta a cada 2 min se a sessão ainda vale (o guard responde)."""
     usuario = getattr(g, "usuario", "")
-    return jsonify({"ok": True, "usuario": usuario, "map": _eh_map(usuario) if usuario else False})
+    return jsonify({"ok": True, "usuario": usuario,
+                    "leme": _pergunta_leme(usuario) if usuario else False})
 
 
 @app.post("/resetar-senha")
@@ -550,6 +553,8 @@ def resetar_senha():
     alvo = str((request.get_json(silent=True) or {}).get("usuario") or "").strip().lower()
     if alvo not in _usuarios():
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    if not _pode_gerir(alvo):
+        return jsonify({"ok": False, "error": "Este analista é de outra empresa."}), 403
     try:
         _no_banco(lambda con: con.run("DELETE FROM senhas_usuarios WHERE usuario = :usuario", usuario=alvo))
     except Exception as e:
@@ -573,6 +578,8 @@ def definir_senha():
     conta_alvo = _usuarios().get(alvo)
     if not conta_alvo:
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    if not _pode_gerir(alvo):
+        return jsonify({"ok": False, "error": "Este analista é de outra empresa."}), 403
     problema = _problema_senha_nova(alvo, conta_alvo, nova)
     if problema:
         return jsonify({"ok": False, "error": problema}), 400
@@ -601,64 +608,136 @@ def desbloquear():
     alvo = str((request.get_json(silent=True) or {}).get("usuario") or "").strip().lower()
     if alvo not in _usuarios():
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    if not _pode_gerir(alvo):
+        return jsonify({"ok": False, "error": "Este analista é de outra empresa."}), 403
     if not _limpar_bloqueio(alvo):
         return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
     print(f"[LOGIN] {g.usuario} desbloqueou {alvo}", flush=True)
     return jsonify({"ok": True})
 
 
-@app.post("/marcar-map")
-def marcar_map():
-    """ADM marca/desmarca o analista como da MAP (vê a pergunta de Leme na Renda)."""
-    conta = _usuarios().get(getattr(g, "usuario", ""), {})
-    if not conta.get("admin"):
-        return jsonify({"ok": False, "error": "Só o administrador pode mudar isso."}), 403
+# ---------- Empresas ----------
+# Cada analista pertence a uma empresa (ex.: MAP DE CAMPOS). Na aba Uso o
+# ADM escolhe a empresa e vê só os analistas dela. A empresa pode ter a
+# pergunta "é Leme?" na Renda (em Leme o adiantamento não é somado).
+EMPRESA_INICIAL = "MAP DE CAMPOS"
+USUARIOS_EMPRESA_INICIAL = ("wallace", "geyce", "mirian")
+_EMPRESAS = {"empresas": None, "de": None, "quando": 0.0}
+
+
+def _nome_empresa(valor):
+    return re.sub(r"\s+", " ", _tirar_acentos(str(valor or "")).strip().upper())[:60]
+
+
+def _dados_empresas(atualizar=False):
+    """({empresa: pergunta_leme}, {usuario: empresa}). Sem banco: só a inicial."""
+    padrao = ({EMPRESA_INICIAL: True}, {u: EMPRESA_INICIAL for u in USUARIOS_EMPRESA_INICIAL})
+    if not os.getenv("DATABASE_URL", "").strip():
+        return padrao
+    agora = time.time()
+    if atualizar or _EMPRESAS["empresas"] is None or agora - _EMPRESAS["quando"] > 60:
+        try:
+            def ler(con):
+                return (con.run("SELECT nome, pergunta_leme FROM empresas") or [],
+                        con.run("SELECT usuario, empresa FROM empresa_usuarios") or [])
+            emp, de = _no_banco(ler)
+            _EMPRESAS["empresas"] = {str(n): bool(l) for n, l in emp}
+            _EMPRESAS["de"] = {str(u): str(e) for u, e in de}
+            _EMPRESAS["quando"] = agora
+        except Exception as e:
+            print(f"[EMPRESA] banco indisponível ({type(e).__name__})", flush=True)
+    if _EMPRESAS["empresas"] is None:
+        return padrao
+    return _EMPRESAS["empresas"], _EMPRESAS["de"]
+
+
+def _empresa_de(usuario):
+    return _dados_empresas()[1].get(str(usuario or "").lower(), "")
+
+
+def _pergunta_leme(usuario):
+    empresas, de = _dados_empresas()
+    return bool(empresas.get(de.get(str(usuario or "").lower(), ""), False))
+
+
+# Dono do sistema: o único que vê todas as empresas, cria empresas e move
+# analistas entre elas. Outro ADM (de uma empresa cliente) só vê a dele.
+DONO_SISTEMA = "wallace"
+
+
+def _eh_dono(usuario=None):
+    u = str(usuario if usuario is not None else getattr(g, "usuario", "")).lower()
+    return u == DONO_SISTEMA and bool(_usuarios().get(u, {}).get("admin"))
+
+
+def _pode_gerir(alvo):
+    """O ADM logado pode mexer neste analista? Dono: todos; outro ADM: só da empresa dele."""
+    if _eh_dono():
+        return True
+    meu = _empresa_de(getattr(g, "usuario", ""))
+    return bool(meu) and _empresa_de(alvo) == meu
+
+
+def _so_admin():
+    if not _eh_dono():
+        return jsonify({"ok": False, "error": "Só o dono do sistema pode mudar empresas."}), 403
+    if not os.getenv("DATABASE_URL", "").strip():
+        return jsonify({"ok": False, "error": "Sem banco configurado no servidor."}), 503
+    return None
+
+
+@app.post("/empresa")
+def salvar_empresa():
+    """ADM cria uma empresa ou liga/desliga a pergunta de Leme dela."""
+    erro = _so_admin()
+    if erro:
+        return erro
+    dados = request.get_json(silent=True) or {}
+    nome = _nome_empresa(dados.get("nome"))
+    if len(nome) < 2:
+        return jsonify({"ok": False, "error": "Digite o nome da empresa."}), 400
+    leme = _sim(dados.get("pergunta_leme"))
+    try:
+        _no_banco(lambda con: con.run(
+            "INSERT INTO empresas (nome, pergunta_leme) VALUES (:nome, :leme)"
+            " ON CONFLICT (nome) DO UPDATE SET pergunta_leme = EXCLUDED.pergunta_leme",
+            nome=nome, leme=leme))
+    except Exception as e:
+        print(f"[EMPRESA] não gravou ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
+    _dados_empresas(atualizar=True)
+    print(f"[EMPRESA] {g.usuario} salvou {nome} (Leme={leme})", flush=True)
+    return jsonify({"ok": True, "nome": nome})
+
+
+@app.post("/empresa-do-analista")
+def empresa_do_analista():
+    """ADM coloca o analista numa empresa ("" = sem empresa)."""
+    erro = _so_admin()
+    if erro:
+        return erro
     dados = request.get_json(silent=True) or {}
     alvo = str(dados.get("usuario") or "").strip().lower()
     if alvo not in _usuarios():
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
-    valor = _sim(dados.get("map"))
-    if not os.getenv("DATABASE_URL", "").strip():
-        return jsonify({"ok": False, "error": "Sem banco configurado no servidor."}), 503
+    empresa = _nome_empresa(dados.get("empresa"))
+    if empresa and empresa not in _dados_empresas(atualizar=True)[0]:
+        return jsonify({"ok": False, "error": "Empresa não encontrada."}), 404
     try:
-        _no_banco(lambda con: con.run(
-            "INSERT INTO usuarios_map (usuario, map) VALUES (:usuario, :map)"
-            " ON CONFLICT (usuario) DO UPDATE SET map = EXCLUDED.map, atualizado_em = CURRENT_TIMESTAMP",
-            usuario=alvo, map=valor))
+        if empresa:
+            _no_banco(lambda con: con.run(
+                "INSERT INTO empresa_usuarios (usuario, empresa) VALUES (:usuario, :empresa)"
+                " ON CONFLICT (usuario) DO UPDATE SET empresa = EXCLUDED.empresa,"
+                " atualizado_em = CURRENT_TIMESTAMP", usuario=alvo, empresa=empresa))
+        else:
+            _no_banco(lambda con: con.run(
+                "DELETE FROM empresa_usuarios WHERE usuario = :usuario", usuario=alvo))
     except Exception as e:
-        print(f"[MAP] não gravou ({type(e).__name__})", flush=True)
+        print(f"[EMPRESA] não gravou ({type(e).__name__})", flush=True)
         return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
-    _MAP["quando"] = 0.0
-    print(f"[MAP] {g.usuario} marcou {alvo} como MAP={valor}", flush=True)
+    _dados_empresas(atualizar=True)
+    print(f"[EMPRESA] {g.usuario} colocou {alvo} em {empresa or '(sem empresa)'}", flush=True)
     return jsonify({"ok": True})
-
-
-# ---------- Analistas da MAP ----------
-# Quem é da MAP vê na aba Renda a pergunta "é Leme?" (em Leme o adiantamento
-# não é somado à líquida). O ADM marca/desmarca na aba Uso.
-MAP_INICIAIS = ("wallace", "geyce", "mirian")
-_MAP = {"dados": None, "quando": 0.0}
-
-
-def _usuarios_map():
-    """{usuario: True/False} marcados no banco (sem banco: os iniciais)."""
-    if not os.getenv("DATABASE_URL", "").strip():
-        return {u: True for u in MAP_INICIAIS}
-    agora = time.time()
-    if _MAP["dados"] is None or agora - _MAP["quando"] > 60:
-        try:
-            linhas = _no_banco(lambda con: con.run("SELECT usuario, map FROM usuarios_map")) or []
-            _MAP["dados"] = {str(u): bool(m) for u, m in linhas}
-            _MAP["quando"] = agora
-        except Exception as e:
-            print(f"[MAP] banco indisponível ({type(e).__name__})", flush=True)
-    if _MAP["dados"] is None:
-        return {u: True for u in MAP_INICIAIS}
-    return _MAP["dados"]
-
-
-def _eh_map(usuario):
-    return bool(_usuarios_map().get(str(usuario or "").lower()))
 
 
 # ---------- Bloqueio após 3 senhas erradas ----------
@@ -784,15 +863,22 @@ def _no_banco(funcao):
                 " trocada_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
             con.run(
-                "CREATE TABLE IF NOT EXISTS usuarios_map ("
-                " usuario TEXT PRIMARY KEY, map BOOLEAN NOT NULL DEFAULT TRUE,"
+                "CREATE TABLE IF NOT EXISTS empresas ("
+                " nome TEXT PRIMARY KEY, pergunta_leme BOOLEAN NOT NULL DEFAULT FALSE,"
+                " criada_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+            con.run(
+                "CREATE TABLE IF NOT EXISTS empresa_usuarios ("
+                " usuario TEXT PRIMARY KEY, empresa TEXT NOT NULL,"
                 " atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
-            # Primeiros analistas da MAP. Só entram se ainda não estiverem na
-            # tabela: se o ADM desmarcar, continua desmarcado.
-            for u in MAP_INICIAIS:
-                con.run("INSERT INTO usuarios_map (usuario, map) VALUES (:usuario, TRUE)"
-                        " ON CONFLICT (usuario) DO NOTHING", usuario=u)
+            # Primeira empresa e seus analistas. Só entram se ainda não
+            # existirem: o que o ADM mudar depois continua como ele deixou.
+            con.run("INSERT INTO empresas (nome, pergunta_leme) VALUES (:nome, TRUE)"
+                    " ON CONFLICT (nome) DO NOTHING", nome=EMPRESA_INICIAL)
+            for u in USUARIOS_EMPRESA_INICIAL:
+                con.run("INSERT INTO empresa_usuarios (usuario, empresa) VALUES (:usuario, :empresa)"
+                        " ON CONFLICT (usuario) DO NOTHING", usuario=u, empresa=EMPRESA_INICIAL)
             con.run(
                 "CREATE TABLE IF NOT EXISTS bloqueios_login ("
                 " usuario TEXT PRIMARY KEY, erros INTEGER NOT NULL DEFAULT 0,"
@@ -843,8 +929,17 @@ def uso():
     proprias = _senhas_proprias(atualizar=True)
     senhas = None if proprias is None else {u: u in proprias for u in nomes}
     bloqueados = [u for u in _bloqueados() if u in nomes]
-    _MAP["quando"] = 0.0
-    marcados_map = {u: _eh_map(u) for u in nomes}
+    empresas, empresa_de = _dados_empresas(atualizar=True)
+    dono = _eh_dono()
+    if not dono:
+        # ADM de empresa cliente: só os analistas e os números da empresa dele.
+        minha = empresa_de.get(getattr(g, "usuario", ""), "")
+        nomes = {u: n for u, n in nomes.items() if minha and empresa_de.get(u) == minha}
+        senhas = None if senhas is None else {u: v for u, v in senhas.items() if u in nomes}
+        bloqueados = [u for u in bloqueados if u in nomes]
+        empresas = {minha: empresas.get(minha, False)} if minha else {}
+    lista_empresas = [{"nome": n, "pergunta_leme": l} for n, l in sorted(empresas.items())]
+    empresa_de = {u: empresa_de.get(u, "") for u in nomes}
 
     # Banco: este mês e o anterior.
     hoje = datetime.now(FUSO_BR).date()
@@ -858,19 +953,21 @@ def uso():
         if rows is not None:
             linhas = [
                 {"dia": str(r[0])[:10], "usuario": r[1], "tipo": r[2], "quantidade": int(r[3])}
-                for r in rows
+                for r in rows if dono or r[1] in nomes
             ]
             return jsonify({"ok": True, "persistente": True, "desde": "", "linhas": linhas,
-                            "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados, "map": marcados_map})
+                            "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
+                            "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
     linhas = [
         {"dia": dia, "usuario": usuario, "tipo": tipo, "quantidade": n}
-        for (dia, usuario, tipo), n in sorted(_USO.items())
+        for (dia, usuario, tipo), n in sorted(_USO.items()) if dono or usuario in nomes
     ]
     return jsonify({"ok": True, "persistente": False, "desde": _USO_DESDE, "linhas": linhas,
-                    "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados, "map": marcados_map})
+                    "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
+                            "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono})
 
 
 # ============================================================
