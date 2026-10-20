@@ -74,6 +74,20 @@ def _texto_espera(segundos):
     return f"Libera de novo em cerca de {round(minutos / 60)} horas."
 
 
+def _contar_tokens(body):
+    """Soma os tokens que a IA usou nesta leitura (para o custo simulado)."""
+    try:
+        from flask import has_request_context
+        if not has_request_context():
+            return
+        u = (body or {}).get("usage") or {}
+        g.tokens_entrada = getattr(g, "tokens_entrada", 0) + int(u.get("prompt_tokens") or 0)
+        g.tokens_saida = getattr(g, "tokens_saida", 0) + int(u.get("completion_tokens") or 0)
+        g.chamadas_ia = getattr(g, "chamadas_ia", 0) + 1
+    except Exception:
+        pass
+
+
 def _groq_abrir(req, timeout=35, esperar_limite=True):
     """
     Envia o pedido à Groq. No limite POR MINUTO do plano gratuito, se a espera
@@ -83,7 +97,9 @@ def _groq_abrir(req, timeout=35, esperar_limite=True):
     for tentativa in range(2):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                body = json.loads(resp.read().decode("utf-8"))
+            _contar_tokens(body)
+            return body
         except urllib.error.HTTPError as e:
             if e.code != 429:
                 raise
@@ -1156,6 +1172,13 @@ def _no_banco(funcao):
                 " criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
             con.run(
+                "CREATE TABLE IF NOT EXISTS uso_tokens ("
+                " dia DATE NOT NULL, usuario TEXT NOT NULL, tipo TEXT NOT NULL,"
+                " leituras INTEGER NOT NULL DEFAULT 0, chamadas INTEGER NOT NULL DEFAULT 0,"
+                " tokens_entrada BIGINT NOT NULL DEFAULT 0, tokens_saida BIGINT NOT NULL DEFAULT 0,"
+                " PRIMARY KEY (dia, usuario, tipo))"
+            )
+            con.run(
                 "CREATE TABLE IF NOT EXISTS papeis_usuarios ("
                 " usuario TEXT PRIMARY KEY, admin BOOLEAN NOT NULL,"
                 " atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
@@ -1204,6 +1227,73 @@ def _registrar_uso(tipo):
         threading.Thread(target=_gravar_uso_no_banco, args=(dia, usuario, tipo), daemon=True).start()
 
 
+# ---------- Custo simulado da IA (como se fosse a API paga) ----------
+# A cada leitura grava os tokens usados (tabela uso_tokens). O custo do mês
+# = leituras de cada tipo x média de tokens medida daquele tipo x preço.
+_TIPO_DA_ROTA = {"/ler": "documento", "/ler-holerite": "renda", "/ler-pis": "pis",
+                 "/ler-certidao": "certidao", "/ler-endereco": "endereco"}
+PRECO_SIMULADO = {"modelo": "Claude Haiku 5.5", "entrada_usd": 0.10, "saida_usd": 0.50}
+PRECO_COMPARACAO = {"modelo": "Claude Sonnet 5.5", "entrada_usd": 2.00, "saida_usd": 10.00}
+# Até ter medições, usa uma estimativa por tipo (tokens por leitura).
+TOKENS_ESTIMADOS = {"documento": (4500, 450), "renda": (5000, 650), "pis": (2500, 60),
+                    "certidao": (3500, 250), "endereco": (3500, 250)}
+
+
+def _cotacao_dolar():
+    try:
+        return float(os.getenv("COTACAO_DOLAR", "").replace(",", ".") or 5.5)
+    except ValueError:
+        return 5.5
+
+
+def _gravar_tokens_no_banco(dia, usuario, tipo, chamadas, entrada, saida):
+    try:
+        _no_banco(lambda con: con.run(
+            "INSERT INTO uso_tokens (dia, usuario, tipo, leituras, chamadas, tokens_entrada, tokens_saida)"
+            " VALUES (CAST(:dia AS DATE), :usuario, :tipo, 1, :chamadas, :entrada, :saida)"
+            " ON CONFLICT (dia, usuario, tipo) DO UPDATE SET leituras = uso_tokens.leituras + 1,"
+            " chamadas = uso_tokens.chamadas + EXCLUDED.chamadas,"
+            " tokens_entrada = uso_tokens.tokens_entrada + EXCLUDED.tokens_entrada,"
+            " tokens_saida = uso_tokens.tokens_saida + EXCLUDED.tokens_saida",
+            dia=dia, usuario=usuario, tipo=tipo, chamadas=chamadas, entrada=entrada, saida=saida))
+    except Exception as e:
+        print(f"[CUSTO] tokens não gravados ({type(e).__name__})", flush=True)
+
+
+@app.after_request
+def _gravar_tokens(resp):
+    try:
+        chamadas = getattr(g, "chamadas_ia", 0)
+        tipo = _TIPO_DA_ROTA.get(request.path)
+        if chamadas and tipo and os.getenv("DATABASE_URL", "").strip():
+            import threading
+            dia = datetime.now(FUSO_BR).strftime("%Y-%m-%d")
+            usuario = getattr(g, "usuario", "") or "sem-login"
+            threading.Thread(target=_gravar_tokens_no_banco, daemon=True, args=(
+                dia, usuario, tipo, chamadas, getattr(g, "tokens_entrada", 0), getattr(g, "tokens_saida", 0))).start()
+    except Exception:
+        pass
+    return resp
+
+
+def _medias_tokens():
+    """{tipo: {entrada, saida, medidas}}: média real por leitura (últimos 90 dias)."""
+    medias = {t: {"entrada": e, "saida": s, "medidas": 0} for t, (e, s) in TOKENS_ESTIMADOS.items()}
+    if not os.getenv("DATABASE_URL", "").strip():
+        return medias
+    try:
+        linhas = _no_banco(lambda con: con.run(
+            "SELECT tipo, SUM(leituras), SUM(tokens_entrada), SUM(tokens_saida) FROM uso_tokens"
+            " WHERE dia >= CURRENT_DATE - 90 GROUP BY tipo")) or []
+        for tipo, n, ent, sai in linhas:
+            n = int(n or 0)
+            if n > 0:
+                medias[str(tipo)] = {"entrada": round(int(ent or 0) / n), "saida": round(int(sai or 0) / n), "medidas": n}
+    except Exception as e:
+        print(f"[CUSTO] médias indisponíveis ({type(e).__name__})", flush=True)
+    return medias
+
+
 @app.get("/uso")
 def uso():
     if _login_ligado():
@@ -1228,6 +1318,7 @@ def uso():
     empresa_de = {u: empresa_de.get(u, "") for u in nomes}
     contas = _usuarios()
     admins = {u: bool(contas.get(u, {}).get("admin")) for u in nomes}
+    medias = _medias_tokens()
     todos = _usuarios_todos()
     excluidos = [{"usuario": u, "nome": str(todos[u].get("nome") or u)}
                  for u in sorted(_excluidos(atualizar=True)) if u in todos] if dono else []
@@ -1250,7 +1341,9 @@ def uso():
                             "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
                             "excluidos": excluidos, "admins": admins,
-                            "donos": list(DONOS_SISTEMA) if dono else []})
+                            "donos": list(DONOS_SISTEMA) if dono else [],
+                            "custo": {"medias": medias, "preco": PRECO_SIMULADO, "comparacao": PRECO_COMPARACAO,
+                                      "cotacao": _cotacao_dolar()}})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
@@ -1262,7 +1355,9 @@ def uso():
                     "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
                             "excluidos": excluidos, "admins": admins,
-                            "donos": list(DONOS_SISTEMA) if dono else []})
+                            "donos": list(DONOS_SISTEMA) if dono else [],
+                            "custo": {"medias": medias, "preco": PRECO_SIMULADO, "comparacao": PRECO_COMPARACAO,
+                                      "cotacao": _cotacao_dolar()}})
 
 
 # ============================================================

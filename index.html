@@ -301,6 +301,12 @@
     .tabela-senhas td:last-child { text-align: right !important; }
     .tabela-uso .sim { color: var(--ok, #18794e); font-weight: 700; }
     .tabela-uso .nao { color: #8a6100; font-weight: 700; }
+    .custo-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 6px 0 12px; }
+    .custo-card { border: 1px solid var(--linha); border-radius: var(--raio); padding: 10px 12px; background: var(--campo); display: flex; flex-direction: column; gap: 2px; }
+    .custo-card span { font-size: 11.5px; font-weight: 700; color: var(--tinta-2); text-transform: uppercase; letter-spacing: .03em; }
+    .custo-card b { font-size: 20px; color: var(--tinta); font-variant-numeric: tabular-nums; }
+    .custo-card small { font-size: 12px; color: var(--tinta-2); }
+    .tabela-uso .custo-valor { font-weight: 700; white-space: nowrap; }
     .tabela-uso .bloq { color: var(--erro, #b3261e); font-weight: 700; }
     .barra-empresa { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin: 0 0 14px; padding: 10px 12px;
       border: 1px solid var(--linha); border-radius: var(--raio); background: var(--campo); font-size: 13px; }
@@ -2387,9 +2393,9 @@
   let EMPRESA_USO = null;
   const escHtml = (s) => String(s == null ? "" : s).replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
 
-  async function carregarUso() {
+  async function carregarUso(silencioso) {
     const caixa = document.getElementById("conteudoUso");
-    caixa.innerHTML = '<p class="vazio">Carregando…</p>';
+    if (silencioso !== true) caixa.innerHTML = '<p class="vazio">Carregando…</p>';
     try {
       const resp = await postarOuObter("/uso");
       const data = await resp.json();
@@ -2453,12 +2459,67 @@
     });
     const filtrar = (obj) => obj ? Object.fromEntries(Object.entries(obj).filter(([u]) => visiveis.has(u))) : obj;
     document.getElementById("conteudoUso").innerHTML =
-      tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes) +
-      (data.persistente ? tabelaUso("Mês passado", doAnterior) : "") +
+      painelCustos(doDia, doMes, doAnterior, data.custo, data.persistente) +
       tabelaSenhas({ ...data, senhas: filtrar(data.senhas) }, sel, dono);
     document.getElementById("notaUso").textContent = data.persistente
       ? "Números guardados no banco de dados (só as contagens, nenhum dado de cliente)."
       : `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
+  }
+
+  // ---------- Custo estimado da IA (simulação da API paga) ----------
+  // Custo = leituras de cada tipo x média de tokens medida daquele tipo x preço.
+  const brl = (v) => "R$ " + v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  function custoLeituras(contas, custo, preco) {
+    // contas: {usuario: {tipo: n}} -> {porUsuario: {u: {leituras, reais, tipos}}, total, leituras}
+    const p = preco || custo.preco, cot = custo.cotacao || 5.5, med = custo.medias || {};
+    const reaisPorLeitura = (tipo) => {
+      const m = med[tipo] || { entrada: 4000, saida: 400 };
+      return ((m.entrada * p.entrada_usd + m.saida * p.saida_usd) / 1e6) * cot;
+    };
+    const porUsuario = {}; let total = 0, leituras = 0;
+    Object.entries(contas).forEach(([u, tipos]) => {
+      let r = 0, n = 0;
+      Object.entries(tipos).forEach(([tipo, q]) => { r += q * reaisPorLeitura(tipo); n += q; });
+      porUsuario[u] = { reais: r, leituras: n, tipos };
+      total += r; leituras += n;
+    });
+    return { porUsuario, total, leituras };
+  }
+  function painelCustos(doDia, doMes, doAnterior, custo, persistente) {
+    if (!custo) return "";
+    const hoje = custoLeituras(doDia, custo), mes = custoLeituras(doMes, custo), ant = custoLeituras(doAnterior, custo);
+    const sonnetMes = custoLeituras(doMes, custo, custo.comparacao).total;
+    const agora = new Date(), diasMes = new Date(agora.getFullYear(), agora.getMonth() + 1, 0).getDate();
+    const projecao = agora.getDate() ? mes.total / agora.getDate() * diasMes : 0;
+    const medio = mes.leituras ? mes.total / mes.leituras : 0;
+    const card = (titulo, valor, sub) => `<div class="custo-card"><span>${titulo}</span><b>${valor}</b><small>${sub}</small></div>`;
+    const nomes = Object.keys(doMes).sort((a, b) => String(NOMES_USO[a] || a).localeCompare(String(NOMES_USO[b] || b), "pt-BR"));
+    const soma = {};
+    const linhas = nomes.map(u => {
+      const x = mes.porUsuario[u], hj = (hoje.porUsuario[u] || { leituras: 0, reais: 0 });
+      const cels = TIPOS_USO.map(([k]) => { const v = x.tipos[k] || 0; soma[k] = (soma[k] || 0) + v; return `<td>${v}</td>`; }).join("");
+      return `<tr><td>${escHtml(NOMES_USO[u] || (u === "sem-login" ? "Sem login" : u))}</td>${cels}<td><b>${x.leituras}</b></td>` +
+             `<td>${hj.leituras}</td><td class="custo-valor">${brl(x.reais)}</td></tr>`;
+    }).join("");
+    const cab = TIPOS_USO.map(([, r]) => `<th>${r}</th>`).join("");
+    const rod = TIPOS_USO.map(([k]) => `<td>${soma[k] || 0}</td>`).join("");
+    const medidas = Object.values(custo.medias || {}).reduce((s, m) => s + (m.medidas || 0), 0);
+    return `<div class="uso-bloco"><h3>Custo estimado da IA <span class="opcional">&nbsp;· simulação: ${escHtml(custo.preco.modelo)} pago · US$ 1 = ${brl(Number(custo.cotacao) || 5.5)}</span></h3>` +
+      `<div class="custo-cards">` +
+        card("Este mês", brl(mes.total), `${mes.leituras} leituras`) +
+        card("Hoje", brl(hoje.total), `${hoje.leituras} leituras`) +
+        card("Projeção do mês", brl(projecao), `no ritmo de hoje até dia ${diasMes}`) +
+        card("Por leitura", "R$ " + medio.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 }), `${brl(medio * 100)} a cada 100 leituras`) +
+        (persistente ? card("Mês passado", brl(ant.total), `${ant.leituras} leituras`) : "") +
+      `</div>` +
+      (nomes.length
+        ? `<table class="tabela-uso"><thead><tr><th>Analista</th>${cab}<th>Leituras no mês</th><th>Hoje</th><th>Custo no mês</th></tr></thead>` +
+          `<tbody>${linhas}</tbody><tfoot><tr><td>Total</td>${rod}<td>${mes.leituras}</td><td>${hoje.leituras}</td><td class="custo-valor">${brl(mes.total)}</td></tr></tfoot></table>`
+        : `<p class="dica">Nenhuma leitura neste mês.</p>`) +
+      `<p class="dica">Hoje a IA (Groq) é gratuita: estes valores simulam quanto custaria na API paga do ${escHtml(custo.preco.modelo)}. ` +
+      `No ${escHtml(custo.comparacao.modelo)} (mais forte) este mês seria cerca de ${brl(sonnetMes)}. ` +
+      (medidas ? `Consumo medido em ${medidas} leituras reais.` : `Ainda estimado: o consumo real é medido a cada nova leitura.`) +
+      ` Atualiza sozinho a cada minuto.</p></div>`;
   }
 
   async function postarAdmin(rota, corpo) {
@@ -3412,6 +3473,12 @@
   document.getElementById("tabHolerite").addEventListener("click", () => mostrarAba("holerite"));
   document.getElementById("tabUso").addEventListener("click", () => mostrarAba("uso"));
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
+  setInterval(() => {
+    const aberto = document.getElementById("painelUso").classList.contains("active");
+    // Não atrapalha quem está digitando uma senha no painel.
+    const digitando = document.activeElement && document.activeElement.closest && document.activeElement.closest("#conteudoUso, #cadastroUso");
+    if (aberto && !document.hidden && !digitando) carregarUso(true);
+  }, 60000);
   document.getElementById("formLogin").addEventListener("submit", entrar);
   document.getElementById("hOcupacao").addEventListener("change", conferirOcupacao);
   document.getElementById("hFonteIr").addEventListener("change", (e) => {
