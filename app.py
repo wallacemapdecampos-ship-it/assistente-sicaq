@@ -2631,7 +2631,7 @@ cuidado, sem pular para a linha de cima ou de baixo.
 Chaves, NESTA ORDEM:
 origem, competencia, empregador_tipo, empregador_documento, cpf_funcionario,
 numero_beneficio, especie_beneficio, data_admissao, itens, total_proventos,
-total_descontos, liquido_original, campos_incertos.
+total_descontos, liquido_original, folha_estado_sp, campos_incertos.
 
 Regras:
 - origem: "INSS" se for extrato/demonstrativo de pagamento de benefício do
@@ -2668,6 +2668,11 @@ Regras:
 - liquido_original: TOTAL LÍQUIDO / LÍQUIDO A RECEBER (no INSS, VALOR LÍQUIDO).
   Não use salário base, base INSS ou base FGTS como total.
 - Valores monetários no formato brasileiro, ex.: "2304,21".
+- folha_estado_sp: true SOMENTE se o cabeçalho for "GOVERNO DO ESTADO DE SÃO
+  PAULO" com "Departamento de Despesa de Pessoal do Estado" (Demonstrativo
+  de Pagamento do servidor estadual de SP); senão false. Esse holerite não
+  tem CNPJ: deixe empregador_tipo e empregador_documento vazios (Reg.
+  Sistema, PV, Reg. Geral e U.C.D. NÃO são CNPJ).
 - Não invente. Campo ilegível = vazio e inclua a chave em campos_incertos.
 
 REGRA DE PERÍODO DO SICAQ:
@@ -3036,8 +3041,14 @@ def _eh_irrf(descricao):
 
 CNPJ_INSS = "29979036000140"
 
+# Demonstrativo de Pagamento do Governo do Estado de São Paulo
+# (Departamento de Despesa de Pessoal do Estado): não traz CNPJ impresso,
+# então o SICAQ recebe este CNPJ fixo.
+CNPJ_ESTADO_SP = "46379400000150"
+
 TIPOS_RENDA = {
     "HOLERITE_CNPJ": "Holerite (CNPJ)",
+    "HOLERITE_ESTADO_SP": "Holerite Governo do Estado de SP (CNPJ fixo)",
     "HOLERITE_CEI": "Holerite (CEI)",
     "HOLERITE_CAEPF": "Holerite (CAEPF)",
     "HOLERITE_CNO": "Holerite (CNO)",
@@ -3073,6 +3084,14 @@ def _fonte_renda(r):
     if "INSS" in origem:
         return saida("INSS", "JURÍDICA", CNPJ_INSS, "CNPJ", "EXTRATO DE BENEFÍCIO PREVIDENCIÁRIO")
 
+    # Holerite do Governo do Estado de SP: sem CNPJ impresso. Usa o CNPJ fixo
+    # e ignora qualquer número que a IA tenha pego (ex.: Reg. Sistema / PV).
+    # Para o site e a extensão continua sendo um holerite com CNPJ.
+    if _sim(r.get("folha_estado_sp")):
+        fonte = saida("HOLERITE_CNPJ", "JURÍDICA", CNPJ_ESTADO_SP, "CNPJ", "CONTRACHEQUE/HOLLERITH")
+        fonte["nome"] = TIPOS_RENDA["HOLERITE_ESTADO_SP"]
+        return fonte
+
     formato_caepf = re.fullmatch(r"\d{3}\.\d{3}\.\d{3}/\d{3}-\d{2}", impresso)
     if "CAEPF" in rotulo or (len(dig) == 14 and formato_caepf and not _cnpj_valido(dig)):
         tipo = "HOLERITE_CAEPF"
@@ -3096,6 +3115,20 @@ def _fonte_renda(r):
     # CEI / CAEPF / CNO: o SICAQ recebe o CPF do próprio cliente.
     return saida(tipo, "FÍSICA", cpf_func, "CPF", "CONTRACHEQUE/HOLLERITH",
                  [] if cpf_func else ["documento_fonte"])
+
+
+def _holerite_estado_sp_pdf(arquivos):
+    """
+    True quando o PDF é o Demonstrativo de Pagamento do Governo do Estado de
+    SP (cabeçalho "GOVERNO DO ESTADO DE SÃO PAULO" + "Departamento de Despesa
+    de Pessoal do Estado"). Foto ou scan sem texto: decide a IA.
+    """
+    try:
+        txt = _tirar_acentos(_texto_pdf_arquivos(arquivos)).upper()
+    except Exception:
+        return False
+    txt = re.sub(r"\s+", " ", txt)
+    return "GOVERNO DO ESTADO DE SAO PAULO" in txt and "DESPESA DE PESSOAL DO ESTADO" in txt
 
 
 def _normalizar_holerite(resultado):
@@ -3207,7 +3240,7 @@ def _normalizar_holerite(resultado):
     return {
         "caracteristica_renda": "COMPROVADA",
         "tipo_renda": fonte["tipo"],
-        "tipo_renda_nome": TIPOS_RENDA.get(fonte["tipo"], ""),
+        "tipo_renda_nome": fonte.get("nome") or TIPOS_RENDA.get(fonte["tipo"], ""),
         "tipo_fonte": fonte["tipo_fonte"],
         "documento_fonte": fonte["documento_fonte"],
         "documento_fonte_rotulo": fonte["rotulo"],
@@ -3592,6 +3625,9 @@ def ler_holerite():
 
     try:
         resultado, modelo, tempo_api = _groq_holerite_call(arquivos)
+        # PDF com texto: confere o cabeçalho do Estado de SP sem depender da IA.
+        if _holerite_estado_sp_pdf(arquivos):
+            resultado = {**(resultado or {}), "folha_estado_sp": True}
         dados = _normalizar_holerite(resultado)
         _registrar_uso("renda")
 
