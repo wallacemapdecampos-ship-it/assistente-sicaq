@@ -2460,7 +2460,8 @@
     });
     const filtrar = (obj) => obj ? Object.fromEntries(Object.entries(obj).filter(([u]) => visiveis.has(u))) : obj;
     document.getElementById("conteudoUso").innerHTML =
-      painelCustos(doDia, doMes, doAnterior, data.custo, data.persistente) +
+      painelCustos(doDia, doMes, doAnterior, data.custo, data.persistente,
+        new Set((data.linhas || []).filter(l => visiveis.has(l.usuario) && String(l.dia).startsWith(mes)).map(l => l.dia)).size) +
       tabelaSenhas({ ...data, senhas: filtrar(data.senhas) }, sel, dono);
     document.getElementById("notaUso").textContent = data.persistente
       ? "Números guardados no banco de dados (só as contagens, nenhum dado de cliente)."
@@ -2486,12 +2487,21 @@
     });
     return { porUsuario, total, leituras };
   }
-  function painelCustos(doDia, doMes, doAnterior, custo, persistente) {
+  function painelCustos(doDia, doMes, doAnterior, custo, persistente, diasComUso) {
     if (!custo) return "";
     const hoje = custoLeituras(doDia, custo), mes = custoLeituras(doMes, custo), ant = custoLeituras(doAnterior, custo);
     const sonnetMes = custoLeituras(doMes, custo, custo.comparacao).total;
+    // Projeção: média por DIA COM USO x dias úteis (seg a sex) que faltam,
+    // somada ao que já foi gasto. Assim os dias antes de começar a usar o
+    // sistema não puxam a média para baixo.
     const agora = new Date(), diasMes = new Date(agora.getFullYear(), agora.getMonth() + 1, 0).getDate();
-    const projecao = agora.getDate() ? mes.total / agora.getDate() * diasMes : 0;
+    let uteisRestantes = 0;
+    for (let dia = agora.getDate() + 1; dia <= diasMes; dia++) {
+      const sem = new Date(agora.getFullYear(), agora.getMonth(), dia).getDay();
+      if (sem !== 0 && sem !== 6) uteisRestantes++;
+    }
+    const porDia = diasComUso ? mes.total / diasComUso : 0;
+    const projecao = mes.total + porDia * uteisRestantes;
     const medio = mes.leituras ? mes.total / mes.leituras : 0;
     const card = (titulo, valor, sub) => `<div class="custo-card"><span>${titulo}</span><b>${valor}</b><small>${sub}</small></div>`;
     const nomes = Object.keys(doMes).sort((a, b) => String(NOMES_USO[a] || a).localeCompare(String(NOMES_USO[b] || b), "pt-BR"));
@@ -2509,7 +2519,9 @@
       `<div class="custo-cards">` +
         card("Este mês", brl(mes.total), `${mes.leituras} leituras`) +
         card("Hoje", brl(hoje.total), `${hoje.leituras} leituras`) +
-        card("Projeção do mês", brl(projecao), `no ritmo de hoje até dia ${diasMes}`) +
+        card("Projeção do mês", brl(projecao), diasComUso
+          ? `${brl(porDia)}/dia de uso (${diasComUso} dia${diasComUso > 1 ? "s" : ""}) + ${uteisRestantes} dias úteis até ${diasMes}`
+          : "sem uso neste mês") +
         card("Por leitura", "R$ " + medio.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 }), `${brl(medio * 100)} a cada 100 leituras`) +
         (persistente ? card("Mês passado", brl(ant.total), `${ant.leituras} leituras`) : "") +
       `</div>` +
