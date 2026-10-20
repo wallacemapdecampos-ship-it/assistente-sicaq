@@ -88,17 +88,31 @@ def _contar_tokens(body):
         pass
 
 
+_GROQ_PAUSADA_ATE = 0.0  # enquanto a Groq estiver sem limite, usa só a reserva
+
+
 def _groq_abrir(req, timeout=35, esperar_limite=True):
     """
     Envia o pedido à Groq. No limite POR MINUTO do plano gratuito, se a espera
     for curta (até 45 s), aguarda e tenta de novo sozinho; assim o analista
     não vê erro. Limite diário ou espera longa: avisa quanto tempo falta.
     """
+    global _GROQ_PAUSADA_ATE
+    if time.time() < _GROQ_PAUSADA_ATE:
+        # Groq sem limite: vai direto na reserva, sem perder tempo tentando.
+        if not esperar_limite:
+            raise GroqLimite("Groq no limite; 2ª leitura pulada.")
+        reserva = _ia_reserva(req, timeout)
+        if reserva is not None:
+            return reserva
     for tentativa in range(2):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
             _contar_tokens(body)
+            if _GROQ_PAUSADA_ATE:
+                _GROQ_PAUSADA_ATE = 0.0
+                print("[GROQ] voltou; reserva desligada", flush=True)
             return body
         except urllib.error.HTTPError as e:
             if e.code >= 500 and esperar_limite:
@@ -128,6 +142,10 @@ def _groq_abrir(req, timeout=35, esperar_limite=True):
             if esperar_limite and tentativa == 0 and not diario and espera is not None and espera <= 45:
                 time.sleep(espera + 0.7)
                 continue
+            # Limite diário (ou espera longa): pula a Groq até ela liberar.
+            if _reserva_configurada() and (diario or (espera or 0) > 45):
+                _GROQ_PAUSADA_ATE = time.time() + (espera if espera is not None else 600) + 5
+                print(f"[GROQ] pausada por {(_GROQ_PAUSADA_ATE - time.time()) / 60:.0f} min; usando só a reserva", flush=True)
             # Groq no limite: tenta a IA reserva (Cloudflare) com o mesmo pedido.
             # A 2ª leitura do holerite (esperar_limite=False) só é pulada.
             if esperar_limite:
