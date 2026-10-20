@@ -559,6 +559,38 @@ def resetar_senha():
     return jsonify({"ok": True})
 
 
+@app.post("/definir-senha")
+def definir_senha():
+    """ADM escolhe a senha de um analista (já vale no próximo login e desbloqueia)."""
+    conta = _usuarios().get(getattr(g, "usuario", ""), {})
+    if not conta.get("admin"):
+        return jsonify({"ok": False, "error": "Só o administrador pode definir senhas."}), 403
+    dados = request.get_json(silent=True) or {}
+    alvo = str(dados.get("usuario") or "").strip().lower()
+    nova = str(dados.get("senha_nova") or "")
+    conta_alvo = _usuarios().get(alvo)
+    if not conta_alvo:
+        return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    problema = _problema_senha_nova(alvo, conta_alvo, nova)
+    if problema:
+        return jsonify({"ok": False, "error": problema}), 400
+    if not os.getenv("DATABASE_URL", "").strip():
+        return jsonify({"ok": False, "error": "Sem banco de senhas configurado no servidor."}), 503
+    try:
+        _no_banco(lambda con: con.run(
+            "INSERT INTO senhas_usuarios (usuario, senha) VALUES (:usuario, :senha)"
+            " ON CONFLICT (usuario) DO UPDATE SET senha = EXCLUDED.senha, trocada_em = CURRENT_TIMESTAMP",
+            usuario=alvo, senha=_hash_senha(nova),
+        ))
+    except Exception as e:
+        print(f"[SENHA] definir falhou ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Não consegui salvar a senha agora. Tente de novo em 1 minuto."}), 503
+    _senhas_proprias(atualizar=True)
+    _limpar_bloqueio(alvo)
+    print(f"[SENHA] {g.usuario} definiu a senha de {alvo}", flush=True)
+    return jsonify({"ok": True})
+
+
 @app.post("/desbloquear")
 def desbloquear():
     conta = _usuarios().get(getattr(g, "usuario", ""), {})

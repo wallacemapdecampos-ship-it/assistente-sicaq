@@ -266,6 +266,8 @@
     .tabela-uso .sim { color: var(--ok, #18794e); font-weight: 700; }
     .tabela-uso .nao { color: #8a6100; font-weight: 700; }
     .tabela-uso .bloq { color: var(--erro, #b3261e); font-weight: 700; }
+    .tabela-senhas .definir-senha { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; padding: 4px 0; }
+    .tabela-senhas .definir-senha input { height: 28px; width: 170px; max-width: 100%; font-size: 13px; }
     .conta { display: inline-flex; align-items: center; gap: 10px; color: #e3e9f0; font-weight: 700; white-space: nowrap; }
     header .sair {
       height: 28px; padding: 0 10px; font-size: 12.5px;
@@ -2187,15 +2189,60 @@
           : '<span class="nao">Ainda com a senha inicial</span>');
       const botoes = [
         travado ? `<button type="button" class="secondary resetar desbloquear" data-usuario="${uSeguro}" data-nome="${nome}">Desbloquear</button>` : "",
+        `<button type="button" class="secondary resetar definir" data-usuario="${uSeguro}" data-nome="${nome}">Definir senha</button>`,
         // ADM reseta qualquer analista, quantas vezes quiser.
         `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>`
       ].filter(Boolean).join(" ");
-      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${status}</td><td>${botoes}</td></tr>`;
+      const painel =
+        `<tr class="linha-definir" data-usuario="${uSeguro}" hidden><td colspan="4"><div class="definir-senha">` +
+        `<span>Nova senha de <b>${nome}</b>:</span>` +
+        `<input type="password" class="defNova" placeholder="Senha nova (mín. 6)" autocomplete="new-password">` +
+        `<input type="password" class="defNova2" placeholder="Repita a senha" autocomplete="new-password">` +
+        `<button type="button" class="resetar salvar-definir" data-usuario="${uSeguro}" data-nome="${nome}">Salvar</button>` +
+        `<button type="button" class="secondary resetar cancelar-definir">Cancelar</button>` +
+        `</div></td></tr>`;
+      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
     }).join("");
     return `<div class="uso-bloco"><h3>Senhas</h3><table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Situação</th><th></th></tr></thead>` +
            `<tbody>${linhas}</tbody></table>` +
-           `<p class="dica">O analista só cria a senha no 1º acesso. Você pode Resetar qualquer um, quantas vezes quiser: a pessoa entra com a senha inicial e cria outra. ` +
+           `<p class="dica">O analista só cria a senha no 1º acesso. Definir senha: você escolhe a senha nova e ela já vale no próximo login. ` +
+           `Resetar: a pessoa volta para a senha inicial e cria outra. Os dois podem ser usados quantas vezes quiser. ` +
            `Errou a senha 3 vezes: fica bloqueado. Desbloquear libera com a mesma senha; Resetar libera e pede senha nova.</p></div>`;
+  }
+
+  function abrirDefinirSenha(usuario) {
+    document.querySelectorAll("#conteudoUso tr.linha-definir").forEach(tr => {
+      const abrir = tr.dataset.usuario === usuario && tr.hidden;
+      tr.hidden = !abrir;
+      tr.querySelector(".defNova").value = "";
+      tr.querySelector(".defNova2").value = "";
+      if (abrir) tr.querySelector(".defNova").focus();
+    });
+  }
+
+  async function salvarDefinirSenha(botao) {
+    const tr = botao.closest("tr.linha-definir");
+    const usuario = botao.dataset.usuario, nome = botao.dataset.nome;
+    const nova = tr.querySelector(".defNova").value;
+    const nota = document.getElementById("notaUso");
+    if (nova.length < 6) { nota.textContent = "A senha precisa ter pelo menos 6 caracteres."; return; }
+    if (nova !== tr.querySelector(".defNova2").value) { nota.textContent = "As duas senhas não são iguais."; return; }
+    botao.disabled = true;
+    try {
+      const resp = await fetchComLimite(API + "/definir-senha", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...cabecalhoLogin() },
+        body: JSON.stringify({ usuario, senha_nova: nova })
+      }, 30000);
+      let data = {};
+      try { data = await resp.json(); } catch (_) {}
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível salvar a senha.");
+      await carregarUso();
+      document.getElementById("notaUso").textContent = `Senha de ${nome} definida. Já vale no próximo login (e está desbloqueado).`;
+    } catch (e) {
+      nota.textContent = "Erro: " + (e.message || e);
+      botao.disabled = false;
+    }
   }
 
   async function desbloquearUsuario(usuario, nome) {
@@ -2623,7 +2670,10 @@
   document.getElementById("conteudoUso").addEventListener("click", (e) => {
     const b = e.target.closest("button.resetar");
     if (!b) return;
-    if (b.classList.contains("desbloquear")) desbloquearUsuario(b.dataset.usuario, b.dataset.nome);
+    if (b.classList.contains("definir")) abrirDefinirSenha(b.dataset.usuario);
+    else if (b.classList.contains("salvar-definir")) salvarDefinirSenha(b);
+    else if (b.classList.contains("cancelar-definir")) b.closest("tr.linha-definir").hidden = true;
+    else if (b.classList.contains("desbloquear")) desbloquearUsuario(b.dataset.usuario, b.dataset.nome);
     else resetarSenha(b.dataset.usuario, b.dataset.nome);
   });
   document.getElementById("btnLerHolerite").addEventListener("click", lerHolerite);
