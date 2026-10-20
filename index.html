@@ -1310,6 +1310,11 @@
     return false;
   }
 
+  // Groq no limite: a leitura foi feita pela IA reserva (Cloudflare).
+  function avisoReserva(data) {
+    return data && data.ia_reserva ? "⚠ Lido pela IA reserva (a principal está no limite), confira com atenção. " : "";
+  }
+
   async function postarComServidorAcordado(rota, form, avisar) {
     for (let tentativa = 1; tentativa <= 2; tentativa++) {
       const acordado = await acordarServidor(avisar);
@@ -1406,7 +1411,7 @@
       } else {
         setMsgPis(data.fonte === "texto"
           ? "PIS encontrado no PDF (sem usar a IA)."
-          : "PIS lido. Confira antes de preencher.", "ok");
+          : avisoReserva(data) + "PIS lido. Confira antes de preencher.", data.ia_reserva ? "warn" : "ok");
       }
     } catch (e) {
       setMsgPis("Erro: " + (e.message || e), "erro");
@@ -1466,9 +1471,10 @@
       if (data.averbacoes) partes.push("Averbações: " + data.averbacoes);
       (data.avisos || []).forEach(a => partes.push(a));
       if (data.aviso_pasta) partes.push(data.aviso_pasta);
+      if (data.ia_reserva) partes.unshift("⚠ Lido pela IA reserva (a principal está no limite), confira com atenção");
       if (!sel.value) partes.push("Escolha o estado civil manualmente");
       const texto = partes.map(p => String(p).trim().replace(/\.+$/, "")).filter(Boolean).join(". ") + ".";
-      setMsgCertidao(texto, !sel.value ? "erro" : ((data.incerto || data.aviso_pasta) ? "warn" : "ok"));
+      setMsgCertidao(texto, !sel.value ? "erro" : ((data.incerto || data.aviso_pasta || data.ia_reserva) ? "warn" : "ok"));
     } catch (e) {
       setMsgCertidao("Erro: " + (e.message || e), "erro");
     } finally {
@@ -1848,7 +1854,7 @@
       const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const qtd = data.arquivos_lidos || input.files.length || 1;
       setMensagem(
-        (data.repetida ? "Mesmo arquivo lido há pouco: usei a leitura anterior (sem gastar a IA). "
+        avisoReserva(data) + (data.repetida ? "Mesmo arquivo lido há pouco: usei a leitura anterior (sem gastar a IA). "
           : `${qtd > 1 ? qtd + " arquivos lidos" : "Documento lido"} em ${total} s. `) +
         (duvidosos
           ? `Confira no documento o${duvidosos > 1 ? "s campos" : " campo"} em amarelo antes de preencher.`
@@ -2991,7 +2997,7 @@
       const conf = data.cep || {};
       const okCep = conf.pode_usar && (conf.status === "ok" || (conf.status === "trocado" && conf.certeza));
       setMensagemEndereco(
-        (data.repetida ? "Mesmo comprovante lido há pouco: usei a leitura anterior (sem gastar a IA). " : `Comprovante lido em ${total} s. `) +
+        avisoReserva(data) + (data.repetida ? "Mesmo comprovante lido há pouco: usei a leitura anterior (sem gastar a IA). " : `Comprovante lido em ${total} s. `) +
         (conf.status === "trocado" ? `CEP genérico trocado pelo CEP da rua (${conf.cep}). ` : "") +
         (okCep ? (conf.status === "ok" ? "CEP conferido." : "") : "Veja o aviso do CEP abaixo antes de usar.") +
         (data.aviso_pasta ? " " + data.aviso_pasta : ""),
@@ -3464,7 +3470,7 @@
         return;
       }
       setMensagemHolerite(
-        (data.repetida ? "Mesmo comprovante lido há pouco: usei a leitura anterior (sem gastar a IA). "
+        avisoReserva(data) + (data.repetida ? "Mesmo comprovante lido há pouco: usei a leitura anterior (sem gastar a IA). "
           : `${qtdLidos > 1 ? qtdLidos + " arquivos lidos" : "Comprovante lido"} em ${total} s. `) +
         (contasOk
           ? "Contas conferidas (proventos − descontos = líquido)."

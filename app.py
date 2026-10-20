@@ -101,6 +101,11 @@ def _groq_abrir(req, timeout=35, esperar_limite=True):
             _contar_tokens(body)
             return body
         except urllib.error.HTTPError as e:
+            if e.code >= 500 and esperar_limite:
+                print(f"[GROQ] fora do ar (HTTP {e.code}); tentando a IA reserva", flush=True)
+                reserva = _ia_reserva(req, timeout)
+                if reserva is not None:
+                    return reserva
             if e.code != 429:
                 raise
             detalhe = e.read().decode("utf-8", errors="replace")
@@ -123,10 +128,115 @@ def _groq_abrir(req, timeout=35, esperar_limite=True):
             if esperar_limite and tentativa == 0 and not diario and espera is not None and espera <= 45:
                 time.sleep(espera + 0.7)
                 continue
+            # Groq no limite: tenta a IA reserva (Cloudflare) com o mesmo pedido.
+            # A 2ª leitura do holerite (esperar_limite=False) só é pulada.
+            if esperar_limite:
+                reserva = _ia_reserva(req, timeout)
+                if reserva is not None:
+                    return reserva
             if diario:
                 raise GroqLimite("Limite diário gratuito da Groq atingido. " + _texto_espera(espera))
             raise GroqLimite("Limite por minuto da Groq atingido. " + _texto_espera(espera))
+    if esperar_limite:
+        reserva = _ia_reserva(req, timeout)
+        if reserva is not None:
+            return reserva
     raise GroqLimite("Limite por minuto da Groq atingido. " + _texto_espera(None))
+
+
+CF_MODELO_PADRAO = "@cf/meta/llama-4-scout-17b-16e-instruct"
+
+
+def _reserva_configurada():
+    return bool(os.getenv("CF_ACCOUNT_ID", "").strip() and os.getenv("CF_API_TOKEN", "").strip())
+
+
+def _json_do_texto(texto):
+    """Tira cercas ```json e texto em volta; devolve o JSON como texto limpo."""
+    t = str(texto or "").strip()
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.I).strip()
+    try:
+        json.loads(t)
+        return t
+    except Exception:
+        pass
+    ini, fim = t.find("{"), t.rfind("}")
+    if ini >= 0 and fim > ini:
+        trecho = t[ini:fim + 1]
+        json.loads(trecho)
+        return trecho
+    raise ValueError("resposta sem JSON")
+
+
+def _ia_reserva(req, timeout=35):
+    """
+    IA reserva gratuita (Cloudflare Workers AI, Llama 4 Scout), usada só quando
+    a Groq bate no limite. Recebe o MESMO pedido montado para a Groq e devolve
+    a resposta no mesmo formato. Devolve None se não estiver configurada ou falhar.
+    A Cloudflare não usa os dados enviados para treinar modelos.
+    """
+    if not _reserva_configurada():
+        return None
+    try:
+        original = json.loads(req.data.decode("utf-8"))
+    except Exception:
+        return None
+    conta = os.getenv("CF_ACCOUNT_ID", "").strip()
+    token = os.getenv("CF_API_TOKEN", "").strip()
+    modelo = os.getenv("CF_MODEL", "").strip() or CF_MODELO_PADRAO
+    payload = {
+        "model": modelo,
+        "messages": original.get("messages") or [],
+        "temperature": original.get("temperature", 0.0),
+        "max_tokens": max(int(original.get("max_completion_tokens") or original.get("max_tokens") or 512), 256) + 200,
+        "stream": False,
+    }
+    if original.get("response_format"):
+        payload["response_format"] = {"type": "json_object"}
+    url = f"https://api.cloudflare.com/client/v4/accounts/{conta}/ai/v1/chat/completions"
+    ultimo = None
+    for tentativa in range(2):
+        pedido = urllib.request.Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "User-Agent": "Assistente-SICAQ-Reserva/1.0",
+            },
+            method="POST",
+        )
+        try:
+            t0 = time.perf_counter()
+            with urllib.request.urlopen(pedido, timeout=max(timeout, 60)) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            texto = body["choices"][0]["message"]["content"]
+            body["choices"][0]["message"]["content"] = _json_do_texto(texto)
+            body["model"] = "reserva:" + modelo
+            _contar_tokens(body)
+            try:
+                from flask import has_request_context
+                if has_request_context():
+                    g.ia_reserva = True
+            except Exception:
+                pass
+            print(f"[RESERVA] leitura feita pela IA reserva em {time.perf_counter() - t0:.1f}s", flush=True)
+            return body
+        except urllib.error.HTTPError as e:
+            # A mensagem de erro da Cloudflare não traz dados do cliente.
+            detalhe = e.read().decode("utf-8", errors="replace")[:300]
+            ultimo = f"HTTP {e.code}: {detalhe!r}"
+            if e.code == 400 and "response_format" in payload:
+                payload.pop("response_format", None)  # modelo sem modo JSON: tenta sem
+                continue
+            break
+        except Exception as e:
+            ultimo = type(e).__name__
+            if tentativa == 0 and isinstance(e, ValueError):
+                continue
+            break
+    print(f"[RESERVA] falhou ({ultimo})", flush=True)
+    return None
 
 
 RATE_WINDOW = 60
@@ -5618,8 +5728,15 @@ def _com_cache_de_leitura(funcao):
                 print(f"[CACHE] {request.path}: leitura repetida, sem IA", flush=True)
                 return jsonify({**item[1], "repetida": True, "tempo_api": 0, "tempo_total": 0})
         resp = funcao(*args, **kwargs)
+        reserva = bool(getattr(g, "ia_reserva", False))
         try:
             corpo = resp.get_json(silent=True) if hasattr(resp, "get_json") else None
+            if reserva and isinstance(corpo, dict):
+                # Avisa o site; leitura da reserva não fica no cache, para a
+                # próxima tentativa poder usar a Groq de novo.
+                corpo = {**corpo, "ia_reserva": True}
+                resp = (jsonify(corpo), getattr(resp, "status_code", 200))
+                return resp
             if chave and getattr(resp, "status_code", 200) == 200 and isinstance(corpo, dict) and corpo.get("ok"):
                 if len(_CACHE_LEITURA) >= CACHE_LEITURA_MAX:
                     for k in [k for k, v in _CACHE_LEITURA.items() if v[0] <= agora] or list(_CACHE_LEITURA)[:50]:
@@ -5634,6 +5751,56 @@ def _com_cache_de_leitura(funcao):
 for _rota in ("ler", "ler_holerite", "ler_pis", "ler_certidao", "ler_endereco"):
     if _rota in app.view_functions:
         app.view_functions[_rota] = _com_cache_de_leitura(app.view_functions[_rota])
+
+
+def _testar_reserva_no_inicio():
+    """
+    Ao subir o servidor, faz 1 leitura de teste na IA reserva com uma imagem
+    gerada aqui (só o texto TESTE 4821, nenhum dado de cliente) e escreve o
+    resultado no log. Roda uma vez por deploy.
+    """
+    if not _reserva_configurada():
+        print("[RESERVA] não configurada (CF_ACCOUNT_ID/CF_API_TOKEN)", flush=True)
+        return
+    marca = "/tmp/.teste_reserva_feito"
+    try:
+        fd = os.open(marca, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+    except FileExistsError:
+        return
+    except Exception:
+        pass
+
+    def rodar():
+        try:
+            from PIL import ImageDraw
+            im = Image.new("RGB", (360, 120), "white")
+            ImageDraw.Draw(im).text((30, 50), "CODIGO: TESTE 4821", fill="black")
+            buf = io.BytesIO()
+            im.resize((720, 240)).save(buf, "JPEG", quality=90)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            payload = {
+                "messages": [{"role": "user", "content": [
+                    {"type": "text", "text": 'Leia o codigo da imagem. Responda SOMENTE JSON: {"codigo": "..."}'},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                ]}],
+                "temperature": 0.0, "max_completion_tokens": 60,
+                "response_format": {"type": "json_object"},
+            }
+            req = urllib.request.Request("https://invalido.local", data=json.dumps(payload).encode("utf-8"))
+            body = _ia_reserva(req, 60)
+            if body is None:
+                print("[RESERVA] teste FALHOU (veja a linha acima)", flush=True)
+            else:
+                print(f"[RESERVA] teste ok: {body['choices'][0]['message']['content'][:80]}", flush=True)
+        except Exception as e:
+            print(f"[RESERVA] teste com erro ({type(e).__name__}: {e})", flush=True)
+
+    import threading
+    threading.Thread(target=rodar, daemon=True).start()
+
+
+_testar_reserva_no_inicio()
 
 
 if __name__ == "__main__":
