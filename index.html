@@ -224,6 +224,16 @@
       margin-top: 14px; padding-top: 12px; border-top: 1px solid #e7ecef;
     }
     .nota { margin-top: 12px; font-size: 12.5px; color: var(--tinta-2); line-height: 1.5; }
+    .pergunta-leme {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap;
+      margin-top: 14px; padding: 10px 14px; border: 1px solid #e2b500; border-radius: var(--raio);
+      background: var(--marca-fundo); font-size: 13.5px; color: var(--tinta);
+    }
+    .pergunta-leme[hidden] { display: none; }
+    .pergunta-leme.respondida { background: var(--campo); border-color: var(--linha); font-size: 12.5px; color: var(--tinta-2); }
+    .pergunta-leme .botoes-leme { display: flex; gap: 8px; }
+    .pergunta-leme.respondida button { height: 26px; padding: 0 10px; font-size: 12px; }
+    .pergunta-leme button.escolhido { background: var(--azul); color: #fff; border-color: var(--azul); }
     #msgRenda { font-size: 12.5px; max-width: 70ch; }
     #msgRenda.dica, #msgRenda.muted { color: var(--tinta-2); }
     #msgRenda.ok, #msgRenda.warn, #msgRenda.erro { font-weight: 700; }
@@ -659,6 +669,14 @@
           <label for="hDescricaoAdiantamento">Descrição do adiantamento</label>
           <input id="hDescricaoAdiantamento" type="text">
         </div>
+      </div>
+
+      <div id="perguntaLeme" class="pergunta-leme" hidden>
+        <span id="textoLeme"><b>Este cliente é de Leme?</b> Em Leme o adiantamento não é somado à líquida.</span>
+        <span class="botoes-leme">
+          <button id="btnLemeSim" type="button" class="secondary">Sim, é Leme</button>
+          <button id="btnLemeNao" type="button" class="secondary">Não</button>
+        </span>
       </div>
 
       <div id="notaHolerite" class="nota">
@@ -2097,7 +2115,8 @@
 
   function atualizarBotaoRenda() {
     document.getElementById("btnRenda").disabled =
-      !extensaoPronta || !ultimoHolerite || aguardandoRenda;
+      !extensaoPronta || !ultimoHolerite || aguardandoRenda ||
+      (typeof lemePendente === "function" && lemePendente());
   }
 
   function setMsgRenda(texto, classe = "dica") {
@@ -2313,6 +2332,8 @@
     ajustarRotuloFonte();
     levarOcupacaoParaRenda();
     liquidaManual = false;
+    respostaLeme = null;
+    document.getElementById("perguntaLeme").hidden = true;
     document.getElementById("contaLiquida").textContent = "";
     document.getElementById("hIrrf").disabled = false;
     document.getElementById("hIrrf").placeholder = "";
@@ -2324,6 +2345,7 @@
 
   function preencherHolerite(d) {
     ultimoHolerite = { ...(d || {}) };
+    respostaLeme = null;  // cada comprovante novo pergunta de novo
     const tipo = String(d.tipo_renda || "");
     const selo = document.getElementById("hTipoRenda");
     let nomeTipo = d.tipo_renda_nome || "";
@@ -2426,23 +2448,69 @@
     return n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
   let liquidaManual = false;
+
+  // ---------- Leme: lá o adiantamento NÃO é somado à líquida ----------
+  // Quando há adiantamento, o site pergunta se o cliente é de Leme.
+  // null = ainda não respondeu; true = Leme (não soma); false = soma.
+  // Só o login "map" tem essa opção; os outros sempre somam, sem pergunta.
+  const USUARIOS_COM_LEME = ["map"];
+  let respostaLeme = null;
+  function temOpcaoLeme() {
+    return !!(SESSAO && USUARIOS_COM_LEME.includes(String(SESSAO.usuario || "").toLowerCase()));
+  }
+  function adiantamentoAtual() {
+    return lerValorBR(document.getElementById("hAdiantamento").value) || 0;
+  }
+  function adiantamentoSomado() {
+    return (temOpcaoLeme() && respostaLeme === true) ? 0 : adiantamentoAtual();
+  }
+  function lemePendente() {
+    return temOpcaoLeme() && adiantamentoAtual() > 0 && respostaLeme === null;
+  }
+  function atualizarPerguntaLeme() {
+    const caixa = document.getElementById("perguntaLeme");
+    const ad = adiantamentoAtual();
+    caixa.hidden = !(temOpcaoLeme() && ad > 0);
+    if (caixa.hidden) { atualizarBotaoRenda(); return; }
+    const respondida = respostaLeme !== null;
+    caixa.classList.toggle("respondida", respondida);
+    document.getElementById("btnLemeSim").classList.toggle("escolhido", respostaLeme === true);
+    document.getElementById("btnLemeNao").classList.toggle("escolhido", respostaLeme === false);
+    document.getElementById("textoLeme").innerHTML = !respondida
+      ? `<b>Este cliente é de Leme?</b> Tem adiantamento de ${valorLeitura(ad)}: em Leme ele não é somado à líquida.`
+      : (respostaLeme
+        ? `Leme: o adiantamento de ${valorLeitura(ad)} <b>não</b> foi somado à líquida.`
+        : `Não é Leme: o adiantamento de ${valorLeitura(ad)} foi somado à líquida.`);
+    if (lemePendente() && !aguardandoRenda) setMsgRenda("Responda acima se o cliente é de Leme para liberar o preenchimento.", "warn");
+    else if (document.getElementById("msgRenda").textContent.startsWith("Responda acima se o cliente é de Leme"))
+      setMsgRenda("Abra a tela Renda Formal do SICAQ. O Salvar fica com você.");
+    atualizarBotaoRenda();
+  }
+  function responderLeme(ehLeme) {
+    respostaLeme = ehLeme;
+    recalcularLiquida();
+  }
+
   function mostrarContaLiquida() {
     const conta = document.getElementById("contaLiquida");
     const liq = lerValorBR(document.getElementById("hLiquidoOriginal").value);
-    const ad = lerValorBR(document.getElementById("hAdiantamento").value) || 0;
+    const ad = adiantamentoSomado();
     const final = lerValorBR(document.getElementById("hLiquida").value);
-    if (liq === null || final === null) { conta.textContent = ""; return; }
+    if (liq === null || final === null) { conta.textContent = ""; atualizarPerguntaLeme(); return; }
     const esperado = Math.round((liq + ad) * 100) / 100;
     if (liquidaManual && Math.abs(final - esperado) > 0.004) {
       conta.textContent = "Valor digitado à mão (a conta daria " + valorLeitura(esperado) + ")";
+    } else if (temOpcaoLeme() && respostaLeme === true && adiantamentoAtual() > 0) {
+      conta.textContent = valorLeitura(final) + " (Leme: adiantamento não somado)";
     } else {
       conta.textContent = valorLeitura(liq) + " + " + valorLeitura(ad) + " = " + valorLeitura(final);
     }
+    atualizarPerguntaLeme();
   }
   function recalcularLiquida() {
     const liq = lerValorBR(document.getElementById("hLiquidoOriginal").value);
     if (liq === null) { mostrarContaLiquida(); return; }
-    const ad = lerValorBR(document.getElementById("hAdiantamento").value) || 0;
+    const ad = adiantamentoSomado();
     const campo = document.getElementById("hLiquida");
     campo.value = valorCampo(Math.round((liq + ad) * 100) / 100);
     campo.classList.remove("destaque");
@@ -2661,6 +2729,8 @@
   ["hLiquidoOriginal", "hAdiantamento"].forEach(id =>
     document.getElementById(id).addEventListener("input", recalcularLiquida));
   document.getElementById("hLiquida").addEventListener("input", () => { liquidaManual = true; mostrarContaLiquida(); });
+  document.getElementById("btnLemeSim").addEventListener("click", () => responderLeme(true));
+  document.getElementById("btnLemeNao").addEventListener("click", () => responderLeme(false));
   document.getElementById("tipoOcupacao").addEventListener("change", montarOcupacaoDoc);
   document.getElementById("ocupacaoDoc").addEventListener("change", levarOcupacaoParaRenda);
   document.getElementById("btnSair").addEventListener("click", sair);
