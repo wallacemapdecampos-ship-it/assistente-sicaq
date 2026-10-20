@@ -1848,7 +1848,8 @@
       const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const qtd = data.arquivos_lidos || input.files.length || 1;
       setMensagem(
-        `${qtd > 1 ? qtd + " arquivos lidos" : "Documento lido"} em ${total} s. ` +
+        (data.repetida ? "Mesmo arquivo lido há pouco: usei a leitura anterior (sem gastar a IA). "
+          : `${qtd > 1 ? qtd + " arquivos lidos" : "Documento lido"} em ${total} s. `) +
         (duvidosos
           ? `Confira no documento o${duvidosos > 1 ? "s campos" : " campo"} em amarelo antes de preencher.`
           : "Revise os dados antes de preencher.") +
@@ -2978,7 +2979,7 @@
       const conf = data.cep || {};
       const okCep = conf.pode_usar && (conf.status === "ok" || (conf.status === "trocado" && conf.certeza));
       setMensagemEndereco(
-        `Comprovante lido em ${total} s. ` +
+        (data.repetida ? "Mesmo comprovante lido há pouco: usei a leitura anterior (sem gastar a IA). " : `Comprovante lido em ${total} s. `) +
         (conf.status === "trocado" ? `CEP genérico trocado pelo CEP da rua (${conf.cep}). ` : "") +
         (okCep ? (conf.status === "ok" ? "CEP conferido." : "") : "Veja o aviso do CEP abaixo antes de usar.") +
         (data.aviso_pasta ? " " + data.aviso_pasta : ""),
@@ -3451,7 +3452,8 @@
         return;
       }
       setMensagemHolerite(
-        `${qtdLidos > 1 ? qtdLidos + " arquivos lidos" : "Comprovante lido"} em ${total} s. ` +
+        (data.repetida ? "Mesmo comprovante lido há pouco: usei a leitura anterior (sem gastar a IA). "
+          : `${qtdLidos > 1 ? qtdLidos + " arquivos lidos" : "Comprovante lido"} em ${total} s. `) +
         (contasOk
           ? "Contas conferidas (proventos − descontos = líquido)."
           : "As contas não fecharam: confira os valores em amarelo no comprovante.") +

@@ -5568,6 +5568,74 @@ def ler():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# ============================================================
+# LEITURA REPETIDA: mesmo arquivo lido de novo em até 30 min devolve o
+# resultado anterior, sem chamar a IA (não gasta o limite da Groq).
+# Só o RESULTADO fica na memória do servidor, pela "impressão digital"
+# (hash) do arquivo; o documento não é guardado. Some sozinho em 30 min
+# e quando o servidor reinicia.
+# ============================================================
+CACHE_LEITURA_SEG = 30 * 60
+CACHE_LEITURA_MAX = 300
+_CACHE_LEITURA = {}  # chave -> (validade, resposta)
+
+
+def _chave_leitura():
+    h = hashlib.sha256()
+    h.update(request.path.encode())
+    # Holerite: o período aceito muda com o mês; certidão: o nome do cliente.
+    if request.path == "/ler-holerite":
+        h.update("|".join(_holerite_competencias_validas()).encode())
+    for k in sorted(request.form.keys()):
+        h.update(f"|{k}={request.form.get(k)}".encode())
+    arquivos = request.files.getlist("files") or request.files.getlist("file")
+    if not arquivos:
+        return None
+    for f in arquivos:
+        try:
+            f.stream.seek(0)
+            h.update(hashlib.sha256(f.stream.read()).digest())
+            f.stream.seek(0)
+        except Exception:
+            return None
+    return h.hexdigest()
+
+
+def _com_cache_de_leitura(funcao):
+    import functools
+
+    @functools.wraps(funcao)
+    def envolta(*args, **kwargs):
+        chave = None
+        try:
+            chave = _chave_leitura()
+        except Exception:
+            chave = None
+        agora = time.time()
+        if chave:
+            item = _CACHE_LEITURA.get(chave)
+            if item and item[0] > agora:
+                print(f"[CACHE] {request.path}: leitura repetida, sem IA", flush=True)
+                return jsonify({**item[1], "repetida": True, "tempo_api": 0, "tempo_total": 0})
+        resp = funcao(*args, **kwargs)
+        try:
+            corpo = resp.get_json(silent=True) if hasattr(resp, "get_json") else None
+            if chave and getattr(resp, "status_code", 200) == 200 and isinstance(corpo, dict) and corpo.get("ok"):
+                if len(_CACHE_LEITURA) >= CACHE_LEITURA_MAX:
+                    for k in [k for k, v in _CACHE_LEITURA.items() if v[0] <= agora] or list(_CACHE_LEITURA)[:50]:
+                        _CACHE_LEITURA.pop(k, None)
+                _CACHE_LEITURA[chave] = (agora + CACHE_LEITURA_SEG, corpo)
+        except Exception:
+            pass
+        return resp
+    return envolta
+
+
+for _rota in ("ler", "ler_holerite", "ler_pis", "ler_certidao", "ler_endereco"):
+    if _rota in app.view_functions:
+        app.view_functions[_rota] = _com_cache_de_leitura(app.view_functions[_rota])
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
