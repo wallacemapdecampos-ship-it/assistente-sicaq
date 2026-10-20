@@ -254,6 +254,7 @@
     .cep-status.warn { background: var(--marca-fundo); border-color: #e2b500; color: var(--tinta); }
     .cep-status.erro { background: #fde7e5; border-color: #f0b4ae; color: #8c1d16; }
     .cep-status .sugestoes { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .cep-status .dica-sug { margin-top: 8px; font-size: 12.5px; color: var(--tinta-2); }
     .cep-status .sugestao { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 10px; border-radius: 6px; background: var(--folha); border: 1px solid var(--linha); color: var(--tinta); }
     .cep-status .sugestao.melhor { border-color: var(--azul); box-shadow: 0 0 0 1px var(--azul) inset; }
     .cep-status .sugestao b { font-variant-numeric: tabular-nums; }
@@ -677,10 +678,6 @@
         <div class="campo">
           <label for="eReferencia">Mês da conta</label>
           <input id="eReferencia" type="text" placeholder="MM/AAAA">
-        </div>
-        <div class="campo" style="--span: 6">
-          <label for="eTitular">Titular da conta</label>
-          <input id="eTitular" type="text">
         </div>
       </div>
 
@@ -2748,7 +2745,7 @@
   }
 
   // ---------- Endereço: comprovante + conferência do CEP ----------
-  const enderecoIds = ["eCep", "eTipo", "eLogradouro", "eNumero", "eComplemento", "eBairro", "eCidade", "eUf", "eReferencia", "eTitular"];
+  const enderecoIds = ["eCep", "eTipo", "eLogradouro", "eNumero", "eComplemento", "eBairro", "eCidade", "eUf", "eReferencia"];
   let ultimoCep = null;
   function setMensagemEndereco(texto, classe = "muted") {
     const el = document.getElementById("mensagemEndereco");
@@ -2771,9 +2768,12 @@
     const st = document.getElementById("cepStatus");
     const campo = document.getElementById("eCep");
     if (!conf) { st.hidden = true; return; }
-    const classe = conf.status === "ok" ? "ok" : (conf.status === "inexistente" ? "erro" : "warn");
-    const titulo = { ok: "CEP conferido", generico: "CEP genérico", inexistente: "CEP inválido", diferente: "CEP de outra rua",
-                     sem_cep: "Sem CEP no comprovante", indisponivel: "Não deu para conferir" }[conf.status] || "CEP";
+    // Genérico trocado pelo CEP da rua: já entra no campo, em amarelo para conferir.
+    if (conf.status === "trocado" && conf.cep) campo.value = conf.cep;
+    const classe = conf.status === "ok" || (conf.status === "trocado" && conf.certeza) ? "ok"
+                 : (conf.status === "inexistente" ? "erro" : "warn");
+    const titulo = { ok: "CEP conferido", trocado: "CEP corrigido", generico: "CEP genérico", inexistente: "CEP inválido",
+                     diferente: "CEP de outra rua", sem_cep: "Sem CEP no comprovante", indisponivel: "Não deu para conferir" }[conf.status] || "CEP";
     const sugestoes = (conf.sugestoes || []).map((s, i) => {
       const cabe = s.cabe === true ? " · o número cabe nesta faixa" : (s.cabe === false ? " · o número não cabe nesta faixa" : "");
       const melhor = conf.sugerido && s.cep === conf.sugerido;
@@ -2783,9 +2783,12 @@
         `<button type="button" class="${melhor ? "" : "secondary"}" data-cep="${escHtml(s.cep)}" data-bairro="${escHtml(s.bairro || "")}">Usar este CEP</button></div>`;
     }).join("");
     st.className = "cep-status " + classe;
-    st.innerHTML = `<b>${titulo}:</b> ${escHtml(conf.mensagem || "")}` + (sugestoes ? `<div class="sugestoes">${sugestoes}</div>` : "");
+    const outras = conf.status === "trocado" && (conf.sugestoes || []).length > 1;
+    st.innerHTML = `<b>${titulo}:</b> ${escHtml(conf.mensagem || "")}` +
+      (sugestoes ? (outras ? `<div class="dica-sug">Outros CEPs da mesma rua, se precisar trocar:</div>` : "") +
+                   `<div class="sugestoes">${sugestoes}</div>` : "");
     st.hidden = false;
-    campo.classList.toggle("destaque", !conf.pode_usar);
+    campo.classList.toggle("destaque", !conf.pode_usar || (conf.status === "trocado" && !conf.certeza));
     document.getElementById("btnCopiarCep").disabled = !conf.pode_usar;
   }
   function preencherEndereco(d, conf) {
@@ -2798,21 +2801,12 @@
     document.getElementById("eCidade").value = d.cidade || "";
     document.getElementById("eUf").value = d.uf || "";
     document.getElementById("eReferencia").value = d.referencia || "";
-    document.getElementById("eTitular").value = d.titular || "";
     const selo = document.getElementById("eEmissor");
     selo.textContent = d.emissor || ""; selo.hidden = !d.emissor;
     const mapa = { cep: "eCep", tipo_logradouro: "eTipo", logradouro: "eLogradouro", numero: "eNumero", complemento: "eComplemento",
-                   bairro: "eBairro", cidade: "eCidade", uf: "eUf", referencia: "eReferencia", titular: "eTitular" };
+                   bairro: "eBairro", cidade: "eCidade", uf: "eUf", referencia: "eReferencia" };
     (d.campos_incertos || []).forEach(c => { if (mapa[c]) document.getElementById(mapa[c]).classList.add("destaque"); });
     mostrarCep(conf);
-  }
-  // Titular diferente do cliente (ex.: conta no nome do cônjuge ou dos pais).
-  function avisoTitular() {
-    const cliente = semAcentos(document.getElementById("nome").value || "").toUpperCase().trim();
-    const titular = semAcentos(document.getElementById("eTitular").value || "").toUpperCase().trim();
-    if (!cliente || !titular) return "";
-    const p1 = cliente.split(/\s+/)[0], p2 = titular.split(/\s+/)[0];
-    return p1 && p2 && p1 !== p2 ? ` A conta está no nome de ${titular}, não do cliente: confira se o SICAQ aceita (cônjuge, pais…).` : "";
   }
   async function lerEndereco() {
     const input = document.getElementById("enderecoArquivo");
@@ -2833,12 +2827,13 @@
       preencherEndereco(data.dados || {}, data.cep);
       const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const conf = data.cep || {};
-      const okCep = conf.pode_usar && conf.status === "ok";
+      const okCep = conf.pode_usar && (conf.status === "ok" || (conf.status === "trocado" && conf.certeza));
       setMensagemEndereco(
         `Comprovante lido em ${total} s. ` +
-        (okCep ? "CEP conferido." : "Veja o aviso do CEP abaixo antes de usar.") + avisoTitular() +
+        (conf.status === "trocado" ? `CEP genérico trocado pelo CEP da rua (${conf.cep}). ` : "") +
+        (okCep ? (conf.status === "ok" ? "CEP conferido." : "") : "Veja o aviso do CEP abaixo antes de usar.") +
         (data.aviso_pasta ? " " + data.aviso_pasta : ""),
-        okCep && !avisoTitular() && !data.aviso_pasta ? "ok" : "warn");
+        okCep && !data.aviso_pasta ? "ok" : "warn");
     } catch (e) {
       setMensagemEndereco("Erro: " + (e.message || e), "erro");
     } finally {

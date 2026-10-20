@@ -4920,7 +4920,7 @@ PROMPT_ENDERECO = """
 Leia este COMPROVANTE DE ENDEREÇO brasileiro (conta de luz, água, gás,
 telefone, internet, TV, fatura de cartão ou banco, IPTU, contrato de aluguel)
 e responda SOMENTE JSON válido com as chaves:
-titular, tipo_logradouro, logradouro, numero, complemento, bairro, cidade,
+tipo_logradouro, logradouro, numero, complemento, bairro, cidade,
 uf, cep, referencia, emissor, campos_incertos.
 
 Regras:
@@ -4929,7 +4929,6 @@ Regras:
   conta (sede, agência, CNPJ, "central de atendimento").
 - Se houver endereço de instalação/unidade consumidora e outro de
   correspondência, use o de INSTALAÇÃO (onde a pessoa mora).
-- titular: nome do cliente/titular da conta, como impresso.
 - tipo_logradouro: RUA, AVENIDA, TRAVESSA, ALAMEDA, ESTRADA, RODOVIA, PRAÇA,
   VIELA etc. (por extenso). logradouro: só o nome, sem o tipo.
 - numero: só o número do imóvel (ou "S/N"). complemento: apto, bloco, casa,
@@ -5093,7 +5092,23 @@ def _conferir_cep(cep, logradouro="", numero="", bairro="", cidade="", uf="", ti
             "correto; se tiver CEP por rua, confira nos Correios antes de usar."))
     elif saida["status"] == "indisponivel":
         pass
-    elif sugestoes and saida["status"] in ("generico", "inexistente", "sem_cep", "diferente"):
+    elif sugestoes and saida["status"] in ("generico", "inexistente", "sem_cep"):
+        # Troca sozinho pelo CEP REAL da mesma rua (o melhor: faixa do número e
+        # bairro). Rua, número e bairro continuam os do comprovante.
+        melhor = sugestoes[0]
+        saida["sugerido"] = melhor["cep"]
+        certeza = melhor["cabe"] is True or len(sugestoes) == 1
+        antes = {"generico": "O CEP do comprovante era genérico", "inexistente": "O CEP do comprovante não existe",
+                 "sem_cep": "O comprovante não tinha CEP"}[saida["status"]]
+        saida.update(
+            cep_original=saida["cep"], cep=melhor["cep"], status="trocado", pode_usar=True,
+            certeza=certeza,
+            mensagem=(f"{antes}. Coloquei o CEP da rua: {melhor['cep']} ({melhor['logradouro']}"
+                      f"{' — ' + melhor['complemento'] if melhor['complemento'] else ''}"
+                      f"{', ' + melhor['bairro'] if melhor['bairro'] else ''}). "
+                      + ("" if certeza else "A rua tem mais de um CEP e o número não define qual: confira. ")),
+        )
+    elif sugestoes and saida["status"] == "diferente":
         melhor = sugestoes[0]
         if melhor["cabe"] or len(sugestoes) == 1:
             saida["sugerido"] = melhor["cep"]
@@ -5116,7 +5131,6 @@ def _normalizar_endereco(r):
         if not certeza:
             incertos.append("cidade")
     return {
-        "titular": limpo(r.get("titular")),
         "tipo_logradouro": tipo,
         "logradouro": rua,
         "numero": numero,
