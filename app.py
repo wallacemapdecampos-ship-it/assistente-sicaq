@@ -794,7 +794,7 @@ def _pode_gerir(alvo):
 
 def _so_admin():
     if not _eh_dono():
-        return jsonify({"ok": False, "error": "Só o dono do sistema pode mudar empresas."}), 403
+        return jsonify({"ok": False, "error": "Você não tem permissão para isso."}), 403
     if not os.getenv("DATABASE_URL", "").strip():
         return jsonify({"ok": False, "error": "Sem banco configurado no servidor."}), 503
     return None
@@ -914,7 +914,7 @@ def tornar_admin():
     if alvo not in _usuarios():
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
     if alvo in DONOS_SISTEMA:
-        return jsonify({"ok": False, "error": "O dono é sempre ADM."}), 400
+        return jsonify({"ok": False, "error": "Esse usuário é sempre ADM."}), 400
     adm = _sim(dados.get("admin"))
     try:
         _no_banco(lambda con: con.run(
@@ -950,7 +950,7 @@ def excluir_usuario():
         return jsonify({"ok": False, "error": "Esse login não pode ser excluído."}), 403
     if not _eh_dono():
         if conta_alvo.get("admin"):
-            return jsonify({"ok": False, "error": "Só o dono do sistema exclui um ADM."}), 403
+            return jsonify({"ok": False, "error": "Você não pode excluir um ADM."}), 403
         if not _pode_gerir(alvo):
             return jsonify({"ok": False, "error": "Este analista é de outra empresa."}), 403
 
@@ -1233,7 +1233,7 @@ def uso():
                             "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
                             "excluidos": excluidos, "admins": admins,
-                            "donos": list(DONOS_SISTEMA)})
+                            "donos": list(DONOS_SISTEMA) if dono else []})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
@@ -1245,7 +1245,7 @@ def uso():
                     "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
                             "excluidos": excluidos, "admins": admins,
-                            "donos": list(DONOS_SISTEMA)})
+                            "donos": list(DONOS_SISTEMA) if dono else []})
 
 
 # ============================================================

@@ -316,7 +316,6 @@
     .grupo-empresa.sem-empresa .nome-empresa, .grupo-empresa.excluidos .nome-empresa { color: var(--tinta-2); }
     .tabela-senhas .marca-adm { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; cursor: pointer; }
     .tabela-senhas .selo-adm { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--azul-claro); color: var(--azul); }
-    .tabela-senhas .selo-dono { background: var(--azul); color: #fff; }
     .tabela-senhas .perfil-analista { color: var(--tinta-2); }
     .tabela-uso button.excluir { color: var(--erro); border-color: #e7b9b5; }
     .tabela-senhas .sel-empresa-analista { height: 28px; font-size: 12.5px; max-width: 190px; }
@@ -2443,7 +2442,8 @@
         empresasDono.map(e => `<option value="${escHtml(e.nome)}"${e.nome === emp ? " selected" : ""}>${escHtml(e.nome)}</option>`).join("") +
         `</select>`
       : escHtml(emp || "—");
-    const celPerfil = ehDonoAlvo ? '<span class="selo-adm selo-dono">Dono</span>' : dono
+    // Donos aparecem como ADM comum para todos (ninguém vê quem é dono).
+    const celPerfil = ehDonoAlvo ? '<span class="selo-adm">ADM</span>' : dono
       ? `<label class="marca-adm" title="ADM vê e gerencia os usuários da empresa dele"><input type="checkbox" class="chk-adm" data-usuario="${uSeguro}" data-nome="${nome}"${ehAdm ? " checked" : ""}> ADM</label>`
       : (ehAdm ? '<span class="selo-adm">ADM</span>' : '<span class="perfil-analista">Analista</span>');
     return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${celEmpresa}</td><td>${celPerfil}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
