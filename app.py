@@ -3338,14 +3338,21 @@ def _irpf_do_pdf(arquivos):
     return None
 
 
-def _normalizar_irpf(info):
-    ano_atual = datetime.now(FUSO_BR).year
-    if info.get("exercicio") != ano_atual:
+def _exercicios_irpf_aceitos(hoje=None):
+    """Exercício do ano atual; de janeiro a maio (prazo de entrega) também o anterior."""
+    hoje = hoje or datetime.now(FUSO_BR).date()
+    aceitos = [hoje.year]
+    if hoje.month <= 5:
+        aceitos.append(hoje.year - 1)
+    return aceitos
+
+
+def _normalizar_irpf(info, hoje=None):
+    aceitos = _exercicios_irpf_aceitos(hoje)
+    if info.get("exercicio") not in aceitos:
         ex = info.get("exercicio") or "não identificado"
-        raise ValueError(
-            f"IRPF_FORA_PERIODO|Declaração do exercício {ex}. Só vale a do exercício {ano_atual} "
-            f"(ano-calendário {ano_atual - 1})."
-        )
+        lista = " ou ".join(f"{a} (ano-calendário {a - 1})" for a in aceitos)
+        raise ValueError(f"IRPF_FORA_PERIODO|Declaração do exercício {ex}. Agora vale a do exercício {lista}.")
     fontes = [f for f in info.get("fontes") or [] if f.get("anual", 0) > 0]
     if not fontes:
         raise ValueError(
