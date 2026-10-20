@@ -1715,8 +1715,9 @@
         (duvidosos
           ? `Confira no documento o${duvidosos > 1 ? "s campos" : " campo"} em amarelo antes de preencher.`
           : "Revise os dados antes de preencher.") +
+        (data.aviso_documento ? " " + data.aviso_documento : "") +
         (data.aviso_pasta ? " " + data.aviso_pasta : ""),
-        (duvidosos || data.aviso_pasta) ? "warn" : "ok"
+        (duvidosos || data.aviso_pasta || data.aviso_documento) ? "warn" : "ok"
       );
     } catch (e) {
       setMensagem("Erro: " + (e.message || e), "erro");

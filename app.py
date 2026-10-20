@@ -180,7 +180,15 @@ Regras:
   * NÃO TROQUE 1ª HABILITAÇÃO, DATA EMISSÃO e VALIDADE entre si;
   * antes de responder, confira novamente Nº REGISTRO, 1ª HABILITAÇÃO,
     DATA EMISSÃO e VALIDADE pelos respectivos rótulos;
-  * se um desses campos não estiver claramente legível, deixe vazio em vez de adivinhar.
+  * se um desses campos não estiver claramente legível, deixe vazio em vez de adivinhar;
+  * CNH modelo ANTIGO (campo "DATA NASCIMENTO" sozinho, sem "LOCAL E UF DE
+    NASCIMENTO"): esse modelo NÃO informa a naturalidade. Devolva
+    naturalidade_municipio e naturalidade_uf VAZIOS. O campo "LOCAL" do verso é
+    o LOCAL DE EMISSÃO da CNH, nunca a naturalidade. A data de emissão desse
+    modelo fica no verso, em "DATA EMISSÃO".
+- naturalidade_municipio é SEMPRE nome de CIDADE. Nunca coloque nela nome de
+  pessoa (nome do titular, do pai ou da mãe). Se não houver cidade de
+  nascimento impressa, deixe vazio.
 - Se não estiver legível, deixe vazio e inclua a chave em campos_incertos.
 """.strip()
 
@@ -1716,6 +1724,16 @@ NOTA_CNH_DIGITAL = (
     "campos da frente do cartão; embaixo, a MRZ (3 linhas com <<<). Leia cada "
     "campo pelo seu rótulo."
 )
+NOTA_CNH_DIGITAL_ANTIGA = (
+    "ATENÇÃO: esta imagem é uma CNH Digital do MODELO ANTIGO (PDF do gov.br). "
+    "Em cima está a frente do cartão, ampliada; embaixo, a faixa do verso com "
+    "\"LOCAL\" e \"DATA EMISSÃO\". Esse modelo NÃO tem naturalidade (local de "
+    "nascimento): devolva naturalidade_municipio e naturalidade_uf VAZIOS. "
+    "\"LOCAL\" é onde a CNH foi emitida, não é naturalidade. data_emissao = "
+    "\"DATA EMISSÃO\" do verso. A frente não tem MRZ: devolva mrz vazio. "
+    "FILIAÇÃO: 1ª linha = pai, linhas seguintes = mãe (o nome pode quebrar no "
+    "meio de uma palavra; junte as partes)."
+)
 NOTA_CNH_DIGITAL_CAMPOS = (
     "ATENÇÃO: esta imagem é a frente de uma CNH Digital (PDF do gov.br), "
     "ampliada. Leia cada campo pelo seu rótulo. A MRZ já foi lida: devolva mrz vazio."
@@ -1841,6 +1859,8 @@ def _cnh_digital_senatran(arquivos):
         if "SENATRAN" not in _tirar_acentos(page.get_text("text") or "").upper():
             return None
         paineis = _pdf_paineis(page)
+        if paineis and len(paineis) == 2:
+            return _cnh_digital_antiga(*paineis)
         if not paineis or len(paineis) != 3:
             return None
         frente, _verso, painel_mrz = paineis
@@ -1881,6 +1901,30 @@ def _cnh_digital_senatran(arquivos):
         return None
     finally:
         doc.close()
+
+
+def _cnh_digital_antiga(frente, verso):
+    """
+    CNH Digital do MODELO ANTIGO (2 painéis: frente e verso, sem MRZ).
+    Esse modelo não tem naturalidade; a data de emissão fica no verso.
+    A IA recebe a frente ampliada + só a faixa "LOCAL / DATA EMISSÃO" do verso.
+    """
+    W, H = frente.size
+    campos = frente.crop((int(W * 0.14), int(H * 0.225), int(W * 0.99), int(H * 0.99)))
+    w2, h2 = verso.size
+    faixa = verso.crop((int(w2 * 0.14), int(h2 * 0.545), int(w2 * 0.97), int(h2 * 0.665)))
+    gap = 18
+    folha = Image.new("RGB", (max(campos.width, faixa.width), campos.height + gap + faixa.height), "white")
+    folha.paste(campos, (0, 0))
+    folha.paste(faixa, (0, campos.height + gap))
+    largura, altura = folha.size
+    fator = min(2.0, (1_600_000 / (largura * altura)) ** 0.5)
+    if fator > 1.05:
+        folha = folha.resize((int(largura * fator), int(altura * fator)), Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    folha.save(out, format="JPEG", quality=92)
+    print(f"[LER] CNH Digital gov.br MODELO ANTIGO: frente + faixa da emissão {folha.size}", flush=True)
+    return {"imagem": out.getvalue(), "mrz": "", "nota": NOTA_CNH_DIGITAL_ANTIGA, "sem_naturalidade": True}
 
 
 # Recorte do PDF digital (só os painéis do cartão) DESLIGADO: no teste real,
@@ -2848,6 +2892,30 @@ def _uf_naturalidade(uf_valor, municipio_bruto):
     return ""
 
 
+def _naturalidade_e_pessoa(nat_mun, d):
+    """
+    True quando a "naturalidade" lida é, na verdade, nome de pessoa: igual ou
+    parecida com o nome do titular, do pai ou da mãe, e não é uma cidade
+    oficial com esse nome.
+    """
+    import difflib
+    chave = _chave_cidade(nat_mun)
+    if not chave:
+        return False
+    # Existe cidade oficial com esse nome exato? Então é cidade (ex.: SANTA ROSA).
+    if any(chave in cidades for cidades in _municipios().values()):
+        return False
+    for campo in ("nome", "filiacao_1", "filiacao_2"):
+        pessoa = _chave_cidade(d.get(campo) or "")
+        if len(pessoa) < 5:
+            continue
+        if chave == pessoa or chave in pessoa or pessoa in chave:
+            return True
+        if difflib.SequenceMatcher(None, chave, pessoa).ratio() >= 0.8:
+            return True
+    return False
+
+
 def _normalizar_municipio_naturalidade(valor):
     """Expande abreviações comuns de naturalidade e devolve somente o município."""
     texto = _tirar_acentos(str(valor or "").strip().upper())
@@ -3115,6 +3183,12 @@ def _normalizar_saida(d):
         d.get("naturalidade_uf"),
         d.get("naturalidade_municipio"),
     )
+    naturalidade_descartada = False
+    if nat_mun and _naturalidade_e_pessoa(nat_mun, d):
+        # Ex.: CNH antiga sem naturalidade e a IA pôs o nome da mãe.
+        print("[LER] naturalidade descartada: era nome de pessoa", flush=True)
+        nat_mun, nat_uf, naturalidade_descartada = "", "", True
+        d["campos_incertos"] = list(d.get("campos_incertos") or []) + ["naturalidade_municipio"]
 
     sexo = _tirar_acentos(str(d.get("sexo") or "").strip().upper())
     if sexo in ("M", "MASC", "MASCULINO"):
@@ -3178,6 +3252,7 @@ def _normalizar_saida(d):
         "nacionalidade": nacionalidade or "BRASILEIRA",
         "naturalidade": naturalidade,
         "naturalidade_uf": nat_uf,
+        "naturalidade_descartada": naturalidade_descartada,
         "filiacao1": _tirar_acentos(str(d.get("filiacao_1") or "").strip().upper()),
         "filiacao2": _tirar_acentos(str(d.get("filiacao_2") or "").strip().upper()),
         "modelo_documento": str(d.get("modelo_documento") or "").strip().upper(),
@@ -4895,8 +4970,16 @@ def ler():
 
         dados_raw, modelo, tempo_api = _groq_call(image_bytes, nota_ia)
 
+        aviso_documento = ""
         if cnh_digital:
             dados_raw["tipo_documento"] = "CNH"
+            if cnh_digital.get("sem_naturalidade"):
+                # Modelo antigo: não existe naturalidade impressa.
+                dados_raw["naturalidade_municipio"] = ""
+                dados_raw["naturalidade_uf"] = ""
+                dados_raw["campos_incertos"] = list(dados_raw.get("campos_incertos") or []) + ["naturalidade_municipio"]
+                aviso_documento = ("CNH modelo antigo: ela não informa a naturalidade (local de nascimento). "
+                                   "Preencha à mão, pelo RG ou certidão do cliente.")
             if cnh_digital["mrz"]:
                 # MRZ lida sem IA vem primeiro; a da IA fica de reserva.
                 dados_raw["mrz"] = cnh_digital["mrz"] + "\n" + str(dados_raw.get("mrz") or "")
@@ -4929,9 +5012,14 @@ def ler():
         dados = _normalizar_saida(dados_raw)
         _registrar_uso("documento")
 
+        if not aviso_documento and dados.get("naturalidade_descartada"):
+            aviso_documento = ("A naturalidade lida não era uma cidade e foi apagada. "
+                               "Preencha à mão, pelo documento do cliente.")
+        dados.pop("naturalidade_descartada", None)
         return jsonify({
             "ok": True,
             "aviso_pasta": aviso_pasta,
+            "aviso_documento": aviso_documento,
             "dados": dados,
             "modelo": modelo,
             "arquivos_lidos": len(arquivos),
