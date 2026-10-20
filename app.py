@@ -144,7 +144,8 @@ def _groq_abrir(req, timeout=35, esperar_limite=True):
     raise GroqLimite("Limite por minuto da Groq atingido. " + _texto_espera(None))
 
 
-CF_MODELO_PADRAO = "@cf/meta/llama-4-scout-17b-16e-instruct"
+CF_MODELO_QWEN = "@cf/qwen/qwen3.8-27b"            # o mesmo modelo da Groq
+CF_MODELO_LLAMA = "@cf/meta/llama-4-scout-17b-16e-instruct"  # último recurso
 
 
 def _reserva_configurada():
@@ -152,8 +153,9 @@ def _reserva_configurada():
 
 
 def _json_do_texto(texto):
-    """Tira cercas ```json e texto em volta; devolve o JSON como texto limpo."""
+    """Tira raciocínio <think>, cercas ```json e texto em volta; devolve o JSON limpo."""
     t = str(texto or "").strip()
+    t = re.sub(r"<think>.*?</think>", "", t, flags=re.S | re.I).strip()
     t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t, flags=re.I).strip()
     try:
         json.loads(t)
@@ -168,12 +170,18 @@ def _json_do_texto(texto):
     raise ValueError("resposta sem JSON")
 
 
+def _modelos_reserva():
+    escolhido = os.getenv("CF_MODEL", "").strip()
+    lista = [escolhido, CF_MODELO_QWEN, CF_MODELO_LLAMA]
+    return [m for i, m in enumerate(lista) if m and m not in lista[:i]]
+
+
 def _ia_reserva(req, timeout=35):
     """
-    IA reserva gratuita (Cloudflare Workers AI, Llama 4 Scout), usada só quando
-    a Groq bate no limite. Recebe o MESMO pedido montado para a Groq e devolve
-    a resposta no mesmo formato. Devolve None se não estiver configurada ou falhar.
-    A Cloudflare não usa os dados enviados para treinar modelos.
+    IA reserva (Cloudflare Workers AI), usada só quando a Groq bate no limite
+    ou cai. Primeiro a MESMA Qwen da Groq (mesma qualidade, mesmos prompts);
+    se ela falhar, a Llama 4 Scout. Recebe o pedido montado para a Groq e
+    devolve no mesmo formato, ou None. A Cloudflare não treina com os dados.
     """
     if not _reserva_configurada():
         return None
@@ -183,59 +191,68 @@ def _ia_reserva(req, timeout=35):
         return None
     conta = os.getenv("CF_ACCOUNT_ID", "").strip()
     token = os.getenv("CF_API_TOKEN", "").strip()
-    modelo = os.getenv("CF_MODEL", "").strip() or CF_MODELO_PADRAO
-    payload = {
-        "model": modelo,
-        "messages": original.get("messages") or [],
-        "temperature": original.get("temperature", 0.0),
-        "max_tokens": max(int(original.get("max_completion_tokens") or original.get("max_tokens") or 512), 256) + 200,
-        "stream": False,
-    }
-    if original.get("response_format"):
-        payload["response_format"] = {"type": "json_object"}
     url = f"https://api.cloudflare.com/client/v4/accounts/{conta}/ai/v1/chat/completions"
-    ultimo = None
-    for tentativa in range(2):
-        pedido = urllib.request.Request(
-            url,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "User-Agent": "Assistente-SICAQ-Reserva/1.0",
-            },
-            method="POST",
-        )
-        try:
-            t0 = time.perf_counter()
-            with urllib.request.urlopen(pedido, timeout=max(timeout, 60)) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-            texto = body["choices"][0]["message"]["content"]
-            body["choices"][0]["message"]["content"] = _json_do_texto(texto)
-            body["model"] = "reserva:" + modelo
-            _contar_tokens(body)
+    saida = int(original.get("max_completion_tokens") or original.get("max_tokens") or 512)
+    for modelo in _modelos_reserva():
+        qwen = "qwen" in modelo
+        payload = {
+            "model": modelo,
+            "messages": original.get("messages") or [],
+            "temperature": original.get("temperature", 0.0),
+            "max_tokens": max(saida, 256) + 200,
+            "stream": False,
+        }
+        if qwen:
+            # Sem "pensar" antes de responder: igual à Groq (reasoning none).
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        if original.get("response_format"):
+            payload["response_format"] = {"type": "json_object"}
+        ultimo = None
+        for tentativa in range(3):
+            pedido = urllib.request.Request(
+                url,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Assistente-SICAQ-Reserva/1.1",
+                },
+                method="POST",
+            )
             try:
-                from flask import has_request_context
-                if has_request_context():
-                    g.ia_reserva = True
-            except Exception:
-                pass
-            print(f"[RESERVA] leitura feita pela IA reserva em {time.perf_counter() - t0:.1f}s", flush=True)
-            return body
-        except urllib.error.HTTPError as e:
-            # A mensagem de erro da Cloudflare não traz dados do cliente.
-            detalhe = e.read().decode("utf-8", errors="replace")[:300]
-            ultimo = f"HTTP {e.code}: {detalhe!r}"
-            if e.code == 400 and "response_format" in payload:
-                payload.pop("response_format", None)  # modelo sem modo JSON: tenta sem
-                continue
-            break
-        except Exception as e:
-            ultimo = type(e).__name__
-            if tentativa == 0 and isinstance(e, ValueError):
-                continue
-            break
-    print(f"[RESERVA] falhou ({ultimo})", flush=True)
+                t0 = time.perf_counter()
+                with urllib.request.urlopen(pedido, timeout=max(timeout, 60)) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                texto = body["choices"][0]["message"]["content"]
+                body["choices"][0]["message"]["content"] = _json_do_texto(texto)
+                body["model"] = "reserva:" + modelo
+                _contar_tokens(body)
+                try:
+                    from flask import has_request_context
+                    if has_request_context():
+                        g.ia_reserva = True
+                except Exception:
+                    pass
+                print(f"[RESERVA] leitura feita por {modelo} em {time.perf_counter() - t0:.1f}s", flush=True)
+                return body
+            except urllib.error.HTTPError as e:
+                # A mensagem de erro da Cloudflare não traz dados do cliente.
+                detalhe = e.read().decode("utf-8", errors="replace")[:300]
+                ultimo = f"HTTP {e.code}: {detalhe!r}"
+                if e.code == 400 and "chat_template_kwargs" in payload:
+                    payload.pop("chat_template_kwargs", None)
+                    payload["reasoning_effort"] = "low"
+                    continue
+                if e.code == 400 and "response_format" in payload:
+                    payload.pop("response_format", None)  # sem modo JSON: tenta sem
+                    continue
+                break
+            except Exception as e:
+                ultimo = type(e).__name__
+                if tentativa == 0 and isinstance(e, ValueError):
+                    continue
+                break
+        print(f"[RESERVA] {modelo} falhou ({ultimo})", flush=True)
     return None
 
 
@@ -5762,7 +5779,7 @@ def _testar_reserva_no_inicio():
     if not _reserva_configurada():
         print("[RESERVA] não configurada (CF_ACCOUNT_ID/CF_API_TOKEN)", flush=True)
         return
-    marca = "/tmp/.teste_reserva_feito"
+    marca = "/tmp/.teste_reserva_feito2"
     try:
         fd = os.open(marca, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.close(fd)
