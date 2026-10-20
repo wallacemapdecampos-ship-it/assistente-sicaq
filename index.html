@@ -247,6 +247,9 @@
     #painelEndereco .campo { --span: 3; }
     .cep-linha { display: flex; gap: 6px; }
     .mes-ano { display: flex; align-items: center; gap: 6px; }
+    .botoes-endereco { display: flex; gap: 8px; flex-wrap: wrap; }
+    #msgEnderecoSicaq { font-size: 12.5px; max-width: 70ch; }
+    #msgEnderecoSicaq.ok, #msgEnderecoSicaq.warn, #msgEnderecoSicaq.erro { font-weight: 700; }
     .mes-ano input:first-child { flex: 0 0 56px; width: 56px; text-align: center; }
     .mes-ano input:last-child { flex: 1 1 auto; min-width: 0; }
     .cep-linha input { flex: 1 1 auto; min-width: 0; }
@@ -696,8 +699,11 @@
         Aqui o CEP é conferido e, se for genérico, troco sozinho pelo CEP real da rua do comprovante (rua, número e bairro continuam os da conta).</div>
 
       <div class="acoes">
-        <span id="msgEnderecoSicaq" class="dica">Por enquanto, copie os dados para a tela de endereço do SICAQ.</span>
-        <button id="btnCopiarCep" type="button" class="secondary" disabled>Copiar CEP</button>
+        <span id="msgEnderecoSicaq" class="dica">Abra no SICAQ a tela com o bloco Endereço. O Salvar fica com você.</span>
+        <span class="botoes-endereco">
+          <button id="btnCopiarCep" type="button" class="secondary" disabled>Copiar CEP</button>
+          <button id="btnEnderecoSicaq" type="button" disabled>Preencher endereço no SICAQ</button>
+        </span>
       </div>
     </div>
   </section>
@@ -1627,6 +1633,23 @@
       el.className = "status ok";
       atualizarBotaoSicaq();
       atualizarBotaoRenda();
+      atualizarBotaoEndereco();
+      return;
+    }
+
+    if (msg.type === "SICAQ_ACCEPTED" && !msg.ok && aguardandoEndereco) {
+      terminarEndereco();
+      setMsgEnderecoSicaq("A extensão não aceitou o comando: " + (msg.error || "erro desconhecido") +
+        ". Se a extensão foi recarregada, feche esta aba, aperte F5 no SICAQ e abra o site de novo.", "erro");
+      return;
+    }
+
+    if (msg.type === "SICAQ_RESULT" && String((msg.result || {}).id || "").startsWith("endereco-")) {
+      terminarEndereco();
+      const r = msg.result || {};
+      const avisos = (r.avisos || []).length ? " Atenção: " + r.avisos.join("; ") + "." : "";
+      if (r.ok) setMsgEnderecoSicaq("Endereço preenchido no SICAQ." + avisos + " Confira e clique em Salvar.", avisos ? "warn" : "ok");
+      else setMsgEnderecoSicaq("SICAQ: " + ((r.erros || []).join(" | ") || "o preenchimento não foi concluído.") + avisos, "erro");
       return;
     }
 
@@ -2797,6 +2820,11 @@
   // O SICAQ não aceita traço no CEP nem pontuação no endereço.
   function formatarCep(v) { return soDigitos(v).slice(0, 8); }
   function semPontuacao(v) { return _semAc(v).replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim(); }
+  function comprovanteAtual() {
+    const hoje = new Date();
+    document.getElementById("eMes").value = String(hoje.getMonth() + 1);
+    document.getElementById("eAno").value = String(hoje.getFullYear());
+  }
   function limparEndereco() {
     enderecoIds.forEach(id => { const el = document.getElementById(id); el.value = ""; el.classList.remove("destaque"); });
     tipoImovelManual = false;
@@ -2805,6 +2833,8 @@
     const st = document.getElementById("cepStatus"); st.hidden = true; st.innerHTML = "";
     document.getElementById("btnCopiarCep").disabled = true;
     ultimoCep = null;
+    comprovanteAtual();
+    atualizarBotaoEndereco();
   }
   function mostrarCep(conf) {
     ultimoCep = conf || null;
@@ -2842,6 +2872,7 @@
     st.hidden = false;
     campo.classList.toggle("destaque", !conf.pode_usar || (conf.status === "trocado" && !conf.certeza));
     document.getElementById("btnCopiarCep").disabled = !conf.pode_usar;
+    atualizarBotaoEndereco();
   }
   function preencherEndereco(d, conf) {
     document.getElementById("eCep").value = formatarCep(d.cep);
@@ -2854,11 +2885,8 @@
     document.getElementById("eBairro").value = semPontuacao(d.bairro);
     document.getElementById("eCidade").value = semPontuacao(d.cidade);
     document.getElementById("eUf").value = d.uf || "";
-    // Comprovante Residência: mês sem zero à esquerda (7 / 2026), como no SICAQ.
-    const ref = String(d.referencia || "").match(/^(\d{1,2})\/(\d{4})$/);
-    document.getElementById("eMes").value = ref ? String(Number(ref[1])) : "";
-    document.getElementById("eAno").value = ref ? ref[2] : "";
-    if (!ref) { document.getElementById("eMes").classList.add("destaque"); document.getElementById("eAno").classList.add("destaque"); }
+    // Comprovante Residência: sempre o mês/ano ATUAL (regra da equipe), mês sem zero (10 / 2026).
+    comprovanteAtual();
     tipoImovelManual = false;
     ajustarTipoImovel();
     const selo = document.getElementById("eEmissor");
@@ -2920,6 +2948,63 @@
       btn.disabled = false; btn.textContent = "Conferir";
     }
   }
+  // ---------- Preencher o endereço no SICAQ (extensão) ----------
+  let aguardandoEndereco = false, esperaEndereco = null;
+  function setMsgEnderecoSicaq(texto, classe = "dica") {
+    const el = document.getElementById("msgEnderecoSicaq");
+    el.textContent = texto;
+    el.className = classe;
+  }
+  function atualizarBotaoEndereco() {
+    const b = document.getElementById("btnEnderecoSicaq");
+    if (!b) return;
+    const cepOk = !!(ultimoCep && ultimoCep.pode_usar && soDigitos(document.getElementById("eCep").value).length === 8);
+    b.disabled = !extensaoPronta || aguardandoEndereco || !cepOk;
+  }
+  function terminarEndereco() {
+    aguardandoEndereco = false;
+    clearTimeout(esperaEndereco);
+    document.getElementById("btnEnderecoSicaq").textContent = "Preencher endereço no SICAQ";
+    atualizarBotaoEndereco();
+  }
+  function preencherEnderecoSicaq() {
+    const v = (id) => String(document.getElementById(id).value || "").trim();
+    if (!extensaoPronta) { setMsgEnderecoSicaq("A extensão SICAQ não foi detectada. Recarregue a extensão e atualize esta página.", "erro"); return; }
+    const tipoSel = document.getElementById("eTipo");
+    const p = {
+      preencher: "endereco", criado_em: Date.now(),
+      cep: soDigitos(v("eCep")),
+      tipo_logradouro: tipoSel.value, tipo_logradouro_nome: tipoSel.value ? tipoSel.options[tipoSel.selectedIndex].text : "",
+      logradouro: semPontuacao(v("eLogradouro")), numero: soDigitos(v("eNumero")),
+      complemento: semPontuacao(v("eComplemento")), bairro: semPontuacao(v("eBairro")),
+      municipio: semPontuacao(v("eCidade")), uf: v("eUf"),
+      tipo_imovel: v("eTipoImovel") || "CASA", ocupacao: "MORA COM PAIS/PARENTES",
+      comprovante_mes: v("eMes"), comprovante_ano: v("eAno")
+    };
+    const faltam = [];
+    if (p.cep.length !== 8) faltam.push("CEP");
+    if (!p.tipo_logradouro) { faltam.push("tipo do endereço (RUA, AVENIDA…)"); tipoSel.classList.add("destaque"); }
+    if (!p.logradouro) faltam.push("rua");
+    if (!p.bairro) faltam.push("bairro");
+    if (!/^\d{1,2}$/.test(p.comprovante_mes) || !/^\d{4}$/.test(p.comprovante_ano)) faltam.push("mês/ano do comprovante");
+    if (faltam.length) { setMsgEnderecoSicaq("Falta: " + faltam.join(", ") + ".", "erro"); return; }
+
+    aguardandoEndereco = true;
+    atualizarBotaoEndereco();
+    document.getElementById("btnEnderecoSicaq").textContent = "Preenchendo…";
+    setMsgEnderecoSicaq("Enviando para a extensão: ela consulta o CEP no SICAQ e depois preenche o resto.", "warn");
+    clearTimeout(esperaEndereco);
+    setTimeout(() => {
+      if (aguardandoEndereco) setMsgEnderecoSicaq("Ainda preenchendo… Confira se a tela com o bloco Endereço está aberta no SICAQ.", "warn");
+    }, 12000);
+    esperaEndereco = setTimeout(() => {
+      if (!aguardandoEndereco) return;
+      terminarEndereco();
+      setMsgEnderecoSicaq("Não encontrei a tela com o bloco Endereço aberta no SICAQ. Abra a tela e clique de novo.", "erro");
+    }, 90000);
+    window.postMessage({ source: "ASSISTENTE_SICAQ_SITE", type: "FILL_SICAQ", id: `endereco-${Date.now()}`, payload: p }, window.location.origin);
+  }
+
   function usarSugestaoCep(botao) {
     document.getElementById("eCep").value = formatarCep(botao.dataset.cep);
     if (botao.dataset.bairro && !document.getElementById("eBairro").value.trim()) document.getElementById("eBairro").value = semPontuacao(botao.dataset.bairro);
@@ -3552,6 +3637,7 @@
   document.getElementById("tabEndereco").addEventListener("click", () => mostrarAba("endereco"));
   document.getElementById("btnLerEndereco").addEventListener("click", lerEndereco);
   document.getElementById("btnConferirCep").addEventListener("click", conferirCepAgora);
+  document.getElementById("btnEnderecoSicaq").addEventListener("click", preencherEnderecoSicaq);
   montarTiposLogradouro();
   document.getElementById("eComplemento").addEventListener("input", ajustarTipoImovel);
   document.getElementById("eTipoImovel").addEventListener("change", () => { tipoImovelManual = true; });
@@ -3571,8 +3657,10 @@
   document.getElementById("eCep").addEventListener("input", (e) => {
     const f = formatarCep(e.target.value);
     if (f !== e.target.value) e.target.value = f;
-    // CEP mudou à mão: precisa conferir de novo antes de copiar.
+    // CEP mudou à mão: precisa conferir de novo antes de copiar/preencher.
     document.getElementById("btnCopiarCep").disabled = true;
+    if (ultimoCep) ultimoCep = { ...ultimoCep, pode_usar: false };
+    atualizarBotaoEndereco();
     if (ultimoCep) { e.target.classList.add("destaque"); }
   });
   document.getElementById("eCep").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); conferirCepAgora(); } });
