@@ -314,6 +314,9 @@
     .grupo-empresa .corpo-empresa { padding: 0 12px 8px; border-top: 1px solid var(--linha); }
     .grupo-empresa .corpo-empresa > .dica { margin: 10px 2px 4px; }
     .grupo-empresa.sem-empresa .nome-empresa, .grupo-empresa.excluidos .nome-empresa { color: var(--tinta-2); }
+    .tabela-senhas .marca-adm { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; cursor: pointer; }
+    .tabela-senhas .selo-adm { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--azul-claro); color: var(--azul); }
+    .tabela-senhas .perfil-analista { color: var(--tinta-2); }
     .tabela-uso button.excluir { color: var(--erro); border-color: #e7b9b5; }
     .tabela-senhas .sel-empresa-analista { height: 28px; font-size: 12.5px; max-width: 190px; }
     .tabela-senhas .definir-senha { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; padding: 4px 0; }
@@ -2400,7 +2403,10 @@
 
   function abrirGrupo(emp) { EMPRESAS_ABERTAS.add(emp); EMPRESAS_FECHADAS.delete(emp); }
 
+  let ADMINS_USO = {};
   function linhaAnalista(u, senhas, travados, empresaDe, empresasDono) {
+    const dono = !!empresasDono;
+    const ehAdm = !!ADMINS_USO[u];
     const nome = escHtml(NOMES_USO[u] || u);
     const uSeguro = String(u).replace(/[^a-z0-9._-]/gi, "");
     const travado = travados.has(u);
@@ -2408,15 +2414,19 @@
       ? '<span class="bloq">Bloqueado (3 senhas erradas)</span>'
       : (senhas[u] ? '<span class="sim">Criou a senha</span>' : '<span class="nao">Ainda com a senha inicial</span>');
     const souEu = SESSAO && SESSAO.usuario === u;
-    const botoes = [
+    // Excluir: dono exclui qualquer um (menos ele mesmo); ADM de empresa só analistas.
+    const podeExcluir = !souEu && u !== "wallace" && (dono || !ehAdm);
+    // ADM de empresa não mexe no dono nem em outro ADM (nem na própria senha por aqui).
+    const podeGerir = dono || (!ehAdm && u !== "wallace");
+    const botoes = !podeGerir ? [] : [
       travado ? `<button type="button" class="secondary resetar desbloquear" data-usuario="${uSeguro}" data-nome="${nome}">Desbloquear</button>` : "",
       `<button type="button" class="secondary resetar definir" data-usuario="${uSeguro}" data-nome="${nome}">Definir senha</button>`,
       // ADM reseta qualquer analista, quantas vezes quiser.
       `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>`,
-      (empresasDono && !souEu) ? `<button type="button" class="secondary resetar excluir" data-usuario="${uSeguro}" data-nome="${nome}">Excluir</button>` : ""
+      podeExcluir ? `<button type="button" class="secondary resetar excluir" data-usuario="${uSeguro}" data-nome="${nome}">Excluir</button>` : ""
     ].filter(Boolean).join(" ");
     const painel =
-      `<tr class="linha-definir" data-usuario="${uSeguro}" hidden><td colspan="5"><div class="definir-senha">` +
+      `<tr class="linha-definir" data-usuario="${uSeguro}" hidden><td colspan="6"><div class="definir-senha">` +
       `<span>Nova senha de <b>${nome}</b>:</span>` +
       `<input type="password" class="defNova" placeholder="Senha nova (mín. 6)" autocomplete="new-password">` +
       `<input type="password" class="defNova2" placeholder="Repita a senha" autocomplete="new-password">` +
@@ -2430,7 +2440,10 @@
         empresasDono.map(e => `<option value="${escHtml(e.nome)}"${e.nome === emp ? " selected" : ""}>${escHtml(e.nome)}</option>`).join("") +
         `</select>`
       : escHtml(emp || "—");
-    return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${celEmpresa}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
+    const celPerfil = (dono && u !== "wallace")
+      ? `<label class="marca-adm" title="ADM vê e gerencia os usuários da empresa dele"><input type="checkbox" class="chk-adm" data-usuario="${uSeguro}" data-nome="${nome}"${ehAdm ? " checked" : ""}> ADM</label>`
+      : (ehAdm ? '<span class="selo-adm">ADM</span>' : '<span class="perfil-analista">Analista</span>');
+    return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${celEmpresa}</td><td>${celPerfil}</td><td>${status}</td><td>${botoes}</td></tr>` + painel;
   }
 
   function tabelaSenhas(data, sel, dono) {
@@ -2442,6 +2455,7 @@
     const empresasDono = dono ? empresas : null;
     const porNome = (a, b) => String(NOMES_USO[a] || a).localeCompare(String(NOMES_USO[b] || b), "pt-BR");
     const usuarios = Object.keys(senhas);
+    ADMINS_USO = data.admins || {};
 
     // Grupos: todas as empresas (dono em "Todas"), ou só a escolhida.
     let grupos = dono && sel === "*" ? empresas.map(e => e.nome) : [sel];
@@ -2459,7 +2473,7 @@
       const qtd = lista.length === 1 ? "1 usuário" : `${lista.length} usuários`;
       const travadosAqui = lista.filter(u => travados.has(u)).length;
       const corpo = lista.length
-        ? `<table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Empresa</th><th>Situação</th><th></th></tr></thead>` +
+        ? `<table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Empresa</th><th>Perfil</th><th>Situação</th><th></th></tr></thead>` +
           `<tbody>${lista.map(u => linhaAnalista(u, senhas, travados, empresaDe, empresasDono)).join("")}</tbody></table>`
         : `<p class="dica">Nenhum usuário nesta empresa${dono ? ". Para colocar alguém, abra a empresa onde ele está e troque na coluna Empresa." : "."}</p>`;
       return `<div class="grupo-empresa${aberto ? " aberto" : ""}${emp ? "" : " sem-empresa"}">` +
@@ -2489,12 +2503,31 @@
            `<p class="dica">${dono && sel === "*" ? "Clique no nome da empresa para ver os usuários dela. " : ""}` +
            `O analista só cria a senha no 1º acesso. Definir senha: você escolhe a senha nova e ela já vale no próximo login. ` +
            `Resetar: a pessoa volta para a senha inicial e cria outra. ` +
-           (dono ? `Excluir: o login não entra mais (dá para Restaurar em "Logins excluídos"). Quem fica sem empresa não consegue entrar. ` : "") +
+           (dono ? `ADM: vê só a empresa dele, reseta senha e exclui analistas dela (não cadastra nem exclui ADM). ` +
+                   `Excluir: o login não entra mais (dá para Restaurar em "Logins excluídos"). Quem fica sem empresa não consegue entrar. `
+                 : `Excluir: o analista não entra mais. Para trazê-lo de volta, fale com o administrador do sistema. `) +
            `Errou a senha 3 vezes: fica bloqueado. Desbloquear libera com a mesma senha.</p></div>`;
   }
 
+  async function mudarAdm(caixa) {
+    const usuario = caixa.dataset.usuario, nome = caixa.dataset.nome, valor = caixa.checked;
+    caixa.disabled = true;
+    try {
+      await postarAdmin("/tornar-admin", { usuario, admin: valor });
+      await carregarUso();
+      document.getElementById("notaUso").textContent = valor
+        ? `${nome} agora é ADM da empresa dele (vale no próximo acesso).`
+        : `${nome} voltou a ser analista.`;
+    } catch (e) {
+      caixa.checked = !valor; caixa.disabled = false;
+      document.getElementById("notaUso").textContent = "Erro: " + (e.message || e);
+    }
+  }
+
   async function excluirUsuario(usuario, nome) {
-    if (!confirm(`Excluir o login de ${nome} (${usuario})?\n\nEle não vai mais conseguir entrar. A senha e a empresa dele são apagadas. Dá para Restaurar depois em "Logins excluídos".`)) return;
+    const dono = !!(USO_DADOS && USO_DADOS.dono);
+    if (!confirm(`Excluir o login de ${nome} (${usuario})?\n\nEle não vai mais conseguir entrar. A senha e a empresa dele são apagadas.` +
+                 (dono ? ` Dá para Restaurar depois em "Logins excluídos".` : ` Para trazer de volta, só falando com o administrador do sistema.`))) return;
     try {
       await postarAdmin("/excluir-usuario", { usuario });
       abrirGrupo("#exc");
@@ -3022,6 +3055,7 @@
   document.getElementById("btnCancelarSenha").addEventListener("click", cancelarSenha);
   document.getElementById("conteudoUso").addEventListener("change", (e) => {
     if (e.target.classList && e.target.classList.contains("sel-empresa-analista")) moverAnalista(e.target);
+    if (e.target.classList && e.target.classList.contains("chk-adm")) mudarAdm(e.target);
   });
   document.getElementById("barraEmpresa").addEventListener("change", (e) => {
     if (e.target.id === "selEmpresaUso") { EMPRESA_USO = e.target.value; desenharUso(); }

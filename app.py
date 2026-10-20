@@ -252,7 +252,29 @@ def _usuarios_todos():
     # Cadastrados pelo painel (banco). Quem está na lista do Render tem prioridade.
     for u, conta in _usuarios_do_banco().items():
         todos.setdefault(u, conta)
+    # ADM ligado/desligado pelo dono no painel (o dono é sempre ADM).
+    for u, adm in _papeis().items():
+        if u in todos and u != DONO_SISTEMA:
+            todos[u] = {**todos[u], "admin": adm}
     return todos
+
+
+_PAPEIS = {"dados": None, "quando": 0.0}
+
+
+def _papeis(atualizar=False):
+    """{usuario: é ADM?} definido pelo dono no painel."""
+    if not os.getenv("DATABASE_URL", "").strip():
+        return {}
+    agora = time.time()
+    if atualizar or _PAPEIS["dados"] is None or agora - _PAPEIS["quando"] > 60:
+        try:
+            linhas = _no_banco(lambda con: con.run("SELECT usuario, admin FROM papeis_usuarios")) or []
+            _PAPEIS["dados"] = {str(u): bool(a) for u, a in linhas}
+        except Exception as e:
+            print(f"[PAPEL] banco indisponível ({type(e).__name__})", flush=True)
+        _PAPEIS["quando"] = agora
+    return _PAPEIS["dados"] or {}
 
 
 # ---------- Usuários cadastrados pelo painel ----------
@@ -617,7 +639,7 @@ def resetar_senha():
     if alvo not in _usuarios():
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
     if not _pode_gerir(alvo):
-        return jsonify({"ok": False, "error": "Este analista é de outra empresa."}), 403
+        return jsonify({"ok": False, "error": "Você só pode mexer nos analistas da sua empresa."}), 403
     try:
         _no_banco(lambda con: con.run("DELETE FROM senhas_usuarios WHERE usuario = :usuario", usuario=alvo))
     except Exception as e:
@@ -642,7 +664,7 @@ def definir_senha():
     if not conta_alvo:
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
     if not _pode_gerir(alvo):
-        return jsonify({"ok": False, "error": "Este analista é de outra empresa."}), 403
+        return jsonify({"ok": False, "error": "Você só pode mexer nos analistas da sua empresa."}), 403
     problema = _problema_senha_nova(alvo, conta_alvo, nova)
     if problema:
         return jsonify({"ok": False, "error": problema}), 400
@@ -672,7 +694,7 @@ def desbloquear():
     if alvo not in _usuarios():
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
     if not _pode_gerir(alvo):
-        return jsonify({"ok": False, "error": "Este analista é de outra empresa."}), 403
+        return jsonify({"ok": False, "error": "Você só pode mexer nos analistas da sua empresa."}), 403
     if not _limpar_bloqueio(alvo):
         return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
     print(f"[LOGIN] {g.usuario} desbloqueou {alvo}", flush=True)
@@ -756,6 +778,11 @@ def _pode_gerir(alvo):
     """O ADM logado pode mexer neste analista? Dono: todos; outro ADM: só da empresa dele."""
     if _eh_dono():
         return True
+    alvo = str(alvo or "").lower()
+    # ADM de empresa só mexe em ANALISTAS da empresa dele: nunca no dono nem
+    # em outro ADM (a própria senha ele troca em "Trocar senha").
+    if alvo == DONO_SISTEMA or _usuarios().get(alvo, {}).get("admin"):
+        return False
     meu = _empresa_de(getattr(g, "usuario", ""))
     return bool(meu) and _empresa_de(alvo) == meu
 
@@ -871,22 +898,61 @@ def cadastrar_usuario():
     return jsonify({"ok": True, "usuario": usuario})
 
 
-@app.post("/excluir-usuario")
-def excluir_usuario():
-    """Dono exclui um login: não entra mais; apaga senha, sessão, bloqueio e empresa."""
+@app.post("/tornar-admin")
+def tornar_admin():
+    """Dono liga/desliga o ADM de um usuário (ADM da empresa dele)."""
     erro = _so_admin()
     if erro:
         return erro
-    alvo = str((request.get_json(silent=True) or {}).get("usuario") or "").strip().lower()
+    dados = request.get_json(silent=True) or {}
+    alvo = str(dados.get("usuario") or "").strip().lower()
     if alvo not in _usuarios():
         return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
-    if alvo == DONO_SISTEMA or alvo == g.usuario:
+    if alvo == DONO_SISTEMA:
+        return jsonify({"ok": False, "error": "O dono é sempre ADM."}), 400
+    adm = _sim(dados.get("admin"))
+    try:
+        _no_banco(lambda con: con.run(
+            "INSERT INTO papeis_usuarios (usuario, admin) VALUES (:usuario, :admin)"
+            " ON CONFLICT (usuario) DO UPDATE SET admin = EXCLUDED.admin, atualizado_em = CURRENT_TIMESTAMP",
+            usuario=alvo, admin=adm))
+    except Exception as e:
+        print(f"[PAPEL] não gravou ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
+    _papeis(atualizar=True)
+    print(f"[PAPEL] {g.usuario} deixou {alvo} como {'ADM' if adm else 'analista'}", flush=True)
+    return jsonify({"ok": True})
+
+
+@app.post("/excluir-usuario")
+def excluir_usuario():
+    """
+    Exclui um login: não entra mais; apaga senha, sessão, bloqueio e empresa.
+    Dono: qualquer um. ADM de empresa: só analistas (não ADM) da empresa dele.
+    """
+    conta = _usuarios().get(getattr(g, "usuario", ""), {})
+    if not conta.get("admin"):
+        return jsonify({"ok": False, "error": "Só o administrador pode excluir."}), 403
+    if not os.getenv("DATABASE_URL", "").strip():
+        return jsonify({"ok": False, "error": "Sem banco configurado no servidor."}), 503
+    alvo = str((request.get_json(silent=True) or {}).get("usuario") or "").strip().lower()
+    conta_alvo = _usuarios().get(alvo)
+    if not conta_alvo:
+        return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    if alvo == g.usuario:
         return jsonify({"ok": False, "error": "Você não pode excluir o seu próprio login."}), 400
+    if alvo == DONO_SISTEMA:
+        return jsonify({"ok": False, "error": "Esse login não pode ser excluído."}), 403
+    if not _eh_dono():
+        if conta_alvo.get("admin"):
+            return jsonify({"ok": False, "error": "Só o dono do sistema exclui um ADM."}), 403
+        if not _pode_gerir(alvo):
+            return jsonify({"ok": False, "error": "Este analista é de outra empresa."}), 403
 
     def apagar(con):
         con.run("INSERT INTO usuarios_excluidos (usuario, excluido_por) VALUES (:usuario, :por)"
                 " ON CONFLICT (usuario) DO NOTHING", usuario=alvo, por=g.usuario)
-        for tabela in ("senhas_usuarios", "sessoes_ativas", "bloqueios_login", "empresa_usuarios"):
+        for tabela in ("senhas_usuarios", "sessoes_ativas", "bloqueios_login", "empresa_usuarios", "papeis_usuarios"):
             con.run(f"DELETE FROM {tabela} WHERE usuario = :usuario", usuario=alvo)
     try:
         _no_banco(apagar)
@@ -896,6 +962,7 @@ def excluir_usuario():
     _SESSOES.pop(alvo, None)
     _BLOQUEIOS.pop(alvo, None)
     _excluidos(atualizar=True)
+    _papeis(atualizar=True)
     _senhas_proprias(atualizar=True)
     _dados_empresas(atualizar=True)
     print(f"[EXCLUIR] {g.usuario} excluiu o login {alvo}", flush=True)
@@ -1067,6 +1134,11 @@ def _no_banco(funcao):
                 " criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
             con.run(
+                "CREATE TABLE IF NOT EXISTS papeis_usuarios ("
+                " usuario TEXT PRIMARY KEY, admin BOOLEAN NOT NULL,"
+                " atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+            con.run(
                 "CREATE TABLE IF NOT EXISTS usuarios_excluidos ("
                 " usuario TEXT PRIMARY KEY, excluido_por TEXT NOT NULL DEFAULT '',"
                 " excluido_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
@@ -1132,6 +1204,8 @@ def uso():
         empresas = {minha: empresas.get(minha, False)} if minha else {}
     lista_empresas = [{"nome": n, "pergunta_leme": l} for n, l in sorted(empresas.items())]
     empresa_de = {u: empresa_de.get(u, "") for u in nomes}
+    contas = _usuarios()
+    admins = {u: bool(contas.get(u, {}).get("admin")) for u in nomes}
     todos = _usuarios_todos()
     excluidos = [{"usuario": u, "nome": str(todos[u].get("nome") or u)}
                  for u in sorted(_excluidos(atualizar=True)) if u in todos] if dono else []
@@ -1153,7 +1227,7 @@ def uso():
             return jsonify({"ok": True, "persistente": True, "desde": "", "linhas": linhas,
                             "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
-                            "excluidos": excluidos})
+                            "excluidos": excluidos, "admins": admins})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
@@ -1164,7 +1238,7 @@ def uso():
     return jsonify({"ok": True, "persistente": False, "desde": _USO_DESDE, "linhas": linhas,
                     "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
-                            "excluidos": excluidos})
+                            "excluidos": excluidos, "admins": admins})
 
 
 # ============================================================
