@@ -249,7 +249,34 @@ def _usuarios_todos():
             todos.update({str(k).strip().lower(): v for k, v in bruto.items() if isinstance(v, dict)})
         except Exception:
             print(f"[LOGIN] variável {nome} inválida (JSON)", flush=True)
+    # Cadastrados pelo painel (banco). Quem está na lista do Render tem prioridade.
+    for u, conta in _usuarios_do_banco().items():
+        todos.setdefault(u, conta)
     return todos
+
+
+# ---------- Usuários cadastrados pelo painel ----------
+# O dono cadastra nome, login, senha inicial (guardada só como hash), empresa
+# e se é ADM da empresa. No 1º acesso a pessoa cria a própria senha.
+_CADASTRADOS = {"dados": None, "quando": 0.0}
+LOGIN_VALIDO = re.compile(r"^[a-z0-9][a-z0-9._-]{2,29}$")
+
+
+def _usuarios_do_banco(atualizar=False):
+    if not os.getenv("DATABASE_URL", "").strip():
+        return {}
+    agora = time.time()
+    if atualizar or _CADASTRADOS["dados"] is None or agora - _CADASTRADOS["quando"] > 60:
+        try:
+            linhas = _no_banco(lambda con: con.run(
+                "SELECT usuario, nome, senha_inicial, admin FROM usuarios_cadastrados")) or []
+            _CADASTRADOS["dados"] = {
+                str(u): {"nome": str(n or u), "senha": str(s), "admin": bool(a), "painel": True}
+                for u, n, s, a in linhas}
+        except Exception as e:
+            print(f"[CADASTRO] banco indisponível ({type(e).__name__})", flush=True)
+        _CADASTRADOS["quando"] = agora
+    return _CADASTRADOS["dados"] or {}
 
 
 def _login_ligado():
@@ -795,6 +822,55 @@ def empresa_do_analista():
     return jsonify({"ok": True})
 
 
+@app.post("/cadastrar-usuario")
+def cadastrar_usuario():
+    """Dono cadastra um usuário novo já numa empresa."""
+    erro = _so_admin()
+    if erro:
+        return erro
+    dados = request.get_json(silent=True) or {}
+    usuario = str(dados.get("usuario") or "").strip().lower()
+    nome = re.sub(r"\s+", " ", str(dados.get("nome") or "")).strip()[:80]
+    senha = str(dados.get("senha_inicial") or "")
+    empresa = _nome_empresa(dados.get("empresa"))
+    admin = _sim(dados.get("admin"))
+    if len(nome) < 2:
+        return jsonify({"ok": False, "error": "Digite o nome da pessoa."}), 400
+    if not LOGIN_VALIDO.match(usuario):
+        return jsonify({"ok": False, "error": "Login com 3 a 30 letras minúsculas, números, ponto, traço ou _ (sem espaço e sem acento)."}), 400
+    if usuario in _usuarios_todos():
+        if usuario in _excluidos(atualizar=True):
+            return jsonify({"ok": False, "error": "Esse login já existe e está excluído: use Restaurar em \"Logins excluídos\"."}), 409
+        return jsonify({"ok": False, "error": "Já existe um usuário com esse login."}), 409
+    if len(senha) < SENHA_MINIMO or len(senha) > 72:
+        return jsonify({"ok": False, "error": f"A senha inicial precisa ter pelo menos {SENHA_MINIMO} caracteres."}), 400
+    if senha.strip().lower() == usuario:
+        return jsonify({"ok": False, "error": "A senha inicial não pode ser igual ao login."}), 400
+    if not empresa or empresa not in _dados_empresas(atualizar=True)[0]:
+        return jsonify({"ok": False, "error": "Escolha a empresa do usuário."}), 400
+
+    def gravar(con):
+        con.run("INSERT INTO usuarios_cadastrados (usuario, nome, senha_inicial, admin, criado_por)"
+                " VALUES (:usuario, :nome, :senha, :admin, :por)",
+                usuario=usuario, nome=nome, senha=_hash_senha(senha), admin=admin, por=g.usuario)
+        con.run("INSERT INTO empresa_usuarios (usuario, empresa) VALUES (:usuario, :empresa)"
+                " ON CONFLICT (usuario) DO UPDATE SET empresa = EXCLUDED.empresa,"
+                " atualizado_em = CURRENT_TIMESTAMP", usuario=usuario, empresa=empresa)
+        # Restos de um login antigo com o mesmo nome (não deveria haver).
+        for tabela in ("senhas_usuarios", "sessoes_ativas", "bloqueios_login"):
+            con.run(f"DELETE FROM {tabela} WHERE usuario = :usuario", usuario=usuario)
+    try:
+        _no_banco(gravar)
+    except Exception as e:
+        print(f"[CADASTRO] falhou ({type(e).__name__})", flush=True)
+        return jsonify({"ok": False, "error": "Não consegui salvar agora (o login pode já existir). Tente de novo em 1 minuto."}), 503
+    _usuarios_do_banco(atualizar=True)
+    _dados_empresas(atualizar=True)
+    _senhas_proprias(atualizar=True)
+    print(f"[CADASTRO] {g.usuario} cadastrou {usuario} em {empresa}" + (" (ADM)" if admin else ""), flush=True)
+    return jsonify({"ok": True, "usuario": usuario})
+
+
 @app.post("/excluir-usuario")
 def excluir_usuario():
     """Dono exclui um login: não entra mais; apaga senha, sessão, bloqueio e empresa."""
@@ -984,6 +1060,12 @@ def _no_banco(funcao):
             for u in USUARIOS_EMPRESA_INICIAL:
                 con.run("INSERT INTO empresa_usuarios (usuario, empresa) VALUES (:usuario, :empresa)"
                         " ON CONFLICT (usuario) DO NOTHING", usuario=u, empresa=EMPRESA_INICIAL)
+            con.run(
+                "CREATE TABLE IF NOT EXISTS usuarios_cadastrados ("
+                " usuario TEXT PRIMARY KEY, nome TEXT NOT NULL, senha_inicial TEXT NOT NULL,"
+                " admin BOOLEAN NOT NULL DEFAULT FALSE, criado_por TEXT NOT NULL DEFAULT '',"
+                " criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
             con.run(
                 "CREATE TABLE IF NOT EXISTS usuarios_excluidos ("
                 " usuario TEXT PRIMARY KEY, excluido_por TEXT NOT NULL DEFAULT '',"

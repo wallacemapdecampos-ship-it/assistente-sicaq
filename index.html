@@ -283,9 +283,20 @@
     .barra-empresa .rot-empresa { font-weight: 700; color: var(--tinta-2); text-transform: uppercase; font-size: 11.5px; letter-spacing: .03em; }
     .barra-empresa select { height: 32px; min-width: 200px; font-weight: 700; }
     .barra-empresa .leme-empresa { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-    .barra-empresa .nova-empresa { display: inline-flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
-    .barra-empresa .nova-empresa input { height: 32px; width: 220px; max-width: 100%; }
-    .barra-empresa .nova-empresa button { height: 32px; }
+    .cadastro-uso { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(0, 2.2fr); gap: 12px; margin: 0 0 14px; }
+    .cadastro-uso[hidden] { display: none; }
+    @media (max-width: 860px) { .cadastro-uso { grid-template-columns: 1fr; } }
+    .caixa-cadastro { border: 1px solid var(--linha); border-radius: var(--raio); padding: 12px 14px; background: var(--folha); }
+    .caixa-cadastro h3 { margin: 0 0 10px; font-size: 14px; }
+    .caixa-cadastro .dica { margin: 8px 0 0; font-size: 12px; }
+    .linha-cadastro { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .linha-cadastro input[type=text] { flex: 1 1 180px; height: 34px; min-width: 0; }
+    .linha-cadastro button { height: 34px; }
+    .grade-cadastro { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 10px; margin-bottom: 10px; }
+    @media (max-width: 860px) { .grade-cadastro { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .grade-cadastro label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 700; color: var(--tinta-2); text-transform: uppercase; letter-spacing: .02em; }
+    .grade-cadastro input, .grade-cadastro select { height: 34px; font-size: 13.5px; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--tinta); }
+    .cad-admin { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; margin-right: auto; cursor: pointer; }
     .grupo-empresa { border: 1px solid var(--linha); border-radius: var(--raio); background: var(--folha); }
     .grupo-empresa + .grupo-empresa { margin-top: 8px; }
     .grupo-empresa .cab-empresa {
@@ -725,6 +736,29 @@
       <div class="card-topo">
         <h2>Leituras por analista</h2>
         <button id="btnAtualizarUso" type="button" class="secondary" style="margin-left:auto">Atualizar</button>
+      </div>
+      <div id="cadastroUso" class="cadastro-uso" hidden>
+        <div class="caixa-cadastro">
+          <h3>Nova empresa</h3>
+          <div class="linha-cadastro">
+            <input type="text" id="novaEmpresa" placeholder="Nome da empresa (ex.: FINANCIA)" maxlength="60" autocomplete="off">
+            <button type="button" id="btnNovaEmpresa">Cadastrar empresa</button>
+          </div>
+        </div>
+        <div class="caixa-cadastro">
+          <h3>Novo usuário</h3>
+          <div class="grade-cadastro">
+            <label>Nome<input type="text" id="cadNome" placeholder="Ex.: Ana Souza" maxlength="80" autocomplete="off"></label>
+            <label>Login<input type="text" id="cadUsuario" placeholder="Ex.: ana.souza" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+            <label>Senha inicial<input type="text" id="cadSenha" placeholder="Mín. 6 caracteres" maxlength="72" autocomplete="off"></label>
+            <label>Empresa<select id="cadEmpresa"></select></label>
+          </div>
+          <div class="linha-cadastro">
+            <label class="cad-admin"><input type="checkbox" id="cadAdmin"> ADM da empresa (vê e gerencia os usuários dela)</label>
+            <button type="button" id="btnCadastrarUsuario">Cadastrar usuário</button>
+          </div>
+          <p class="dica">Passe o login e a senha inicial para a pessoa. No 1º acesso ela cria a senha dela.</p>
+        </div>
       </div>
       <div id="barraEmpresa" class="barra-empresa" hidden></div>
       <div id="conteudoUso"><p class="vazio">Clique em Atualizar para ver as leituras.</p></div>
@@ -2247,12 +2281,15 @@
       barra.innerHTML =
         `<label class="rot-empresa" for="selEmpresaUso">Empresa</label>` +
         `<select id="selEmpresaUso">${opcoes}</select>` +
-        (empAtual ? `<label class="leme-empresa"><input type="checkbox" id="chkLemeEmpresa"${empAtual.pergunta_leme ? " checked" : ""}> Perguntar "é Leme?" na Renda</label>` : "") +
-        `<span class="nova-empresa"><input type="text" id="novaEmpresa" placeholder="Nova empresa (ex.: FINANCE)" maxlength="60">` +
-        `<button type="button" class="secondary" id="btnNovaEmpresa">Criar empresa</button></span>`;
+        (empAtual ? `<label class="leme-empresa"><input type="checkbox" id="chkLemeEmpresa"${empAtual.pergunta_leme ? " checked" : ""}> Perguntar "é Leme?" na Renda</label>` : "");
+      const selCad = document.getElementById("cadEmpresa");
+      const antes = selCad.value || (sel !== "*" ? sel : "");
+      selCad.innerHTML = `<option value="">Escolha…</option>` +
+        empresas.map(e => `<option value="${escHtml(e.nome)}"${e.nome === antes ? " selected" : ""}>${escHtml(e.nome)}</option>`).join("");
     } else {
       barra.innerHTML = `<span class="rot-empresa">Empresa</span><b>${escHtml(sel || "—")}</b>`;
     }
+    document.getElementById("cadastroUso").hidden = !dono;
 
     const agora = new Date();
     const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
@@ -2296,8 +2333,36 @@
       const r = await postarAdmin("/empresa", { nome, pergunta_leme: false });
       EMPRESA_USO = r.nome;
       await carregarUso();
-      document.getElementById("notaUso").textContent = `Empresa ${r.nome} criada. Agora coloque os analistas nela pela coluna Empresa (em "Todas as empresas" ou "Sem empresa").`;
+      campo.value = "";
+      document.getElementById("cadEmpresa").value = r.nome;
+      document.getElementById("notaUso").textContent = `Empresa ${r.nome} cadastrada. Agora cadastre os usuários dela em "Novo usuário".`;
     } catch (e) { nota.textContent = "Erro: " + (e.message || e); }
+  }
+
+  async function cadastrarUsuario() {
+    const v = (id) => document.getElementById(id).value.trim();
+    const nota = document.getElementById("notaUso");
+    const corpo = { nome: v("cadNome"), usuario: v("cadUsuario").toLowerCase(), senha_inicial: document.getElementById("cadSenha").value,
+                    empresa: v("cadEmpresa"), admin: document.getElementById("cadAdmin").checked };
+    if (corpo.nome.length < 2) { nota.textContent = "Digite o nome da pessoa."; document.getElementById("cadNome").focus(); return; }
+    if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(corpo.usuario)) { nota.textContent = "Login com 3 a 30 letras minúsculas, números, ponto, traço ou _ (sem espaço e sem acento)."; document.getElementById("cadUsuario").focus(); return; }
+    if (corpo.senha_inicial.length < 6) { nota.textContent = "A senha inicial precisa ter pelo menos 6 caracteres."; document.getElementById("cadSenha").focus(); return; }
+    if (!corpo.empresa) { nota.textContent = "Escolha a empresa do usuário."; document.getElementById("cadEmpresa").focus(); return; }
+    const btn = document.getElementById("btnCadastrarUsuario");
+    btn.disabled = true;
+    try {
+      await postarAdmin("/cadastrar-usuario", corpo);
+      ["cadNome", "cadUsuario", "cadSenha"].forEach(id => { document.getElementById(id).value = ""; });
+      document.getElementById("cadAdmin").checked = false;
+      EMPRESAS_ABERTAS.add(corpo.empresa);
+      await carregarUso();
+      document.getElementById("notaUso").textContent =
+        `${corpo.nome} cadastrado na ${corpo.empresa}${corpo.admin ? " como ADM" : ""}. Login: ${corpo.usuario}. Ele entra com a senha inicial e cria a dele no 1º acesso.`;
+    } catch (e) {
+      nota.textContent = "Erro: " + (e.message || e);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   async function mudarLemeEmpresa(caixa) {
@@ -2955,11 +3020,14 @@
     if (e.target.id === "selEmpresaUso") { EMPRESA_USO = e.target.value; desenharUso(); }
     if (e.target.id === "chkLemeEmpresa") mudarLemeEmpresa(e.target);
   });
-  document.getElementById("barraEmpresa").addEventListener("click", (e) => {
-    if (e.target.id === "btnNovaEmpresa") criarEmpresa();
+  document.getElementById("btnNovaEmpresa").addEventListener("click", criarEmpresa);
+  document.getElementById("novaEmpresa").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); criarEmpresa(); }
   });
-  document.getElementById("barraEmpresa").addEventListener("keydown", (e) => {
-    if (e.target.id === "novaEmpresa" && e.key === "Enter") { e.preventDefault(); criarEmpresa(); }
+  document.getElementById("btnCadastrarUsuario").addEventListener("click", cadastrarUsuario);
+  document.getElementById("cadUsuario").addEventListener("input", (e) => {
+    const limpo = e.target.value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9._-]/g, "");
+    if (limpo !== e.target.value) e.target.value = limpo;
   });
   document.getElementById("conteudoUso").addEventListener("click", (e) => {
     const cab = e.target.closest("button.cab-empresa");
