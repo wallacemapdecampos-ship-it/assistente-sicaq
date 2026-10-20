@@ -370,6 +370,7 @@ def _guard():
         return jsonify({"ok": False, "code": "OUTRO_PC",
                         "error": "Este usuário entrou em outro computador. Entre de novo."}), 401
     g.usuario = usuario
+    g.trocar = trocar
     if trocar and request.path != "/trocar-senha":
         return jsonify({"ok": False, "code": "TROCAR_SENHA",
                         "error": "Crie a sua senha para continuar."}), 403
@@ -394,12 +395,32 @@ def login():
         return jsonify({"ok": False, "error": "Muitas tentativas. Aguarde 10 minutos."}), 429
 
     conta = _usuarios().get(usuario)
+    # Analista bloqueado (3 senhas erradas): não entra nem com a senha certa.
+    vigiado = bool(conta) and not conta.get("admin")
+    erros_antes = 0
+    if vigiado:
+        erros_antes, bloqueado = _bloqueio(usuario)
+        if bloqueado:
+            print(f"[LOGIN] tentativa em usuário bloqueado: {usuario}", flush=True)
+            return jsonify({"ok": False, "code": "BLOQUEADO", "error": MSG_BLOQUEADO}), 423
+
     certo, trocar = _conferir_senha_login(usuario, conta, senha)
     if not certo:
         falhas.append(agora)
         print("[LOGIN] senha ou usuário incorretos", flush=True)
+        if vigiado:
+            erros, bloqueado = _registrar_erro_login(usuario)
+            if bloqueado:
+                print(f"[LOGIN] {usuario} bloqueado após {LIMITE_ERROS_LOGIN} senhas erradas", flush=True)
+                return jsonify({"ok": False, "code": "BLOQUEADO", "error": MSG_BLOQUEADO}), 423
+            restam = LIMITE_ERROS_LOGIN - erros
+            if restam == 1:
+                return jsonify({"ok": False, "error": "Usuário ou senha incorretos. Atenção: mais 1 erro "
+                                "bloqueia o acesso e só o administrador libera."}), 401
         return jsonify({"ok": False, "error": "Usuário ou senha incorretos."}), 401
 
+    if vigiado and erros_antes:
+        _limpar_bloqueio(usuario)  # acertou: zera os erros
     print(f"[LOGIN] entrou: {usuario}" + (" (senha inicial)" if trocar else ""), flush=True)
     return jsonify(_resposta_login(usuario, conta, trocar))
 
@@ -475,6 +496,9 @@ def trocar_senha():
         return jsonify({"ok": False, "error": "Não consegui falar com o banco de senhas. Tente de novo em 1 minuto."}), 503
     usuario = g.usuario
     conta = _usuarios().get(usuario) or {}
+    # Analista só CRIA a senha no primeiro acesso. Trocar depois: só o ADM.
+    if not conta.get("admin") and not getattr(g, "trocar", False):
+        return jsonify({"ok": False, "error": "Para trocar a senha, fale com o administrador."}), 403
     dados = request.get_json(silent=True) or {}
     atual = str(dados.get("senha_atual") or "")
     nova = str(dados.get("senha_nova") or "")
@@ -530,8 +554,92 @@ def resetar_senha():
         print(f"[SENHA] reset falhou ({type(e).__name__})", flush=True)
         return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
     _senhas_proprias(atualizar=True)
+    _limpar_bloqueio(alvo)  # resetar também desbloqueia
     print(f"[SENHA] {g.usuario} resetou a senha de {alvo}", flush=True)
     return jsonify({"ok": True})
+
+
+@app.post("/desbloquear")
+def desbloquear():
+    conta = _usuarios().get(getattr(g, "usuario", ""), {})
+    if not conta.get("admin"):
+        return jsonify({"ok": False, "error": "Só o administrador pode desbloquear."}), 403
+    alvo = str((request.get_json(silent=True) or {}).get("usuario") or "").strip().lower()
+    if alvo not in _usuarios():
+        return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
+    if not _limpar_bloqueio(alvo):
+        return jsonify({"ok": False, "error": "Não consegui falar com o banco agora. Tente de novo em 1 minuto."}), 503
+    print(f"[LOGIN] {g.usuario} desbloqueou {alvo}", flush=True)
+    return jsonify({"ok": True})
+
+
+# ---------- Bloqueio após 3 senhas erradas ----------
+# Vale para os analistas (o ADM fica de fora). Conta erros seguidos de
+# qualquer computador; acertar a senha zera. No 3º erro o usuário fica
+# bloqueado até o ADM desbloquear/resetar na aba Uso (ou apagando a linha
+# na tabela bloqueios_login do banco). Fica no banco para sobreviver ao
+# servidor reiniciar; sem banco, fica na memória.
+LIMITE_ERROS_LOGIN = 3
+MSG_BLOQUEADO = ("Acesso bloqueado após 3 senhas erradas. "
+                 "Fale com o administrador para liberar.")
+_BLOQUEIOS = {}  # usuario -> erros seguidos (memória / cópia do banco)
+
+
+def _bloqueio(usuario):
+    """(erros seguidos, bloqueado?)."""
+    if os.getenv("DATABASE_URL", "").strip():
+        try:
+            linhas = _no_banco(lambda con: con.run(
+                "SELECT erros FROM bloqueios_login WHERE usuario = :usuario", usuario=usuario)) or []
+            _BLOQUEIOS[usuario] = int(linhas[0][0]) if linhas else 0
+        except Exception as e:
+            print(f"[LOGIN] banco indisponível ({type(e).__name__}); bloqueio pela memória", flush=True)
+    erros = _BLOQUEIOS.get(usuario, 0)
+    return erros, erros >= LIMITE_ERROS_LOGIN
+
+
+def _registrar_erro_login(usuario):
+    """Soma 1 erro e devolve (erros seguidos, bloqueado?)."""
+    erros = _BLOQUEIOS.get(usuario, 0) + 1
+    if os.getenv("DATABASE_URL", "").strip():
+        try:
+            linhas = _no_banco(lambda con: con.run(
+                "INSERT INTO bloqueios_login (usuario, erros) VALUES (:usuario, 1)"
+                " ON CONFLICT (usuario) DO UPDATE SET erros = bloqueios_login.erros + 1,"
+                " atualizado_em = CURRENT_TIMESTAMP RETURNING erros",
+                usuario=usuario)) or []
+            if linhas:
+                erros = int(linhas[0][0])
+        except Exception as e:
+            print(f"[LOGIN] erro não gravado no banco ({type(e).__name__})", flush=True)
+    _BLOQUEIOS[usuario] = erros
+    return erros, erros >= LIMITE_ERROS_LOGIN
+
+
+def _limpar_bloqueio(usuario):
+    """Zera os erros/desbloqueia. False se não deu para gravar no banco."""
+    _BLOQUEIOS.pop(usuario, None)
+    if os.getenv("DATABASE_URL", "").strip():
+        try:
+            _no_banco(lambda con: con.run(
+                "DELETE FROM bloqueios_login WHERE usuario = :usuario", usuario=usuario))
+        except Exception as e:
+            print(f"[LOGIN] desbloqueio não gravado ({type(e).__name__})", flush=True)
+            return False
+    return True
+
+
+def _bloqueados():
+    """Lista dos usuários bloqueados agora."""
+    if os.getenv("DATABASE_URL", "").strip():
+        try:
+            linhas = _no_banco(lambda con: con.run(
+                "SELECT usuario, erros FROM bloqueios_login")) or []
+            _BLOQUEIOS.clear()
+            _BLOQUEIOS.update({str(u): int(n) for u, n in linhas})
+        except Exception as e:
+            print(f"[LOGIN] banco indisponível ({type(e).__name__})", flush=True)
+    return sorted(u for u, n in _BLOQUEIOS.items() if n >= LIMITE_ERROS_LOGIN)
 
 
 # ---------- Contador de leituras por usuário ----------
@@ -587,6 +695,11 @@ def _no_banco(funcao):
                 " usuario TEXT PRIMARY KEY, senha TEXT NOT NULL,"
                 " trocada_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
+            con.run(
+                "CREATE TABLE IF NOT EXISTS bloqueios_login ("
+                " usuario TEXT PRIMARY KEY, erros INTEGER NOT NULL DEFAULT 0,"
+                " atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
             _banco_pronto["tabela"] = True
         return funcao(con)
     finally:
@@ -631,6 +744,7 @@ def uso():
     # Quem já criou a senha própria (True) e quem ainda usa a inicial (False).
     proprias = _senhas_proprias(atualizar=True)
     senhas = None if proprias is None else {u: u in proprias for u in nomes}
+    bloqueados = [u for u in _bloqueados() if u in nomes]
 
     # Banco: este mês e o anterior.
     hoje = datetime.now(FUSO_BR).date()
@@ -647,7 +761,7 @@ def uso():
                 for r in rows
             ]
             return jsonify({"ok": True, "persistente": True, "desde": "", "linhas": linhas,
-                            "nomes": nomes, "senhas": senhas})
+                            "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
@@ -656,7 +770,7 @@ def uso():
         for (dia, usuario, tipo), n in sorted(_USO.items())
     ]
     return jsonify({"ok": True, "persistente": False, "desde": _USO_DESDE, "linhas": linhas,
-                    "nomes": nomes, "senhas": senhas})
+                    "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados})
 
 
 # ============================================================

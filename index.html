@@ -265,6 +265,7 @@
     .tabela-senhas td:last-child { text-align: right !important; }
     .tabela-uso .sim { color: var(--ok, #18794e); font-weight: 700; }
     .tabela-uso .nao { color: #8a6100; font-weight: 700; }
+    .tabela-uso .bloq { color: var(--erro, #b3261e); font-weight: 700; }
     .conta { display: inline-flex; align-items: center; gap: 10px; color: #e3e9f0; font-weight: 700; white-space: nowrap; }
     header .sair {
       height: 28px; padding: 0 10px; font-size: 12.5px;
@@ -896,6 +897,8 @@
     document.getElementById("nomeUsuario").textContent = SESSAO ? SESSAO.nome : "";
     document.getElementById("contaUsuario").hidden = !SESSAO;
     document.getElementById("tabUso").hidden = !(SESSAO && SESSAO.admin);
+    // Analista só cria a senha no 1º acesso; trocar depois é com o ADM.
+    document.getElementById("btnTrocarSenha").hidden = !(SESSAO && SESSAO.admin);
   }
   function cabecalhoLogin() {
     return SESSAO && SESSAO.token ? { Authorization: "Bearer " + SESSAO.token } : {};
@@ -2157,7 +2160,7 @@
         if (String(l.dia).startsWith(mesAnterior)) { doAnterior[l.usuario] = doAnterior[l.usuario] || {}; doAnterior[l.usuario][l.tipo] = (doAnterior[l.usuario][l.tipo] || 0) + l.quantidade; }
       });
       caixa.innerHTML = tabelaUso("Hoje", doDia) + tabelaUso("Este mês", doMes) +
-        (data.persistente ? tabelaUso("Mês passado", doAnterior) : "") + tabelaSenhas(data.senhas);
+        (data.persistente ? tabelaUso("Mês passado", doAnterior) : "") + tabelaSenhas(data.senhas, data.bloqueados);
       document.getElementById("notaUso").textContent = data.persistente
         ? "Números guardados no banco de dados (só as contagens, nenhum dado de cliente)."
         : `Contando desde ${data.desde}. Por enquanto o contador fica na memória do servidor e zera quando ele reinicia.`;
@@ -2167,25 +2170,49 @@
     }
   }
 
-  function tabelaSenhas(senhas) {
+  function tabelaSenhas(senhas, bloqueados) {
     if (!senhas) return "";
+    const travados = new Set(bloqueados || []);
     const lista = Object.keys(senhas).sort((a, b) =>
       String(NOMES_USO[a] || a).localeCompare(String(NOMES_USO[b] || b), "pt-BR"));
     if (!lista.length) return "";
     const linhas = lista.map(u => {
       const nome = String(NOMES_USO[u] || u).replace(/[<>&"]/g, "");
       const uSeguro = String(u).replace(/[^a-z0-9._-]/gi, "");
-      const status = senhas[u]
-        ? '<span class="sim">Criou a senha</span>'
-        : '<span class="nao">Ainda com a senha inicial</span>';
-      const botao = senhas[u]
-        ? `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>`
-        : "";
-      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${status}</td><td>${botao}</td></tr>`;
+      const travado = travados.has(u);
+      const status = travado
+        ? '<span class="bloq">Bloqueado (3 senhas erradas)</span>'
+        : (senhas[u]
+          ? '<span class="sim">Criou a senha</span>'
+          : '<span class="nao">Ainda com a senha inicial</span>');
+      const botoes = [
+        travado ? `<button type="button" class="secondary resetar desbloquear" data-usuario="${uSeguro}" data-nome="${nome}">Desbloquear</button>` : "",
+        senhas[u] ? `<button type="button" class="secondary resetar" data-usuario="${uSeguro}" data-nome="${nome}">Resetar</button>` : ""
+      ].filter(Boolean).join(" ");
+      return `<tr><td>${nome}</td><td>${uSeguro}</td><td>${status}</td><td>${botoes}</td></tr>`;
     }).join("");
     return `<div class="uso-bloco"><h3>Senhas</h3><table class="tabela-uso tabela-senhas"><thead><tr><th>Analista</th><th>Usuário</th><th>Situação</th><th></th></tr></thead>` +
            `<tbody>${linhas}</tbody></table>` +
-           `<p class="dica">Esqueceu a senha? Clique em Resetar: a pessoa entra com a senha inicial e cria outra.</p></div>`;
+           `<p class="dica">A senha só é criada no 1º acesso; para trocar depois, clique em Resetar: a pessoa entra com a senha inicial e cria outra. ` +
+           `Errou a senha 3 vezes: fica bloqueado. Desbloquear libera com a mesma senha; Resetar libera e pede senha nova.</p></div>`;
+  }
+
+  async function desbloquearUsuario(usuario, nome) {
+    if (!confirm(`Desbloquear ${nome}? Ela volta a entrar com a senha que já tinha.`)) return;
+    try {
+      const resp = await fetchComLimite(API + "/desbloquear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...cabecalhoLogin() },
+        body: JSON.stringify({ usuario })
+      }, 30000);
+      let data = {};
+      try { data = await resp.json(); } catch (_) {}
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Não foi possível desbloquear.");
+      await carregarUso();
+      document.getElementById("notaUso").textContent = `${nome} desbloqueado. Já pode entrar de novo.`;
+    } catch (e) {
+      document.getElementById("notaUso").textContent = "Erro: " + (e.message || e);
+    }
   }
 
   async function resetarSenha(usuario, nome) {
@@ -2594,7 +2621,9 @@
   document.getElementById("btnCancelarSenha").addEventListener("click", cancelarSenha);
   document.getElementById("conteudoUso").addEventListener("click", (e) => {
     const b = e.target.closest("button.resetar");
-    if (b) resetarSenha(b.dataset.usuario, b.dataset.nome);
+    if (!b) return;
+    if (b.classList.contains("desbloquear")) desbloquearUsuario(b.dataset.usuario, b.dataset.nome);
+    else resetarSenha(b.dataset.usuario, b.dataset.nome);
   });
   document.getElementById("btnLerHolerite").addEventListener("click", lerHolerite);
   document.getElementById("btnRenda").addEventListener("click", preencherRenda);
