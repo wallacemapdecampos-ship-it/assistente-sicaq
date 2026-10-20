@@ -371,6 +371,8 @@ def _guard():
                         "error": "Este usuário entrou em outro computador. Entre de novo."}), 401
     g.usuario = usuario
     g.trocar = trocar
+    if _sem_empresa(usuario):
+        return jsonify({"ok": False, "code": "SEM_EMPRESA", "error": MSG_SEM_EMPRESA}), 401
     if trocar and request.path != "/trocar-senha":
         return jsonify({"ok": False, "code": "TROCAR_SENHA",
                         "error": "Crie a sua senha para continuar."}), 403
@@ -418,6 +420,10 @@ def login():
                 return jsonify({"ok": False, "error": "Usuário ou senha incorretos. Atenção: mais 1 erro "
                                 "bloqueia o acesso e só o administrador libera."}), 401
         return jsonify({"ok": False, "error": "Usuário ou senha incorretos."}), 401
+
+    if _sem_empresa(usuario):
+        print(f"[LOGIN] {usuario} sem empresa: não entra", flush=True)
+        return jsonify({"ok": False, "code": "SEM_EMPRESA", "error": MSG_SEM_EMPRESA}), 403
 
     if vigiado and erros_antes:
         _limpar_bloqueio(usuario)  # acertou: zera os erros
@@ -653,6 +659,25 @@ def _dados_empresas(atualizar=False):
 
 def _empresa_de(usuario):
     return _dados_empresas()[1].get(str(usuario or "").lower(), "")
+
+
+def _sem_empresa(usuario):
+    """
+    True quando o usuário NÃO está em nenhuma empresa (e não é o dono): não
+    pode entrar. Se o banco estiver fora do ar e não houver lista conhecida,
+    não barra ninguém (melhor não trancar o escritório inteiro).
+    """
+    u = str(usuario or "").lower()
+    if not os.getenv("DATABASE_URL", "").strip() or _eh_dono(u):
+        return False
+    _dados_empresas()
+    if _EMPRESAS["de"] is None:
+        return False
+    return not _EMPRESAS["de"].get(u)
+
+
+MSG_SEM_EMPRESA = ("Seu usuário ainda não está cadastrado em uma empresa. "
+                   "Fale com o administrador.")
 
 
 def _pergunta_leme(usuario):

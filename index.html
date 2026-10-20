@@ -975,7 +975,7 @@
   async function motivoSaida(resp, padrao) {
     try {
       const data = await resp.clone().json();
-      if (data && data.code === "OUTRO_PC" && data.error) return data.error;
+      if (data && (data.code === "OUTRO_PC" || data.code === "SEM_EMPRESA") && data.error) return data.error;
     } catch (_) {}
     return padrao;
   }
