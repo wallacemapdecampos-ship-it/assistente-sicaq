@@ -4931,8 +4931,15 @@ Regras:
   correspondência, use o de INSTALAÇÃO (onde a pessoa mora).
 - tipo_logradouro: RUA, AVENIDA, TRAVESSA, ALAMEDA, ESTRADA, RODOVIA, PRAÇA,
   VIELA etc. (por extenso). logradouro: só o nome, sem o tipo.
-- numero: só o número do imóvel (ou "S/N"). complemento: apto, bloco, casa,
-  fundos etc. (vazio se não houver).
+- numero: só o número do imóvel (ou "SN" quando não tiver número).
+- complemento: SÓ apto, bloco, casa, fundos, lote, quadra (vazio se não houver).
+  NUNCA ponha o bairro no complemento.
+- logradouro e bairro: copie EXATAMENTE como impresso na conta, com as mesmas
+  abreviações (se está "JD", devolva "JD"; não troque por "JARDIM"; se está
+  "DR", devolva "DR"). Não corrija nem complete nomes.
+- bairro: o bairro do imóvel (ex.: JD THOMAZ GUEDES, VL HORTENCIA, CENTRO,
+  RESIDENCIAL ...). Nas contas ele costuma vir na linha de baixo da rua ou
+  junto com a cidade. NUNCA use o nome da cidade como bairro.
 - cep: somente os 8 dígitos. uf: sigla de 2 letras.
 - referencia: mês/ano de referência ou vencimento da conta, em MM/AAAA.
 - emissor: nome da empresa que emitiu (ex.: CPFL, SABESP, VIVO).
@@ -5014,8 +5021,8 @@ def _faixa_numero(complemento, numero):
 
 
 def _cep_fmt(cep):
-    d = re.sub(r"\D", "", str(cep or ""))
-    return f"{d[:5]}-{d[5:]}" if len(d) == 8 else d
+    """O SICAQ só aceita o CEP com os 8 números, sem traço."""
+    return re.sub(r"\D", "", str(cep or ""))[:8]
 
 
 def _conferir_cep(cep, logradouro="", numero="", bairro="", cidade="", uf="", tipo=""):
@@ -5052,7 +5059,7 @@ def _conferir_cep(cep, logradouro="", numero="", bairro="", cidade="", uf="", ti
                     difflib.SequenceMatcher(None, rua_lida, rua_cep).ratio() >= 0.75
                 if parecida:
                     saida.update(status="ok", pode_usar=True, mensagem="CEP confere com a rua.",
-                                 logradouro_cep=info.get("logradouro"), bairro_cep=info.get("bairro"))
+                                 logradouro_cep=info.get("logradouro"), bairro_cep=_sem_pontuacao(info.get("bairro")))
                     return saida
                 saida.update(status="diferente",
                              mensagem=f"Esse CEP é da {info.get('logradouro')}, não da rua do comprovante. Confira ou use uma sugestão.")
@@ -5102,6 +5109,7 @@ def _conferir_cep(cep, logradouro="", numero="", bairro="", cidade="", uf="", ti
                  "sem_cep": "O comprovante não tinha CEP"}[saida["status"]]
         saida.update(
             cep_original=saida["cep"], cep=melhor["cep"], status="trocado", pode_usar=True,
+            bairro_cep=_sem_pontuacao(melhor["bairro"]),
             certeza=certeza,
             mensagem=(f"{antes}. Coloquei o CEP da rua: {melhor['cep']} ({melhor['logradouro']}"
                       f"{' — ' + melhor['complemento'] if melhor['complemento'] else ''}"
@@ -5115,13 +5123,34 @@ def _conferir_cep(cep, logradouro="", numero="", bairro="", cidade="", uf="", ti
     return saida
 
 
+_INICIO_BAIRRO = re.compile(
+    r"^(JD|JARDIM|VL|VILA|PQ|PRQ|PARQUE|RES|RESID|RESIDENCIAL|CJ|CONJ|CONJUNTO|NUCLEO|NUC|"
+    r"BAIRRO|CENTRO|CHACARA|CH|LOTEAMENTO|LOT|PORTAL|RECANTO|CONDOMINIO|COND|HAB|HABITACIONAL|"
+    r"SITIO|ESTANCIA|JDIM|BOSQUE|CIDADE|DISTRITO|ALTO)\b")
+_COMPLEMENTO_DE_VERDADE = re.compile(r"\b(AP|APT|APTO|APARTAMENTO|BL|BLOCO|CASA|FUNDOS|FDS|LT|LOTE|QD|QUADRA|SALA|ANDAR|TORRE|BOX|LOJA)\b")
+
+
+def _sem_pontuacao(v):
+    """O SICAQ não aceita ponto, vírgula, traço, barra etc.: só letras, números e espaço."""
+    t = _tirar_acentos(str(v or "")).upper()
+    t = re.sub(r"[^A-Z0-9 ]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
 def _normalizar_endereco(r):
     """Limpa o que a IA leu e confere a cidade com a lista do IBGE."""
-    limpo = lambda v: re.sub(r"\s+", " ", _tirar_acentos(str(v or "")).upper()).strip(" ,.-")
+    limpo = _sem_pontuacao
     tipo, rua = _separar_tipo_logradouro(r.get("tipo_logradouro"), r.get("logradouro"))
-    numero = limpo(r.get("numero")).replace("SN", "S/N")
-    if re.fullmatch(r"S\s*/?\s*N[ºO]?", numero):
-        numero = "S/N"
+    numero = limpo(r.get("numero"))
+    # Número grudado na rua ("ARMANDO PANNUNZIO, 1.200"): vai para o Número.
+    m = re.search(r",\s*(\d[\d.]*)\s*$", rua)
+    if m:
+        if not numero or numero in ("SN", "S N"):
+            numero = re.sub(r"\D", "", m.group(1))
+        rua = rua[:m.start()]
+    rua = limpo(rua)
+    if re.fullmatch(r"S ?N[O]?|SEM NUMERO|SEM N", numero):
+        numero = "SN"
     uf = limpo(r.get("uf"))[:2]
     cidade = limpo(r.get("cidade"))
     incertos = [str(x) for x in (r.get("campos_incertos") or [])]
@@ -5130,13 +5159,26 @@ def _normalizar_endereco(r):
         cidade, uf = (oficial or cidade), (uf_of or uf)
         if not certeza:
             incertos.append("cidade")
+    bairro = limpo(r.get("bairro"))
+    complemento = limpo(r.get("complemento"))
+    # Bairro foi parar no complemento e a cidade no bairro (ex.: complemento
+    # "JD THOMAZ GUEDES", bairro "TATUI"): desfaz a troca.
+    cidade_ch = _chave_cidade(cidade)
+    bairro_e_cidade = not bairro or _chave_cidade(bairro) == cidade_ch
+    if bairro_e_cidade and complemento and _INICIO_BAIRRO.match(complemento) \
+            and not _COMPLEMENTO_DE_VERDADE.search(complemento):
+        bairro, complemento = complemento, ""
+        incertos.append("bairro")
+    elif bairro and _chave_cidade(bairro) == cidade_ch:
+        bairro = ""  # cidade não é bairro: o CEP da rua pode trazer o certo
+        incertos.append("bairro")
     return {
         "tipo_logradouro": tipo,
         "logradouro": rua,
         "numero": numero,
-        "complemento": limpo(r.get("complemento")),
-        "bairro": limpo(r.get("bairro")),
-        "cidade": cidade,
+        "complemento": complemento,
+        "bairro": bairro,
+        "cidade": _sem_pontuacao(cidade),
         "uf": uf if uf in UFS_BR else "",
         "cep": re.sub(r"\D", "", str(r.get("cep") or ""))[:8],
         "referencia": str(r.get("referencia") or "").strip()[:7],
@@ -5166,6 +5208,11 @@ def ler_endereco():
         dados = _normalizar_endereco(lido)
         conf = _conferir_cep(dados["cep"], dados["logradouro"], dados["numero"], dados["bairro"],
                              dados["cidade"], dados["uf"], dados["tipo_logradouro"])
+        # Rua e bairro ficam escritos como na conta (JD continua JD). Só se a
+        # conta não tiver bairro, usa o do CEP, marcado para conferir.
+        if not dados["bairro"] and conf.get("bairro_cep"):
+            dados["bairro"] = conf["bairro_cep"]
+            dados["campos_incertos"] = sorted(set(dados["campos_incertos"] + ["bairro"]))
         print(f"[ENDERECO] cep={conf['status']} sugestoes={len(conf['sugestoes'])} "
               f"texto_pdf={bool(texto_pdf)} imagens={n_imagens}", flush=True)
         _registrar_uso("endereco")

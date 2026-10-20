@@ -646,7 +646,7 @@
         <div class="campo">
           <label for="eCep">CEP</label>
           <div class="cep-linha">
-            <input id="eCep" type="text" inputmode="numeric" maxlength="9" placeholder="00000-000">
+            <input id="eCep" type="text" inputmode="numeric" maxlength="8" placeholder="só números">
             <button id="btnConferirCep" type="button" class="secondary">Conferir</button>
           </div>
         </div>
@@ -2794,10 +2794,9 @@
     el.textContent = texto;
     el.className = classe;
   }
-  function formatarCep(v) {
-    const d = soDigitos(v).slice(0, 8);
-    return d.length > 5 ? d.slice(0, 5) + "-" + d.slice(5) : d;
-  }
+  // O SICAQ não aceita traço no CEP nem pontuação no endereço.
+  function formatarCep(v) { return soDigitos(v).slice(0, 8); }
+  function semPontuacao(v) { return _semAc(v).replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim(); }
   function limparEndereco() {
     enderecoIds.forEach(id => { const el = document.getElementById(id); el.value = ""; el.classList.remove("destaque"); });
     tipoImovelManual = false;
@@ -2813,10 +2812,16 @@
     const campo = document.getElementById("eCep");
     if (!conf) { st.hidden = true; return; }
     // Genérico trocado pelo CEP da rua: já entra no campo, em amarelo para conferir.
-    if (conf.status === "trocado" && conf.cep) campo.value = conf.cep;
+    if (conf.status === "trocado" && conf.cep) campo.value = formatarCep(conf.cep);
     // UF e Município: os do CEP (é o que o SICAQ vai mostrar ao Consultar).
-    if (conf.uf) document.getElementById("eUf").value = _semAc(conf.uf);
-    if (conf.cidade) document.getElementById("eCidade").value = _semAc(conf.cidade);
+    if (conf.uf) document.getElementById("eUf").value = semPontuacao(conf.uf);
+    if (conf.cidade) document.getElementById("eCidade").value = semPontuacao(conf.cidade);
+    // Rua e bairro ficam como na conta. Só se o bairro estiver vazio, usa o do CEP (em amarelo).
+    const bairroCampo = document.getElementById("eBairro");
+    if (conf.bairro_cep && !bairroCampo.value.trim()) {
+      bairroCampo.value = semPontuacao(conf.bairro_cep);
+      bairroCampo.classList.add("destaque");
+    }
     const classe = conf.status === "ok" || (conf.status === "trocado" && conf.certeza) ? "ok"
                  : (conf.status === "inexistente" ? "erro" : "warn");
     const titulo = { ok: "CEP conferido", trocado: "CEP corrigido", generico: "CEP genérico", inexistente: "CEP inválido",
@@ -2824,7 +2829,7 @@
     const sugestoes = (conf.sugestoes || []).map((s, i) => {
       const cabe = s.cabe === true ? " · o número cabe nesta faixa" : (s.cabe === false ? " · o número não cabe nesta faixa" : "");
       const melhor = conf.sugerido && s.cep === conf.sugerido;
-      return `<div class="sugestao${melhor ? " melhor" : ""}"><b>${escHtml(s.cep)}</b>` +
+      return `<div class="sugestao${melhor ? " melhor" : ""}"><b>${escHtml(formatarCep(s.cep))}</b>` +
         `<span>${escHtml(s.logradouro)}${s.complemento ? " — " + escHtml(s.complemento) : ""}</span>` +
         `<span class="detalhe">${escHtml(s.bairro || "")}${cabe}${melhor ? " · sugerido" : ""}</span>` +
         `<button type="button" class="${melhor ? "" : "secondary"}" data-cep="${escHtml(s.cep)}" data-bairro="${escHtml(s.bairro || "")}">Usar este CEP</button></div>`;
@@ -2843,11 +2848,11 @@
     const codTipo = codigoTipoLogradouro(d.tipo_logradouro);
     document.getElementById("eTipo").value = codTipo;
     if (!codTipo) document.getElementById("eTipo").classList.add("destaque");
-    document.getElementById("eLogradouro").value = d.logradouro || "";
-    document.getElementById("eNumero").value = d.numero || "";
-    document.getElementById("eComplemento").value = d.complemento || "";
-    document.getElementById("eBairro").value = d.bairro || "";
-    document.getElementById("eCidade").value = _semAc(d.cidade);
+    document.getElementById("eLogradouro").value = semPontuacao(d.logradouro);
+    document.getElementById("eNumero").value = semPontuacao(d.numero);
+    document.getElementById("eComplemento").value = semPontuacao(d.complemento);
+    document.getElementById("eBairro").value = semPontuacao(d.bairro);
+    document.getElementById("eCidade").value = semPontuacao(d.cidade);
     document.getElementById("eUf").value = d.uf || "";
     // Comprovante Residência: mês sem zero à esquerda (7 / 2026), como no SICAQ.
     const ref = String(d.referencia || "").match(/^(\d{1,2})\/(\d{4})$/);
@@ -2916,8 +2921,8 @@
     }
   }
   function usarSugestaoCep(botao) {
-    document.getElementById("eCep").value = botao.dataset.cep;
-    if (botao.dataset.bairro && !document.getElementById("eBairro").value.trim()) document.getElementById("eBairro").value = botao.dataset.bairro.toUpperCase();
+    document.getElementById("eCep").value = formatarCep(botao.dataset.cep);
+    if (botao.dataset.bairro && !document.getElementById("eBairro").value.trim()) document.getElementById("eBairro").value = semPontuacao(botao.dataset.bairro);
     conferirCepAgora();
   }
 
@@ -3573,6 +3578,11 @@
   document.getElementById("eCep").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); conferirCepAgora(); } });
   enderecoIds.filter(id => id !== "eCep").forEach(id => ["input", "change"].forEach(ev =>
     document.getElementById(id).addEventListener(ev, (e) => e.target.classList.remove("destaque"))));
+  ["eLogradouro", "eNumero", "eComplemento", "eBairro"].forEach(id => document.getElementById(id).addEventListener("input", (e) => {
+    const el = e.target, pos = el.selectionStart;
+    const novo = semAcentos(el.value).toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/ {2,}/g, " ");
+    if (novo !== el.value) { el.value = novo; try { el.setSelectionRange(pos, pos); } catch (_) {} }
+  }));
   document.getElementById("btnCopiarCep").addEventListener("click", async () => {
     const cep = soDigitos(document.getElementById("eCep").value);
     try { await navigator.clipboard.writeText(cep); document.getElementById("msgEnderecoSicaq").textContent = `CEP ${formatarCep(cep)} copiado. Cole no SICAQ.`; }
