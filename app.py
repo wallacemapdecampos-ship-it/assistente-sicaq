@@ -4931,7 +4931,7 @@ Regras:
   correspondência, use o de INSTALAÇÃO (onde a pessoa mora).
 - tipo_logradouro: RUA, AVENIDA, TRAVESSA, ALAMEDA, ESTRADA, RODOVIA, PRAÇA,
   VIELA etc. (por extenso). logradouro: só o nome, sem o tipo.
-- numero: só o número do imóvel (ou "SN" quando não tiver número).
+- numero: só o número do imóvel (ou "SN" quando a conta disser que não tem número).
 - complemento: SÓ apto, bloco, casa, fundos, lote, quadra (vazio se não houver).
   NUNCA ponha o bairro no complemento.
 - logradouro e bairro: copie EXATAMENTE como impresso na conta, com as mesmas
@@ -5145,15 +5145,20 @@ def _normalizar_endereco(r):
     # Número grudado na rua ("ARMANDO PANNUNZIO, 1.200"): vai para o Número.
     m = re.search(r",\s*(\d[\d.]*)\s*$", rua)
     if m:
-        if not numero or numero in ("SN", "S N"):
+        if not numero or re.fullmatch(r"S ?N[O]?|SEM NUMERO|SEM N|S", numero):
             numero = re.sub(r"\D", "", m.group(1))
         rua = rua[:m.start()]
     rua = limpo(rua)
-    if re.fullmatch(r"S ?N[O]?|SEM NUMERO|SEM N", numero):
-        numero = "SN"
     uf = limpo(r.get("uf"))[:2]
     cidade = limpo(r.get("cidade"))
     incertos = [str(x) for x in (r.get("campos_incertos") or [])]
+    # SICAQ: Número só aceita dígitos; sem número = 99999 (regra da equipe).
+    if re.fullmatch(r"S ?N[O]?|SEM NUMERO|SEM N|S", numero):
+        numero = "99999"
+    numero = re.sub(r"\D", "", numero)[:7]
+    if not numero:
+        numero = "99999"  # não achei o número na conta: confira
+        incertos.append("numero")
     if cidade:
         oficial, uf_of, certeza = _municipio_oficial(cidade, uf if uf in UFS_BR else "")
         cidade, uf = (oficial or cidade), (uf_of or uf)

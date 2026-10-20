@@ -2975,7 +2975,7 @@
       preencher: "endereco", criado_em: Date.now(),
       cep: soDigitos(v("eCep")),
       tipo_logradouro: tipoSel.value, tipo_logradouro_nome: tipoSel.value ? tipoSel.options[tipoSel.selectedIndex].text : "",
-      logradouro: semPontuacao(v("eLogradouro")), numero: soDigitos(v("eNumero")),
+      logradouro: semPontuacao(v("eLogradouro")), numero: soDigitos(v("eNumero")).slice(0, 7) || "99999",
       complemento: semPontuacao(v("eComplemento")), bairro: semPontuacao(v("eBairro")),
       municipio: semPontuacao(v("eCidade")), uf: v("eUf"),
       tipo_imovel: v("eTipoImovel") || "CASA", ocupacao: "MORA COM PAIS/PARENTES",
@@ -3666,7 +3666,13 @@
   document.getElementById("eCep").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); conferirCepAgora(); } });
   enderecoIds.filter(id => id !== "eCep").forEach(id => ["input", "change"].forEach(ev =>
     document.getElementById(id).addEventListener(ev, (e) => e.target.classList.remove("destaque"))));
-  ["eLogradouro", "eNumero", "eComplemento", "eBairro"].forEach(id => document.getElementById(id).addEventListener("input", (e) => {
+  // Número: o SICAQ só aceita dígitos (sem número = 99999).
+  document.getElementById("eNumero").addEventListener("input", (e) => {
+    const d = e.target.value.replace(/\D/g, "").slice(0, 7);
+    if (d !== e.target.value) e.target.value = d;
+  });
+  document.getElementById("eNumero").setAttribute("placeholder", "sem número: 99999");
+  ["eLogradouro", "eComplemento", "eBairro"].forEach(id => document.getElementById(id).addEventListener("input", (e) => {
     const el = e.target, pos = el.selectionStart;
     const novo = semAcentos(el.value).toUpperCase().replace(/[^A-Z0-9 ]/g, " ").replace(/ {2,}/g, " ");
     if (novo !== el.value) { el.value = novo; try { el.setSelectionRange(pos, pos); } catch (_) {} }
