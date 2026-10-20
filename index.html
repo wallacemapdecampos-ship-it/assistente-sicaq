@@ -246,6 +246,9 @@
     #painelHolerite .campo { --span: 3; }
     #painelEndereco .campo { --span: 3; }
     .cep-linha { display: flex; gap: 6px; }
+    .mes-ano { display: flex; align-items: center; gap: 6px; }
+    .mes-ano input:first-child { flex: 0 0 56px; width: 56px; text-align: center; }
+    .mes-ano input:last-child { flex: 1 1 auto; min-width: 0; }
     .cep-linha input { flex: 1 1 auto; min-width: 0; }
     .cep-linha button { flex: 0 0 auto; height: auto; padding: 0 10px; font-size: 12.5px; }
     .cep-status { margin: 0 0 12px; padding: 10px 14px; border-radius: var(--raio); border: 1px solid var(--linha); font-size: 13.5px; line-height: 1.45; }
@@ -648,11 +651,11 @@
           </div>
         </div>
         <div class="campo">
-          <label for="eTipo">Tipo de logradouro</label>
-          <input id="eTipo" type="text" placeholder="RUA, AVENIDA…">
+          <label for="eTipo">Endereço <span class="opcional">tipo</span></label>
+          <select id="eTipo"><option value=""></option></select>
         </div>
         <div class="campo" style="--span: 6">
-          <label for="eLogradouro">Logradouro</label>
+          <label for="eLogradouro">&nbsp;<span class="opcional">nome da rua, sem o tipo</span></label>
           <input id="eLogradouro" type="text">
         </div>
         <div class="campo">
@@ -663,26 +666,34 @@
           <label for="eComplemento">Complemento</label>
           <input id="eComplemento" type="text">
         </div>
-        <div class="campo">
+        <div class="campo" style="--span: 6">
           <label for="eBairro">Bairro</label>
           <input id="eBairro" type="text">
         </div>
         <div class="campo">
-          <label for="eCidade">Cidade</label>
-          <input id="eCidade" type="text">
+          <label for="eUf">UF <span class="opcional">vem do CEP no SICAQ</span></label>
+          <input id="eUf" type="text" class="fixo" readonly>
         </div>
         <div class="campo">
-          <label for="eUf">UF</label>
-          <input id="eUf" type="text" maxlength="2">
+          <label for="eCidade">Município <span class="opcional">vem do CEP no SICAQ</span></label>
+          <input id="eCidade" type="text" class="fixo" readonly>
         </div>
         <div class="campo">
-          <label for="eReferencia">Mês da conta</label>
-          <input id="eReferencia" type="text" placeholder="MM/AAAA">
+          <label for="eTipoImovel">Tipo de Imóvel</label>
+          <select id="eTipoImovel"><option>CASA</option><option>APARTAMENTO</option></select>
+        </div>
+        <div class="campo">
+          <label for="eOcupacao">Ocupação do Imóvel</label>
+          <input id="eOcupacao" type="text" class="fixo" value="MORA COM PAIS/PARENTES" readonly>
+        </div>
+        <div class="campo">
+          <label for="eMes">Comprovante Residência <span class="opcional">mês / ano</span></label>
+          <div class="mes-ano"><input id="eMes" type="text" inputmode="numeric" maxlength="2" placeholder="M"><span>/</span><input id="eAno" type="text" inputmode="numeric" maxlength="4" placeholder="AAAA"></div>
         </div>
       </div>
 
       <div class="nota">O SICAQ não aceita CEP genérico da cidade (ex.: 18100-000): ele dá erro e derruba a sessão.
-        Aqui o CEP é conferido e, se for genérico, aparece o CEP da rua para você escolher.</div>
+        Aqui o CEP é conferido e, se for genérico, troco sozinho pelo CEP real da rua do comprovante (rua, número e bairro continuam os da conta).</div>
 
       <div class="acoes">
         <span id="msgEnderecoSicaq" class="dica">Por enquanto, copie os dados para a tela de endereço do SICAQ.</span>
@@ -2745,7 +2756,38 @@
   }
 
   // ---------- Endereço: comprovante + conferência do CEP ----------
-  const enderecoIds = ["eCep", "eTipo", "eLogradouro", "eNumero", "eComplemento", "eBairro", "eCidade", "eUf", "eReferencia"];
+  const enderecoIds = ["eCep", "eTipo", "eLogradouro", "eNumero", "eComplemento", "eBairro", "eCidade", "eUf", "eMes", "eAno"];
+  // Lista "Endereço" (tipo de logradouro) do SICAQ: [código, nome].
+  const TIPOS_LOGRADOURO_SICAQ = [["ACA","ACAMPAMENTO"],["AC","ACESSO"],["ACL","ACESSO LOCAL"],["AD","ADRO"],["AER","AEROPORTO"],["AL","ALAMEDA"],["AT","ALTO"],["ANT","ANTIGA ESTRADA"],["A","ÁREA"],["AE","ÁREA ESPECIAL"],["ART","ARTERIA"],["ATL","ATALHO"],["AV","AVENIDA"],["AVC","AVENIDA CONTORN"],["AVM","AVENIDA MARGDIR"],["AME","AVENIDA MARGESQ"],["AMD","AVENIDA MARGINA"],["AVV","AVENIDA VELHA"],["BX","BAIXA"],["BLO","BALÃO"],["BAL","BALNEÁRIO"],["BC","BECO"],["BEL","BELVEDERE"],["BL","BLOCO"],["BLS","BLOCOS"],["BSQ","BOSQUE"],["BVD","BOULEVARD"],["BLV","BULEVAR"],["BCO","BURACO"],["C","CAIS"],["CAL","CALCADA"],["CAM","CAMINHO"],["CPO","CAMPO"],["CAN","CANAL"],["CH","CHACARA"],["CHA","CHAPADAO"],["CIC","CICLOVIA"],["CIR","CIRCULAR"],["COL","COLONIA"],["CMP","COMPLEXO VIARIO"],["CON","CONDOMINIO"],["CJ","CONJUNTO"],["CJM","CONJUNTO MUTIRA"],["CTN","CONTORNO"],["COR","CORREDOR"],["CRG","CORREGO"],["DSC","DESCIDA"],["DSV","DESVIO"],["DT","DISTRITO"],["EVD","ELEVADA"],["ENT","ENTRADA PARTICU"],["EQ","ENTRE QUADRA"],["ESC","ESCADA"],["ESD","ESCADARIA"],["ESP","ESPLANADA"],["ETC","ESTACAO"],["ETT","ESTACIONAMENTO"],["ETD","ESTADIO"],["ETN","ESTANCIA"],["EST","ESTRADA"],["ETA","ESTRADA ANTIGA"],["ESL","ESTRADA DE LIGA"],["ESE","ESTRADA ESTADUA"],["ESM","ESTRADA MUNICIP"],["ETP","ESTRADA PARTICU"],["ESV","ESTRADA VELHA"],["FAV","FAVELA"],["FAZ","FAZENDA"],["FRA","FEIRA"],["FER","FERROVIA"],["FNT","FONTE"],["FTE","FORTE"],["GAL","GALERIA"],["GJA","GRANJA"],["HAB","HABITACIONAL"],["IA","ILHA"],["JD","JARDIM"],["JDE","JARDINETE"],["LD","LADEIRA"],["LG","LAGO"],["LGA","LAGOA"],["LRG","LARGO"],["LOT","LOTEAMENTO"],["MNA","MARINA"],["MOD","MÓDULO"],["MTE","MONTE"],["MRO","MORRO"],["NUC","NÚCLEO"],["PDA","PARADA"],["PDO","PARADOURO"],["PAR","PARALELA"],["PRQ","PARQUE"],["PRM","PARQUE MUNICIPA"],["PRR","PARQUE RESIDÊNC"],["PSG","PASSAGEM"],["PSP","PASSAGEM DE PED"],["PSS","PASSAGEM SUBTER"],["PSA","PASSARELA"],["PAS","PASSEIO"],["PAT","PATIO"],["PNT","PONTA"],["PTE","PONTE"],["PTO","PORTO"],["PC","PRACA"],["PCE","PRAÇA DE ESPORT"],["PR","PRAIA"],["1AL","PRIMEIRA LADEIR"],["PRL","PROLONGAMENTO"],["Q","QUADRA"],["4AL","QUARTA LADEIRA"],["QTA","QUINTA"],["5AL","QUINTA LADEIRA"],["QTS","QUINTAS"],["RAM","RAMAL"],["RMP","RAMPA"],["REC","RECANTO"],["RCR","RECREIO"],["RES","RESIDENCIAL"],["RET","RETA"],["RER","RETIRO"],["RTN","RETORNO"],["ROA","RODO ANEL"],["ROD","RODOVIA"],["RTT","ROTATORIA"],["ROT","RÓTULA"],["R","RUA"],["R L","RUA DE LIGAÇÃO"],["RPE","RUA DE PEDESTRE"],["R I","RUA INTEGRAÇÃO"],["R P","RUA PARTICULAR"],["R V","RUA VELHA"],["2AL","SEGUNDA LADEIRA"],["SRV","SERVIDÃO"],["ST","SETOR"],["SIT","SÍTIO"],["SUB","SUBIDA"],["3AL","TERCEIRA LADEIR"],["TER","TERMINAL"],["TV","TRAVESSA"],["TVP","TRAVESSA PARTIC"],["TVV","TRAVESSA VELHA"],["TR","TRECHO"],["TRV","TREVO"],["TCH","TRINCHEIRA"],["TUN","TUNEL"],["UNI","UNIDADE"],["VAL","VALA"],["VLE","VALE"],["VRT","VARIANTE"],["VER","VEREDA"],["V","VIA"],["V C","VIA COLETORA"],["VAC","VIA DE ACESSO"],["VPE","VIA DE PEDESTRE"],["VEV","VIA ELEVADO"],["V-E","VIA EXPRESSA"],["VLT","VIA LITORANEA"],["V L","VIA LOCAL"],["VD","VIADUTO"],["VLA","VIELA"],["VL","VILA"],["ZIG","ZIGUE-ZAGUE"],["1A","1A AVENIDA"],["1PA","1A PARALELA"],["1R","1A RUA"],["1SU","1A SUBIDA"],["1TV","1A TRAVESSA"],["1VL","1A VILA"],["1AT","1O ALTO"],["1BC","1O BECO"],["1PR","1O PARQUE"],["10R","10A RUA"],["10T","10A TRAVESSA"],["11R","11A RUA"],["11T","11A TRAVESSA"],["12R","12A RUA"],["12T","12A TRAVESSA"],["13T","13A TRAVESSA"],["14T","14A TRAVESSA"],["15T","15A TRAVESSA"],["16T","16A TRAVESSA"],["18A","18A TRAVESSA"],["19A","19A TRAVESSA"],["2A","2A AVENIDA"],["2PA","2A PARALELA"],["2R","2A RUA"],["2SU","2A SUBIDA"],["2TV","2A TRAVESSA"],["2VL","2A VILA"],["2AT","2O ALTO"],["2BC","2O BECO"],["2PR","2O PARQUE"],["3A","3A AVENIDA"],["3PA","3A PARALELA"],["3R","3A RUA"],["3SU","3A SUBIDA"],["3TV","3A TRAVESSA"],["3VL","3A VILA"],["3AT","3O ALTO"],["3BC","3O BECO"],["3PR","3O PARQUE"],["4A","4A AVENIDA"],["4PA","4A PARALELA"],["4R","4A RUA"],["4SU","4A SUBIDA"],["4TV","4A TRAVESSA"],["4VL","4A VILA"],["4AT","4O ALTO"],["4BC","4O BECO"],["5A","5A AVENIDA"],["5PA","5A PARALELA"],["5R","5A RUA"],["5SU","5A SUBIDA"],["5TV","5A TRAVESSA"],["5VL","5A VILA"],["5AT","5O ALTO"],["5BC","5O BECO"],["6AV","6A AVENIDA"],["6R","6A RUA"],["6SU","6A SUBIDA"],["6TV","6A TRAVESSA"],["7R","7A RUA"],["7TV","7A TRAVESSA"],["8R","8A RUA"],["8TV","8A TRAVESSA"],["9R","9A RUA"],["9TV","9A TRAVESSA"]];
+  const _semAc = (s) => semAcentos(String(s || "")).toUpperCase().replace(/\s+/g, " ").trim();
+  function montarTiposLogradouro() {
+    const sel = document.getElementById("eTipo");
+    TIPOS_LOGRADOURO_SICAQ.forEach(([cod, nome]) => sel.append(novaOpcao(cod, nome)));
+  }
+  // "RUA", "AV.", "AVENIDA", "R" -> código do SICAQ (R, AV...). "" se não achar.
+  function codigoTipoLogradouro(tipo) {
+    const t = _semAc(tipo).replace(/\.$/, "");
+    if (!t) return "";
+    const porCodigo = TIPOS_LOGRADOURO_SICAQ.find(([c]) => c === t);
+    if (porCodigo) return porCodigo[0];
+    const exato = TIPOS_LOGRADOURO_SICAQ.find(([, n]) => _semAc(n) === t);
+    if (exato) return exato[0];
+    // O SICAQ corta nomes longos (ex.: "AVENIDA MARGINA"): compara o começo.
+    // Fica com o nome mais longo que bate (AVENIDA MARGINAL -> AVENIDA MARGINA, não AVENIDA).
+    const comeco = TIPOS_LOGRADOURO_SICAQ
+      .filter(([, n]) => t.startsWith(_semAc(n)) || (t.length >= 4 && _semAc(n).startsWith(t)))
+      .sort((a, b) => b[1].length - a[1].length)[0];
+    return comeco ? comeco[0] : "";
+  }
+  // Tipo de Imóvel: APARTAMENTO se o complemento indicar apartamento; senão CASA.
+  let tipoImovelManual = false;
+  function tipoImovelPeloComplemento(comp) {
+    return /\b(AP|APT|APTO|APART|APARTAMENTO)\b\.?/.test(_semAc(comp)) ? "APARTAMENTO" : "CASA";
+  }
+  function ajustarTipoImovel() {
+    if (tipoImovelManual) return;
+    document.getElementById("eTipoImovel").value = tipoImovelPeloComplemento(document.getElementById("eComplemento").value);
+  }
   let ultimoCep = null;
   function setMensagemEndereco(texto, classe = "muted") {
     const el = document.getElementById("mensagemEndereco");
@@ -2758,6 +2800,8 @@
   }
   function limparEndereco() {
     enderecoIds.forEach(id => { const el = document.getElementById(id); el.value = ""; el.classList.remove("destaque"); });
+    tipoImovelManual = false;
+    document.getElementById("eTipoImovel").value = "CASA";
     const selo = document.getElementById("eEmissor"); selo.textContent = ""; selo.hidden = true;
     const st = document.getElementById("cepStatus"); st.hidden = true; st.innerHTML = "";
     document.getElementById("btnCopiarCep").disabled = true;
@@ -2770,6 +2814,9 @@
     if (!conf) { st.hidden = true; return; }
     // Genérico trocado pelo CEP da rua: já entra no campo, em amarelo para conferir.
     if (conf.status === "trocado" && conf.cep) campo.value = conf.cep;
+    // UF e Município: os do CEP (é o que o SICAQ vai mostrar ao Consultar).
+    if (conf.uf) document.getElementById("eUf").value = _semAc(conf.uf);
+    if (conf.cidade) document.getElementById("eCidade").value = _semAc(conf.cidade);
     const classe = conf.status === "ok" || (conf.status === "trocado" && conf.certeza) ? "ok"
                  : (conf.status === "inexistente" ? "erro" : "warn");
     const titulo = { ok: "CEP conferido", trocado: "CEP corrigido", generico: "CEP genérico", inexistente: "CEP inválido",
@@ -2793,18 +2840,26 @@
   }
   function preencherEndereco(d, conf) {
     document.getElementById("eCep").value = formatarCep(d.cep);
-    document.getElementById("eTipo").value = d.tipo_logradouro || "";
+    const codTipo = codigoTipoLogradouro(d.tipo_logradouro);
+    document.getElementById("eTipo").value = codTipo;
+    if (!codTipo) document.getElementById("eTipo").classList.add("destaque");
     document.getElementById("eLogradouro").value = d.logradouro || "";
     document.getElementById("eNumero").value = d.numero || "";
     document.getElementById("eComplemento").value = d.complemento || "";
     document.getElementById("eBairro").value = d.bairro || "";
-    document.getElementById("eCidade").value = d.cidade || "";
+    document.getElementById("eCidade").value = _semAc(d.cidade);
     document.getElementById("eUf").value = d.uf || "";
-    document.getElementById("eReferencia").value = d.referencia || "";
+    // Comprovante Residência: mês sem zero à esquerda (7 / 2026), como no SICAQ.
+    const ref = String(d.referencia || "").match(/^(\d{1,2})\/(\d{4})$/);
+    document.getElementById("eMes").value = ref ? String(Number(ref[1])) : "";
+    document.getElementById("eAno").value = ref ? ref[2] : "";
+    if (!ref) { document.getElementById("eMes").classList.add("destaque"); document.getElementById("eAno").classList.add("destaque"); }
+    tipoImovelManual = false;
+    ajustarTipoImovel();
     const selo = document.getElementById("eEmissor");
     selo.textContent = d.emissor || ""; selo.hidden = !d.emissor;
     const mapa = { cep: "eCep", tipo_logradouro: "eTipo", logradouro: "eLogradouro", numero: "eNumero", complemento: "eComplemento",
-                   bairro: "eBairro", cidade: "eCidade", uf: "eUf", referencia: "eReferencia" };
+                   bairro: "eBairro", cidade: "eCidade", uf: "eUf", referencia: "eMes" };
     (d.campos_incertos || []).forEach(c => { if (mapa[c]) document.getElementById(mapa[c]).classList.add("destaque"); });
     mostrarCep(conf);
   }
@@ -3492,6 +3547,12 @@
   document.getElementById("tabEndereco").addEventListener("click", () => mostrarAba("endereco"));
   document.getElementById("btnLerEndereco").addEventListener("click", lerEndereco);
   document.getElementById("btnConferirCep").addEventListener("click", conferirCepAgora);
+  montarTiposLogradouro();
+  document.getElementById("eComplemento").addEventListener("input", ajustarTipoImovel);
+  document.getElementById("eTipoImovel").addEventListener("change", () => { tipoImovelManual = true; });
+  ["eMes", "eAno"].forEach(id => document.getElementById(id).addEventListener("input", (e) => {
+    const d = e.target.value.replace(/\D/g, ""); if (d !== e.target.value) e.target.value = d;
+  }));
   document.getElementById("enderecoArquivo").addEventListener("change", (e) => {
     limparEndereco();
     const qtd = e.target.files.length;
