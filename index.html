@@ -73,6 +73,7 @@
     .container { max-width: 1120px; margin: 0 auto; padding: 18px 24px 40px; }
     .painel { display: none; }
     .painel.active { display: block; }
+    #frameSimulacao { display: block; width: 100%; height: calc(100vh - 100px); min-height: 560px; border: 1px solid var(--linha); border-radius: 8px; background: var(--folha); }
     .card {
       background: var(--folha);
       border: 1px solid var(--linha);
@@ -401,6 +402,7 @@
     <button id="tabIdentificacao" class="tab active" type="button">Identificação</button>
     <button id="tabEndereco" class="tab" type="button">Endereço</button>
     <button id="tabHolerite" class="tab" type="button">Renda</button>
+    <button id="tabSimulacao" class="tab" type="button">Simulação</button>
     <button id="tabUso" class="tab" type="button" hidden>Uso</button>
   </nav>
   <div class="estado-sistema">
@@ -848,6 +850,10 @@
         <button id="btnRenda" type="button" disabled>Preencher renda no SICAQ</button>
       </div>
     </div>
+  </section>
+
+  <section id="painelSimulacao" class="painel">
+    <iframe id="frameSimulacao" title="Simulador de financiamento" loading="lazy"></iframe>
   </section>
 
   <section id="painelUso" class="painel">
@@ -2361,13 +2367,19 @@
   function mostrarAba(nome) {
     const abas = { identificacao: ["tabIdentificacao", "painelIdentificacao"],
                    endereco: ["tabEndereco", "painelEndereco"],
-                   holerite: ["tabHolerite", "painelHolerite"], uso: ["tabUso", "painelUso"] };
+                   holerite: ["tabHolerite", "painelHolerite"], simulacao: ["tabSimulacao", "painelSimulacao"],
+                   uso: ["tabUso", "painelUso"] };
     Object.entries(abas).forEach(([chave, [tab, painel]]) => {
       document.getElementById(tab).classList.toggle("active", chave === nome);
       document.getElementById(painel).classList.toggle("active", chave === nome);
     });
     // A faixa do cliente só faz sentido no atendimento (não na aba Uso).
-    document.getElementById("faixaCliente").hidden = nome === "uso";
+    document.getElementById("faixaCliente").hidden = nome === "uso" || nome === "simulacao";
+    // O simulador só carrega na primeira vez que a aba é aberta.
+    if (nome === "simulacao") {
+      const fr = document.getElementById("frameSimulacao");
+      if (!fr.getAttribute("src")) fr.src = "https://wallacemapdecampos-ship-it.github.io/simulador-casa-propria/?embed=1";
+    }
     if (nome === "uso") carregarUso();
   }
 
@@ -3496,6 +3508,7 @@
 
   document.getElementById("tabIdentificacao").addEventListener("click", () => mostrarAba("identificacao"));
   document.getElementById("tabHolerite").addEventListener("click", () => mostrarAba("holerite"));
+  document.getElementById("tabSimulacao").addEventListener("click", () => mostrarAba("simulacao"));
   document.getElementById("tabUso").addEventListener("click", () => mostrarAba("uso"));
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
   setInterval(() => {
