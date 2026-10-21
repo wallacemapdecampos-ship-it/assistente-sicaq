@@ -3547,7 +3547,9 @@ numero_beneficio, especie_beneficio, data_admissao, itens, total_proventos,
 total_descontos, liquido_original, folha_estado_sp, campos_incertos.
 
 Regras:
-- origem: "INSS" se for extrato/demonstrativo de pagamento de benefício do
+- origem: "IRPF" se for DECLARAÇÃO DE AJUSTE ANUAL do Imposto de Renda
+  (Receita Federal); nesse caso as outras chaves podem ficar vazias.
+  "INSS" se for extrato/demonstrativo de pagamento de benefício do
   INSS (aposentadoria, pensão por morte, auxílio etc.); "ESOCIAL" se for
   recibo de empregado DOMÉSTICO do eSocial (empregador pessoa física);
   "HOLERITE" nos demais casos.
@@ -4381,6 +4383,140 @@ def _irpf_do_pdf(arquivos):
     return None
 
 
+PROMPT_IRPF = """
+Esta é a 1ª página da DECLARAÇÃO DE AJUSTE ANUAL do Imposto de Renda
+(Receita Federal). Responda SOMENTE JSON com as chaves:
+exercicio, ano_calendario, cpf_titular, fontes, total.
+
+- exercicio e ano_calendario: os anos do cabeçalho ("EXERCÍCIO 2026",
+  "ANO-CALENDÁRIO 2025"), só os 4 dígitos.
+- cpf_titular: o CPF do cabeçalho, como está impresso.
+- fontes: SOMENTE as linhas da seção "RENDIMENTOS TRIBUTÁVEIS RECEBIDOS DE
+  PESSOA JURÍDICA PELO TITULAR" (NÃO a dos dependentes, NÃO a de
+  exigibilidade suspensa, NÃO a de recebidos acumuladamente). Para cada
+  fonte pagadora: {"nome": nome completo da fonte (pode ter 2 linhas),
+  "documento": o CNPJ/CPF dela como está impresso, "rendimentos": a coluna
+  "REND. RECEBIDOS DE PES. JURÍDICA", "irrf": a coluna "IMPOSTO RETIDO NA
+  FONTE"}. Valores como estão impressos (ex.: "180.094,44").
+- total: o valor da coluna "REND. RECEBIDOS DE PES. JURÍDICA" na linha TOTAL
+  dessa seção.
+- Se a seção estiver "Sem Informações", fontes = [] e total = "".
+""".strip()
+
+
+def _numero_ir(valor):
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    t = re.sub(r"[^\d,.-]", "", str(valor or ""))
+    if not t:
+        return 0.0
+    if "," in t:
+        t = t.replace(".", "").replace(",", ".")
+    try:
+        return float(t)
+    except ValueError:
+        return 0.0
+
+
+def _irpf_primeira_pagina(arquivos):
+    """JPEG da 1ª página da declaração (PDF sem texto ou foto), em boa resolução."""
+    for item in arquivos:
+        data, nome, mime = item["data"], item.get("filename", ""), item.get("mimetype", "")
+        if PathLikeSuffix(nome) == ".pdf" or mime == "application/pdf":
+            doc = pymupdf.open(stream=data, filetype="pdf")
+            try:
+                if not len(doc):
+                    continue
+                pag = doc[0]
+                escala = 1500 / max(1.0, pag.rect.width)
+                pix = pag.get_pixmap(matrix=pymupdf.Matrix(escala, escala), alpha=False)
+                img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+            finally:
+                doc.close()
+        else:
+            img = ImageOps.exif_transpose(_abrir_imagem(data)).convert("RGB")
+            if img.width > 1500:
+                img = img.resize((1500, max(1, int(img.height * 1500 / img.width))))
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=88, optimize=True)
+        return out.getvalue()
+    return None
+
+
+def _parece_irpf_sem_texto(arquivos):
+    """
+    PDF da declaração "impresso como imagem" (sem texto): reconhece pelo
+    título/nome do arquivo (ex.: "...-IRPF-2026-2025-...", "Declaracao_IR").
+    """
+    for item in arquivos:
+        nome = _tirar_acentos(item.get("filename", "")).upper()
+        titulo = ""
+        if PathLikeSuffix(item.get("filename", "")) == ".pdf" or item.get("mimetype") == "application/pdf":
+            try:
+                doc = pymupdf.open(stream=item["data"], filetype="pdf")
+                try:
+                    if any((doc[i].get_text("text") or "").strip() for i in range(min(len(doc), 2))):
+                        continue  # tem texto: quem decide é a leitura pelo texto
+                    titulo = _tirar_acentos(str((doc.metadata or {}).get("title") or "")).upper()
+                finally:
+                    doc.close()
+            except Exception:
+                continue
+        alvo = nome + " " + titulo
+        if re.search(r"IRPF|DECLARACAO.{0,3}(DE.{0,3})?(IR|IMPOSTO)\b|IMPOSTO.{0,3}DE.{0,3}RENDA|(^|[^A-Z])IR([^A-Z]|$)", alvo):
+            return True
+    return False
+
+
+def _irpf_por_ia(arquivos):
+    """Declaração sem texto (imagem): a IA lê a 1ª página. Devolve (info, tempo)."""
+    jpeg = _irpf_primeira_pagina(arquivos)
+    if not jpeg:
+        raise RuntimeError("Não consegui abrir a declaração.")
+    bruto, tempo = _groq_json_imagem(PROMPT_IRPF, jpeg, max_tokens=700)
+    bruto = bruto if isinstance(bruto, dict) else {}
+    fontes = []
+    for f in bruto.get("fontes") or []:
+        if not isinstance(f, dict):
+            continue
+        fontes.append({
+            "nome": str(f.get("nome") or "").upper().strip(),
+            "documento": re.sub(r"\D", "", str(f.get("documento") or "")),
+            "anual": _numero_ir(f.get("rendimentos")),
+            "irrf_anual": _numero_ir(f.get("irrf")),
+        })
+    def ano(v):
+        m = re.search(r"(20\d{2})", str(v or ""))
+        return int(m.group(1)) if m else 0
+    total = _numero_ir(bruto.get("total")) or None
+    info = {"exercicio": ano(bruto.get("exercicio")), "ano_calendario": ano(bruto.get("ano_calendario")),
+            "cpf_titular": re.sub(r"\D", "", str(bruto.get("cpf_titular") or "")),
+            "fontes": fontes, "total": total, "lido_por_ia": True}
+    return info, tempo
+
+
+def _resposta_irpf(info, arquivos, inicio, modelo, tempo_api=0.0):
+    try:
+        dados = _normalizar_irpf(info)
+    except ValueError as e:
+        txt = str(e)
+        code = "IRPF_FORA_PERIODO" if txt.startswith("IRPF_FORA_PERIODO|") else ""
+        print(f"[IRPF] recusada: {txt.split('|', 1)[-1]}", flush=True)
+        return jsonify({"ok": False, "code": code, "error": txt.split("|", 1)[-1]}), 422
+    if info.get("lido_por_ia"):
+        # Confere: a soma das fontes tem que bater com o TOTAL da seção.
+        soma = round(sum(f.get("anual", 0) for f in info.get("fontes") or []), 2)
+        if not info.get("total") or abs(soma - float(info["total"])) > 0.05:
+            dados["campos_incertos"] = list(dict.fromkeys((dados.get("campos_incertos") or []) + ["bruta", "liquido_original"]))
+    _registrar_uso("renda")
+    print(f"[IRPF] exercício {info['exercicio']}, {len(dados['fontes_ir'])} fonte(s) PJ ({modelo})", flush=True)
+    return jsonify({
+        "ok": True, "dados": dados, "modelo": modelo, "arquivos_lidos": len(arquivos),
+        "tempo_api": round(tempo_api, 3), "tempo_total": round(time.perf_counter() - inicio, 3),
+        "competencias_validas": _holerite_competencias_validas(),
+    })
+
+
 def _exercicios_irpf_aceitos(hoje=None):
     """Exercício do ano atual; de janeiro a maio (prazo de entrega) também o anterior."""
     hoje = hoje or datetime.now(FUSO_BR).date()
@@ -4614,19 +4750,19 @@ def ler_holerite():
     except Exception as e:
         print(f"[IRPF] leitura falhou ({type(e).__name__})", flush=True)
     if irpf is not None:
-        try:
-            dados = _normalizar_irpf(irpf)
-        except ValueError as e:
-            txt = str(e)
-            code = "IRPF_FORA_PERIODO" if txt.startswith("IRPF_FORA_PERIODO|") else ""
-            return jsonify({"ok": False, "code": code, "error": txt.split("|", 1)[-1]}), 422
-        _registrar_uso("renda")
-        print(f"[IRPF] exercício {irpf['exercicio']}, {len(dados['fontes_ir'])} fonte(s) PJ", flush=True)
-        return jsonify({
-            "ok": True, "dados": dados, "modelo": "texto do PDF", "arquivos_lidos": len(arquivos),
-            "tempo_api": 0, "tempo_total": round(time.perf_counter() - inicio, 3),
-            "competencias_validas": _holerite_competencias_validas(),
-        })
+        return _resposta_irpf(irpf, arquivos, inicio, "texto do PDF")
+
+    # Declaração "impressa como imagem" (sem texto): a IA lê a 1ª página.
+    try:
+        if _parece_irpf_sem_texto(arquivos):
+            info, tempo_ir = _irpf_por_ia(arquivos)
+            if info.get("exercicio") or info.get("fontes"):
+                return _resposta_irpf(info, arquivos, inicio, "IA (declaração em imagem)", tempo_ir)
+            print("[IRPF] nome parecia IR, mas não é declaração: lendo como holerite", flush=True)
+    except GroqLimite as e:
+        return jsonify({"ok": False, "error": str(e)}), 429
+    except Exception as e:
+        print(f"[IRPF] leitura por imagem falhou ({type(e).__name__}: {e})", flush=True)
 
     # PDF tipo "pasta" com o holerite fora das páginas lidas: não gasta IA.
     bloqueio, aviso_pasta = _avaliar_pasta(arquivos, "renda")
@@ -4637,6 +4773,10 @@ def ler_holerite():
     try:
         resultado, modelo, tempo_api = _groq_holerite_call(arquivos)
         # PDF com texto: confere o cabeçalho do Estado de SP sem depender da IA.
+        if str((resultado or {}).get("origem") or "").upper().strip() == "IRPF":
+            # A IA viu que é declaração de IR: lê com a regra própria dela.
+            info, tempo_ir = _irpf_por_ia(arquivos)
+            return _resposta_irpf(info, arquivos, inicio, "IA (declaração em imagem)", tempo_api + tempo_ir)
         if _holerite_estado_sp_pdf(arquivos):
             resultado = {**(resultado or {}), "folha_estado_sp": True}
         dados = _normalizar_holerite(resultado)
