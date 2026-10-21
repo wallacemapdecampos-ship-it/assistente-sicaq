@@ -3509,6 +3509,13 @@
   document.getElementById("tabIdentificacao").addEventListener("click", () => mostrarAba("identificacao"));
   document.getElementById("tabHolerite").addEventListener("click", () => mostrarAba("holerite"));
   document.getElementById("tabSimulacao").addEventListener("click", () => mostrarAba("simulacao"));
+  // Na aba Simulação, Ctrl+P imprime só o simulador (não a página do Assistente).
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && document.getElementById("painelSimulacao").classList.contains("active")) {
+      const fr = document.getElementById("frameSimulacao");
+      if (fr && fr.contentWindow) { e.preventDefault(); fr.contentWindow.focus(); fr.contentWindow.print(); }
+    }
+  }, true);
   document.getElementById("tabUso").addEventListener("click", () => mostrarAba("uso"));
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
   setInterval(() => {
