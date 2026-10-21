@@ -2951,7 +2951,7 @@
                    `<div class="sugestoes">${sugestoes}</div>` : "");
     st.hidden = false;
     campo.classList.toggle("destaque", !conf.pode_usar || (conf.status === "trocado" && !conf.certeza));
-    document.getElementById("btnCopiarCep").disabled = !conf.pode_usar;
+    document.getElementById("btnCopiarCep").disabled = !cepPodePreencher(conf);
     atualizarBotaoEndereco();
   }
   function preencherEndereco(d, conf) {
@@ -3035,10 +3035,15 @@
     el.textContent = texto;
     el.className = classe;
   }
+  // Só bloqueia o CEP que o SICAQ recusa (genérico ou inexistente). CEP de
+  // outra rua ou que não deu para conferir: avisa em amarelo, mas deixa usar.
+  function cepPodePreencher(conf) {
+    return !!(conf && (conf.pode_usar || ["diferente", "sem_cep", "indisponivel"].includes(conf.status)));
+  }
   function atualizarBotaoEndereco() {
     const b = document.getElementById("btnEnderecoSicaq");
     if (!b) return;
-    const cepOk = !!(ultimoCep && ultimoCep.pode_usar && soDigitos(document.getElementById("eCep").value).length === 8);
+    const cepOk = !!(cepPodePreencher(ultimoCep) && soDigitos(document.getElementById("eCep").value).length === 8);
     b.disabled = !extensaoPronta || aguardandoEndereco || !cepOk;
   }
   function terminarEndereco() {
@@ -3746,7 +3751,7 @@
     if (f !== e.target.value) e.target.value = f;
     // CEP mudou à mão: precisa conferir de novo antes de copiar/preencher.
     document.getElementById("btnCopiarCep").disabled = true;
-    if (ultimoCep) ultimoCep = { ...ultimoCep, pode_usar: false };
+    if (ultimoCep) ultimoCep = { ...ultimoCep, pode_usar: false, status: "editado" };
     atualizarBotaoEndereco();
     if (ultimoCep) { e.target.classList.add("destaque"); }
   });
