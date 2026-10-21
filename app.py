@@ -4372,7 +4372,9 @@ def _irpf_do_pdf(arquivos):
             if len(valores) >= 5:
                 nome = ln[: ln.find(valores[0])].strip() if valores[0] in ln else ""
                 atual = {"nome": nome, "documento": "", "anual": _valor_br(valores[0]),
-                         "irrf_anual": _valor_br(valores[2]) if len(valores) > 2 else 0.0}
+                         "previdencia": _valor_br(valores[1]),
+                         "irrf_anual": _valor_br(valores[2]) if len(valores) > 2 else 0.0,
+                         "decimo": _valor_br(valores[3]) if len(valores) > 3 else 0.0}
                 fontes.append(atual)
                 continue
             if atual is not None and not valores and not any(
@@ -4396,8 +4398,9 @@ exercicio, ano_calendario, cpf_titular, fontes, total.
   exigibilidade suspensa, NÃO a de recebidos acumuladamente). Para cada
   fonte pagadora: {"nome": nome completo da fonte (pode ter 2 linhas),
   "documento": o CNPJ/CPF dela como está impresso, "rendimentos": a coluna
-  "REND. RECEBIDOS DE PES. JURÍDICA", "irrf": a coluna "IMPOSTO RETIDO NA
-  FONTE"}. Valores como estão impressos (ex.: "180.094,44").
+  "REND. RECEBIDOS DE PES. JURÍDICA", "previdencia": a coluna "CONTR.
+  PREVID. OFICIAL", "irrf": a coluna "IMPOSTO RETIDO NA FONTE", "decimo":
+  a coluna "13º SALÁRIO"}. Valores como estão impressos (ex.: "180.094,44").
 - total: o valor da coluna "REND. RECEBIDOS DE PES. JURÍDICA" na linha TOTAL
   dessa seção.
 - Se a seção estiver "Sem Informações", fontes = [] e total = "".
@@ -4483,7 +4486,9 @@ def _irpf_por_ia(arquivos):
             "nome": str(f.get("nome") or "").upper().strip(),
             "documento": re.sub(r"\D", "", str(f.get("documento") or "")),
             "anual": _numero_ir(f.get("rendimentos")),
+            "previdencia": _numero_ir(f.get("previdencia")),
             "irrf_anual": _numero_ir(f.get("irrf")),
+            "decimo": _numero_ir(f.get("decimo")),
         })
     def ano(v):
         m = re.search(r"(20\d{2})", str(v or ""))
@@ -4537,6 +4542,11 @@ def _normalizar_irpf(info, hoje=None):
         raise ValueError(
             "A declaração não tem rendimentos tributáveis recebidos de pessoa jurídica pelo titular."
         )
+    # Renda válida = salário: fonte com contribuição ao INSS ou 13º salário.
+    # Outras (ex.: rendimento de cooperativa de crédito) não contam.
+    de_salario = [f for f in fontes if f.get("previdencia", 0) > 0 or f.get("decimo", 0) > 0]
+    if de_salario:
+        fontes = de_salario
     fontes.sort(key=lambda f: f["anual"], reverse=True)
     lista = []
     for f in fontes:
