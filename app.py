@@ -4158,7 +4158,12 @@ def _normalizar_holerite(resultado, fora_prazo=False):
     incertos = [str(x) for x in (resultado.get("campos_incertos") or [])]
     bruta = _holerite_numero(resultado.get("total_proventos") or resultado.get("bruta"))
     total_desc = _holerite_numero(resultado.get("total_descontos"))
-    liquido_original = _holerite_numero(resultado.get("liquido_original"))
+    liquido_original = _holerite_numero(
+        resultado.get("liquido_original") or resultado.get("liquido") or resultado.get("valor_liquido")
+        or resultado.get("total_liquido") or resultado.get("liquido_a_receber"))
+    faltou = [k for k in ("total_proventos", "total_descontos", "liquido_original") if not resultado.get(k)]
+    if faltou:
+        print(f"[HOLERITE] IA não devolveu: {', '.join(faltou)}", flush=True)
     adiantamento = _holerite_numero(resultado.get("adiantamento_salarial_total"))
     descricao_ad = str(resultado.get("descricao_adiantamento") or "").strip().upper()
     irrf = _holerite_numero(resultado.get("irrf"))
@@ -4247,6 +4252,12 @@ def _normalizar_holerite(resultado, fora_prazo=False):
             incertos += ["liquido_original", "irrf", "adiantamento"]
     else:
         incertos += ["adiantamento"]
+
+    # Líquido não veio: calcula pelos totais (bruto - descontos) e marca para conferir.
+    if not liquido_original and bruta and total_desc and bruta > total_desc:
+        liquido_original = round(bruta - total_desc, 2)
+        incertos += ["liquido_original"]
+        print("[HOLERITE] líquido calculado pelos totais (a IA não leu)", flush=True)
 
     # Bruto - descontos tem de dar o líquido.
     # Sem os 3 valores não dá para conferir: marca para revisar.
