@@ -4121,7 +4121,7 @@ def _subconjunto_que_soma(itens, alvo, chave="referencia", max_itens=16):
     return None
 
 
-def _normalizar_holerite(resultado):
+def _normalizar_holerite(resultado, fora_prazo=False):
     resultado = dict(resultado or {})
     fonte = _fonte_renda(resultado)
     competencia = _holerite_competencia_mm_aaaa(resultado.get("competencia"))
@@ -4138,7 +4138,13 @@ def _normalizar_holerite(resultado):
                 if pelo_periodo in validas or not competencia:
                     competencia = pelo_periodo
 
-    if competencia not in validas:
+    usou_fora_prazo = False
+    if competencia not in validas and fora_prazo:
+        # O analista escolheu usar mesmo fora do prazo.
+        usou_fora_prazo = True
+        if not re.fullmatch(r"\d{2}/\d{4}", competencia or ""):
+            competencia = ""
+    elif competencia not in validas:
         identificada = competencia or "não identificada"
         raise ValueError(
             f"HOLERITE_FORA_PERIODO|Competência identificada: {identificada}. "
@@ -4287,7 +4293,8 @@ def _normalizar_holerite(resultado):
         "liquido_original": _holerite_valor(liquido_original),
         "adiantamento": _holerite_valor(adiantamento),
         "descricao_adiantamento": descricao_ad,
-        "campos_incertos": sorted(set(incertos)),
+        "campos_incertos": sorted(set(incertos + (["competencia"] if usou_fora_prazo else []))),
+        "fora_prazo": usou_fora_prazo,
     }
 
 
@@ -4518,7 +4525,7 @@ def _irpf_por_ia(arquivos):
 
 def _resposta_irpf(info, arquivos, inicio, modelo, tempo_api=0.0):
     try:
-        dados = _normalizar_irpf(info)
+        dados = _normalizar_irpf(info, fora_prazo=request.form.get("fora_prazo") == "1")
     except ValueError as e:
         txt = str(e)
         code = "IRPF_FORA_PERIODO" if txt.startswith("IRPF_FORA_PERIODO|") else ""
@@ -4547,9 +4554,10 @@ def _exercicios_irpf_aceitos(hoje=None):
     return aceitos
 
 
-def _normalizar_irpf(info, hoje=None):
+def _normalizar_irpf(info, hoje=None, fora_prazo=False):
     aceitos = _exercicios_irpf_aceitos(hoje)
-    if info.get("exercicio") not in aceitos:
+    usou_fora_prazo = info.get("exercicio") not in aceitos and fora_prazo
+    if info.get("exercicio") not in aceitos and not fora_prazo:
         ex = info.get("exercicio") or "não identificado"
         lista = " ou ".join(f"{a} (ano-calendário {a - 1})" for a in aceitos)
         raise ValueError(f"IRPF_FORA_PERIODO|Declaração do exercício {ex}. Agora vale a do exercício {lista}.")
@@ -4603,6 +4611,7 @@ def _normalizar_irpf(info, hoje=None):
         "exercicio": info["exercicio"],
         "ano_calendario": info["ano_calendario"],
         "campos_incertos": incertos,
+        "fora_prazo": usou_fora_prazo,
     }
 
 
@@ -4768,6 +4777,8 @@ def ler_holerite():
         return jsonify({"ok": False, "error": "Arquivo vazio."}), 400
 
     inicio = time.perf_counter()
+    # Botão "usar mesmo fora do prazo" do site.
+    fora_prazo = request.form.get("fora_prazo") == "1"
 
     # Declaração de Imposto de Renda (PDF da Receita): lida pelo texto, sem IA.
     irpf = None
@@ -4805,7 +4816,7 @@ def ler_holerite():
             return _resposta_irpf(info, arquivos, inicio, "IA (declaração em imagem)", tempo_api + tempo_ir)
         if _holerite_estado_sp_pdf(arquivos):
             resultado = {**(resultado or {}), "folha_estado_sp": True}
-        dados = _normalizar_holerite(resultado)
+        dados = _normalizar_holerite(resultado, fora_prazo=fora_prazo)
 
         # Segunda olhada: as contas não fecharam -> relê só a tabela de valores
         # e fica com a leitura que fecha (só nesses casos; 1 leitura a mais).
@@ -4816,7 +4827,7 @@ def ler_holerite():
                 if isinstance(tabela, dict) and tabela.get("itens"):
                     nova = {**resultado, **{k: v for k, v in tabela.items()
                                             if k in ("itens", "total_proventos", "total_descontos", "liquido_original") and v}}
-                    dados2 = _normalizar_holerite(nova)
+                    dados2 = _normalizar_holerite(nova, fora_prazo=fora_prazo)
                     ruins = lambda d: sum(c in d.get("campos_incertos", []) for c in ("bruta", "liquido_original", "adiantamento", "irrf"))
                     if ruins(dados2) < ruins(dados):
                         print("[HOLERITE] segunda olhada fechou as contas: usando a releitura", flush=True)

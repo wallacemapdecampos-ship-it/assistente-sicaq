@@ -124,6 +124,7 @@
     .linha-arquivo > button { width: 100%; }
     /* Mensagens: o JS troca a classe (ok/warn/erro/muted), por isso o seletor é pelo id. */
     #mensagem, #msgPis, #msgCertidao, #mensagemHolerite, #mensagemEndereco { grid-column: 2 / -1; font-size: 12.5px; font-weight: 700; }
+    #btnForaPrazo { grid-column: 2 / -1; justify-self: start; width: auto; padding: 0 18px; }
     #mensagem.muted, #msgPis.muted, #msgCertidao.muted, #mensagemHolerite.muted, #mensagemEndereco.muted { font-weight: 400; }
     [hidden] { display: none !important; }
     .vazio {
@@ -382,6 +383,7 @@
       .conta { margin-left: auto; gap: 6px; }
       .linha-arquivo { grid-template-columns: 1fr; }
       #mensagem, #msgPis, #msgCertidao, #mensagemHolerite, #mensagemEndereco { grid-column: 1; }
+      #btnForaPrazo { grid-column: 1; }
       .grid { grid-template-columns: 1fr; }
       .campo, #painelHolerite .campo, #painelEndereco .campo { grid-column: 1 / -1; }
     }
@@ -725,6 +727,7 @@
         <span class="dica">Holerite (CNPJ, CEI, CAEPF ou CNO), recibo do eSocial ou extrato do INSS.</span>
         <button id="btnLerHolerite" type="button" disabled>Ler comprovante</button>
         <div id="mensagemHolerite" class="msg muted">Selecione o comprovante de renda para leitura.</div>
+        <button id="btnForaPrazo" type="button" class="secondary" hidden>Usar mesmo fora do prazo</button>
       </div>
       <div id="statusServidorHolerite" class="status ok" hidden>Servidor online</div>
     </div>
@@ -3402,9 +3405,11 @@
     atualizarBotaoRenda();
   }
 
-  async function lerHolerite() {
+  async function lerHolerite(foraPrazo) {
+    foraPrazo = foraPrazo === true;
     const input = document.getElementById("holeriteArquivo");
     const btn = document.getElementById("btnLerHolerite");
+    document.getElementById("btnForaPrazo").hidden = true;
 
     if (!input.files.length) {
       setMensagemHolerite("Selecione 1 ou 2 arquivos do comprovante de renda.", "erro");
@@ -3433,6 +3438,7 @@
     for (const arquivo of input.files) {
       form.append("files", arquivo);
     }
+    if (foraPrazo) form.append("fora_prazo", "1");
 
     const inicio = performance.now();
 
@@ -3447,14 +3453,19 @@
       }
 
       if (!resp.ok || !data.ok) {
-        if (data && data.code === "HOLERITE_FORA_PERIODO") {
-          throw new Error("Comprovante fora do período aceito. " + (data.error || ""));
+        if (data && (data.code === "HOLERITE_FORA_PERIODO" || data.code === "IRPF_FORA_PERIODO")) {
+          // Tem casos em que se usa mesmo assim: libera o botão.
+          document.getElementById("btnForaPrazo").hidden = false;
+          throw new Error("Comprovante fora do período aceito. " + (data.error || "") +
+            " Se for um caso em que pode usar, clique em \"Usar mesmo fora do prazo\".");
         }
         throw new Error((data && data.error) || "Falha na leitura do comprovante.");
       }
 
       const dadosH = data.dados || {};
       const duvidososH = preencherHolerite(dadosH);
+      const avisoForaPrazo = dadosH.fora_prazo
+        ? `⚠ Comprovante FORA DO PRAZO, usado por escolha sua${dadosH.competencia ? " (competência " + dadosH.competencia + ")" : " (confira a competência)"}. ` : "";
       atualizarFaixaCliente();
       const total = ((performance.now() - inicio) / 1000).toFixed(1).replace(".", ",");
       const qtdLidos = data.arquivos_lidos || input.files.length || 1;
@@ -3478,7 +3489,7 @@
         const fs = dadosH.fontes_ir || [];
         const p0 = fs[0] || {};
         setMensagemHolerite(
-          `Declaração de IR (exercício ${dadosH.exercicio}) lida em ${total} s pelo texto do PDF. ` +
+          avisoForaPrazo + `Declaração de IR (exercício ${dadosH.exercicio}) lida em ${total} s pelo texto do PDF. ` +
           `Renda: ${valorLeitura(lerValorBR(p0.anual) || 0)} ÷ 12 = ${valorLeitura(lerValorBR(p0.mensal) || 0)} (bruta = líquida). ` +
           (fs.length > 1 ? `Tem ${fs.length} fontes pagadoras: escolha qual vai para o SICAQ. ` : "") +
           "Preencha a data de admissão.",
@@ -3487,7 +3498,7 @@
         return;
       }
       setMensagemHolerite(
-        avisoReserva(data) + (data.repetida ? "Mesmo comprovante lido há pouco: usei a leitura anterior (sem gastar a IA). "
+        avisoForaPrazo + avisoReserva(data) + (data.repetida ? "Mesmo comprovante lido há pouco: usei a leitura anterior (sem gastar a IA). "
           : `${qtdLidos > 1 ? qtdLidos + " arquivos lidos" : "Comprovante lido"} em ${total} s. `) +
         (contasOk
           ? "Contas conferidas (proventos − descontos = líquido)."
@@ -3589,7 +3600,8 @@
     else if (b.classList.contains("desbloquear")) desbloquearUsuario(b.dataset.usuario, b.dataset.nome);
     else resetarSenha(b.dataset.usuario, b.dataset.nome);
   });
-  document.getElementById("btnLerHolerite").addEventListener("click", lerHolerite);
+  document.getElementById("btnLerHolerite").addEventListener("click", () => lerHolerite(false));
+  document.getElementById("btnForaPrazo").addEventListener("click", () => lerHolerite(true));
   document.getElementById("btnRenda").addEventListener("click", preencherRenda);
   document.getElementById("hTipoFonte").addEventListener("change", ajustarRotuloFonte);
   holeriteIds.forEach(id => {
@@ -3598,6 +3610,7 @@
     }));
   });
   document.getElementById("holeriteArquivo").addEventListener("change", (event) => {
+    document.getElementById("btnForaPrazo").hidden = true;
     limparHolerite();
 
     const qtd = event.target.files.length;
