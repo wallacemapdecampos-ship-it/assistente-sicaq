@@ -3542,7 +3542,7 @@ A imagem pode ser FOTO (papel torto/dobrado): siga cada linha da tabela com
 cuidado, sem pular para a linha de cima ou de baixo.
 
 Chaves, NESTA ORDEM:
-origem, competencia, empregador_tipo, empregador_documento, cpf_funcionario,
+origem, competencia, periodo, empregador_tipo, empregador_documento, cpf_funcionario,
 numero_beneficio, especie_beneficio, data_admissao, itens, total_proventos,
 total_descontos, liquido_original, folha_estado_sp, campos_incertos.
 
@@ -3553,7 +3553,12 @@ Regras:
   INSS (aposentadoria, pensão por morte, auxílio etc.); "ESOCIAL" se for
   recibo de empregado DOMÉSTICO do eSocial (empregador pessoa física);
   "HOLERITE" nos demais casos.
-- competencia: mês/ano do comprovante em MM/AAAA.
+- competencia: mês/ano do comprovante em MM/AAAA. Muitos holerites não
+  escrevem "competência": mostram só o PERÍODO (ex.: "01/09/2026 a
+  30/09/2026" -> 09/2026) ou "Mês/Ano", "Referência", "Folha de SETEMBRO/2026".
+  NUNCA use a data de admissão nem a data de pagamento/assinatura.
+- periodo: o texto do período/mês de referência exatamente como impresso
+  (ex.: "01/09/2026 a 30/09/2026"); vazio se não houver.
 - empregador_tipo: o rótulo do número de inscrição do EMPREGADOR como está
   escrito: "CNPJ", "CEI", "CAEPF", "CNO" ou "CPF". No INSS, deixe vazio.
 - empregador_documento: o número de inscrição do EMPREGADOR exatamente como
@@ -4121,6 +4126,17 @@ def _normalizar_holerite(resultado):
     fonte = _fonte_renda(resultado)
     competencia = _holerite_competencia_mm_aaaa(resultado.get("competencia"))
     validas = _holerite_competencias_validas()
+    if competencia not in validas:
+        # Holerite que só mostra o período ("01/09/2026 a 30/09/2026"):
+        # a competência é o mês da data final do período.
+        datas = re.findall(r"\b\d{1,2}\s*/\s*(\d{1,2})\s*/\s*((?:19|20)\d{2})\b",
+                           str(resultado.get("periodo") or "") + " " + str(resultado.get("competencia") or ""))
+        if datas:
+            mes, ano = datas[-1]
+            if 1 <= int(mes) <= 12:
+                pelo_periodo = f"{int(mes):02d}/{ano}"
+                if pelo_periodo in validas or not competencia:
+                    competencia = pelo_periodo
 
     if competencia not in validas:
         identificada = competencia or "não identificada"
