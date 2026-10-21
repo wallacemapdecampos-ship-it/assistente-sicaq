@@ -3866,7 +3866,11 @@ def _groq_holerite_call(arquivos, prompt=None, esperar_limite=True):
             texto_pdf = _pdf_texto_holerite(data)
 
         texto_pdf = _compactar_texto_holerite(texto_pdf, 20000)
-        if len(texto_pdf) >= 120:
+        # PDF "impresso" do navegador/CamScanner: tem só cabeçalho/rodapé em
+        # texto (data, URL) e o holerite é imagem. Só usa o texto se ele
+        # tiver os valores do holerite; senão manda a imagem.
+        valores_txt = len(re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2}", texto_pdf))
+        if len(texto_pdf) >= 120 and valores_txt >= 3:
             # Limita cada arquivo para não desperdiçar tokens no plano gratuito.
             conteudo.append({
                 "type": "text",
