@@ -418,8 +418,8 @@
     <button id="tabIdentificacao" class="tab active" type="button">Identificação</button>
     <button id="tabEndereco" class="tab" type="button">Endereço</button>
     <button id="tabHolerite" class="tab" type="button">Renda</button>
-    <button id="tabSimulacao" class="tab" type="button">Simulação</button>
-    <button id="tabPreencherSim" class="tab" type="button">Preencher simulação</button>
+    <button id="tabSimulacao" class="tab" type="button" hidden>Simulação</button>
+    <button id="tabPreencherSim" class="tab" type="button" hidden>Preencher simulação</button>
     <button id="tabUso" class="tab" type="button" hidden>Uso</button>
   </nav>
   <div class="estado-sistema">
@@ -1176,6 +1176,8 @@
     try { localStorage.removeItem(CHAVE_SESSAO); } catch (_) {}
     document.getElementById("contaUsuario").hidden = true;
     document.getElementById("tabUso").hidden = true;
+    document.getElementById("tabSimulacao").hidden = true;
+    document.getElementById("tabPreencherSim").hidden = true;
   }
   function setMsgLogin(texto, classe = "muted") {
     const el = document.getElementById("msgLogin");
@@ -1196,6 +1198,12 @@
     document.getElementById("nomeUsuario").textContent = SESSAO ? SESSAO.nome : "";
     document.getElementById("contaUsuario").hidden = !SESSAO;
     document.getElementById("tabUso").hidden = !(SESSAO && SESSAO.admin);
+    // Simulação e Preencher simulação: só para a empresa MAP DE CAMPOS.
+    const ehMap = !!(SESSAO && (SESSAO.dono || String(SESSAO.empresa || "").trim().toUpperCase() === "MAP DE CAMPOS"));
+    document.getElementById("tabSimulacao").hidden = !ehMap;
+    document.getElementById("tabPreencherSim").hidden = !ehMap;
+    if (!ehMap && (document.getElementById("painelSimulacao").classList.contains("active") ||
+                   document.getElementById("painelPreencherSim").classList.contains("active"))) mostrarAba("identificacao");
     // Analista só cria a senha no 1º acesso; trocar depois é com o ADM.
     document.getElementById("btnTrocarSenha").hidden = !(SESSAO && SESSAO.admin);
   }
