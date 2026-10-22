@@ -3622,6 +3622,10 @@
   const PS_PACAEMBU = ["ITAPETININGA - SP", "TATUI - SP", "LEME - SP", "AVARE - SP", "RIBEIRAO PRETO - SP", "CAMPO GRANDE - MS", "CATANDUVA - SP"];
   const PS_EXTRA_CIDADE = { "AVARE - SP": 300 };
   const PS_EXTRA_EMP = { "BELA VISTA": 500, "SOLARE": 1000 };
+  // Valor do imóvel por cidade (o mesmo da tela Parâmetros do simulador). Ribeirão Preto vai pela renda.
+  const PS_VALOR_CIDADE = { "SOROCABA - SP": 264000, "RIBEIRAO PRETO - SP": 264000, "CAMPO GRANDE - MS": 264000, "VOTORANTIM - SP": 235000,
+    "CATANDUVA - SP": 235000, "ITU - SP": 225000, "LEME - SP": 225000, "ITAPETININGA - SP": 223000, "AVARE - SP": 210000 };
+  const PS_SIM_RECENTE_MS = 60 * 60 * 1000;
   let psPdfjs = null;
   const PS = { avaliacao: null, cad: [null, null], manual: {} };
 
@@ -3724,7 +3728,9 @@
     const nasc = (tudo.match(/DATA DE NASCIMENTO:?\s+(\d{2}\/\d{2}\/\d{4})/) || [])[1] || "";
     const nome = psDepois(linhas, "Nome Completo do Cliente");
     if (!cpf || !nasc) throw new Error("Não achei o CPF e a data de nascimento no cadastro.");
-    return { cpf, nascimento: nasc, nome };
+    const end = tudo.slice(Math.max(0, tudo.indexOf("ENDERECO")));
+    const mm = end.match(/MUNICIPIO:?\s+([A-Z' ]+?)\s+UF:?\s+([A-Z]{2})\b/) || tudo.match(/MUNICIPIO:?\s+([A-Z' ]+?)\s+UF:?\s+([A-Z]{2})\b/);
+    return { cpf, nascimento: nasc, nome, municipio: mm ? mm[1].trim() : "", uf: mm ? mm[2] : "" };
   }
 
   // Pactuação: regra de três pela renda; a maior renda fica com o valor cortado em
@@ -3755,7 +3761,37 @@
     return parts;
   }
 
-  function psCidadeAtual() { return psNorm(psEl("psCidade").value); }
+  // "Sorocaba", "SOROCABA/SP" ou "Sorocaba - SP" -> "SOROCABA - SP" (UF pelo cadastro ou pela lista do IBGE).
+  function psCidadeFormatada(texto) {
+    let t = psNorm(texto).replace(/\s*\/\s*([A-Z]{2})$/, " - $1");
+    if (!t) return "";
+    if (/ - [A-Z]{2}$/.test(t)) return t;
+    const ufCad = (PS.cad.find(c => c && c.uf) || {}).uf;
+    const lista = MUNICIPIOS || {};
+    if (ufCad && (lista[ufCad] || []).includes(t)) return t + " - " + ufCad;
+    const ufs = Object.keys(lista).filter(uf => uf.length === 2 && (lista[uf] || []).includes(t));
+    if (ufs.length === 1) return t + " - " + ufs[0];
+    if (ufs.includes("SP")) return t + " - SP";
+    return t;
+  }
+  function psCidadeAtual() { return psCidadeFormatada(psEl("psCidade").value); }
+  function psSimRecente() {
+    const u = psUltimaSimulacao();
+    return u && u.cidade && u.valor > 0 && Date.now() - (u.em || 0) < PS_SIM_RECENTE_MS ? u : null;
+  }
+  // Sem simulação recente: cidade do cadastro do 1º proponente e valor pela tabela da cidade.
+  function psPadroes() {
+    const u = psSimRecente();
+    if (u) return;
+    const cad = PS.cad.find(c => c && c.municipio);
+    if (!PS.manual.psCidade && cad) psEl("psCidade").value = cad.municipio + " - " + cad.uf;
+    const cid = psCidadeAtual();
+    if (!PS.manual.psValor && cid && cid !== "RIBEIRAO PRETO - SP") {
+      const v = PS_VALOR_CIDADE[cid];
+      psEl("psValor").value = v ? valorLeitura(v) : psEl("psValor").value;
+      psEl("psValor").classList.toggle("destaque", !!v);
+    }
+  }
 
   function psRegrasCidade(forcar) {
     const cid = psCidadeAtual();
@@ -3859,7 +3895,10 @@
         if (outro && outro.cpf === cad.cpf) throw new Error("Esse cadastro é da mesma pessoa do outro campo.");
         PS.cad[qual] = cad;
         const naAv = !PS.avaliacao || PS.avaliacao.participantes.some(p => p.cpf === cad.cpf);
+        psPadroes();
+        psRegrasCidade(false);
         psMsg(msgId, `${cad.nome || "Cliente"} · CPF ${formatarCpf(cad.cpf)} · nascimento ${cad.nascimento}` +
+          (cad.municipio ? ` · ${cad.municipio}/${cad.uf}` : "") +
           (naAv ? "" : " · ATENÇÃO: esse CPF não está na Avaliação de risco."), naAv ? "ok" : "erro");
       }
     } catch (e) {
@@ -3875,9 +3914,9 @@
 
   function psAbrir() {
     psCarregarPdfjs().catch(() => {});       // já deixa o leitor pronto
-    const u = psUltimaSimulacao();
+    const u = psSimRecente();
     const box = psEl("psUltima");
-    if (u && u.cidade && u.valor > 0) {
+    if (u) {
       if (!PS.manual.psCidade) psEl("psCidade").value = u.cidade;
       if (!PS.manual.psValor && psCidadeAtual() !== "RIBEIRAO PRETO - SP") psEl("psValor").value = valorLeitura(u.valor);
       const min = Math.max(0, Math.round((Date.now() - (u.em || 0)) / 60000));
@@ -3887,8 +3926,10 @@
       box.hidden = false;
     } else {
       box.className = "cep-status warn";
-      box.innerHTML = "<b>Sem simulação:</b> faça a simulação na aba Simulação (cidade e valor do imóvel vêm de lá) ou digite aqui.";
+      box.innerHTML = "<b>Sem simulação recente:</b> a cidade vem do Cadastro e o valor do imóvel da tabela da cidade (em amarelo). " +
+        "Se fizer a simulação na aba Simulação, uso a cidade e o valor de lá.";
       box.hidden = false;
+      psPadroes();
     }
     psRegrasCidade(false);
     psAtualizarBotao();
@@ -3899,7 +3940,7 @@
       origem: psEl("psOrigem").value,
       enquadramento: psEl("psEnq").value,
       sistema: psEl("psSistema").value,
-      cidade: psEl("psCidade").value.trim().replace(/\s*-\s*/g, " - "),
+      cidade: psCidadeAtual(),
       valor_imovel: lerValorBR(psEl("psValor").value),
       prestacao: lerValorBR(psEl("psPrestacao").value),
       renda: lerValorBR(psEl("psRenda").value),
@@ -3975,10 +4016,15 @@
   ["psCidade", "psValor", "psPrestacao", "psRenda", "psObra", "psExtra"].forEach(id => psEl(id).addEventListener("input", (e) => {
     PS.manual[id] = true;
     e.target.classList.remove("destaque");
+    if (id === "psCidade") { const v = PS_VALOR_CIDADE[psCidadeAtual()]; if (v && !PS.manual.psValor && !psSimRecente()) { psEl("psValor").value = valorLeitura(v); psEl("psValor").classList.add("destaque"); } }
     if (id === "psCidade" || id === "psRenda") psRegrasCidade(false);
     psAtualizarBotao();
   }));
   ["psEmp", "psOrigem", "psEnq", "psSistema"].forEach(id => psEl(id).addEventListener("change", () => { if (id === "psEmp") psRegrasCidade(false); psAtualizarBotao(); }));
+  psEl("psCidade").addEventListener("blur", () => {
+    const f = psCidadeAtual();
+    if (f && f !== psNorm(psEl("psCidade").value)) { psEl("psCidade").value = f; psRegrasCidade(false); psAtualizarBotao(); }
+  });
   psEl("btnPreencherSim").addEventListener("click", psPreencher);
   psEl("tabPreencherSim").addEventListener("click", () => mostrarAba("preencherSim"));
 
