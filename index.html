@@ -3971,7 +3971,14 @@
     psEl("btnEmpSolare").classList.toggle("escolhido", emp === "SOLARE");
     psEl("psTextoEmp").innerHTML = !emp
       ? "<b>Ribeirão Preto: qual empreendimento?</b> Solare soma R$ 1.000 na entrada; Bela Vista soma R$ 500."
-      : (emp === "SOLARE" ? "<b>Solare</b>: R$ 1.000,00 somados na entrada." : "<b>Bela Vista</b>: R$ 500,00 somados na entrada.");
+      : (emp === "SOLARE" ? "<b>Solare</b>: R$ 1.000,00 somados na entrada · imóvel 264 mil na faixa 2 e 320 mil na faixa 3."
+                          : "<b>Bela Vista</b>: R$ 500,00 somados na entrada · imóvel 264 mil.");
+    // Valor do imóvel em Ribeirão: Solare 264 mil (faixa 2, renda até 5.000) ou 320 mil (faixa 3); Bela Vista sempre 264 mil.
+    if (ribeirao && emp && !PS.manual.psValor) {
+      const renda = lerValorBR(psEl("psRenda").value) || 0;
+      const v = emp === "SOLARE" && renda > PS_RENDA_MAX_FX2 ? 320000 : 264000;
+      psEl("psValor").value = valorLeitura(v); psEl("psValor").classList.add("destaque");
+    }
     if (!PS.manual.psObra || forcar) psEl("psObra").value = cid ? (PS_PACAEMBU.includes(cid) ? "24" : "36") : "";
     if (!PS.manual.psExtra || forcar) {
       const extra = psEhMap() ? (PS_EXTRA_CIDADE[cid] || 0) + (ribeirao ? (PS_EXTRA_EMP[psEl("psEmp").value] || 0) : 0) : 0;
