@@ -2221,6 +2221,33 @@ def _pdf_pagina_para_imagem(page):
     return img, pode_recortar
 
 
+def _pdf_so_uma_imagem(page):
+    """Página com exatamente 1 imagem e sem texto (documento "impresso" como imagem)."""
+    try:
+        return len(page.get_image_info()) == 1 and not (page.get_text("text") or "").strip()
+    except Exception:
+        return False
+
+
+def _cortar_margem_branca(img, limiar=235, folga=0.015):
+    """Recorta a área com conteúdo (sem as margens brancas da folha)."""
+    try:
+        cinza = np.asarray(img.convert("L"))
+        tinta = cinza < limiar
+        linhas = np.where(tinta.sum(axis=1) > max(2, 0.002 * tinta.shape[1]))[0]
+        colunas = np.where(tinta.sum(axis=0) > max(2, 0.002 * tinta.shape[0]))[0]
+        if len(linhas) < 10 or len(colunas) < 10:
+            return img
+        H, W = cinza.shape
+        my, mx = int(folga * H), int(folga * W)
+        caixa = (max(0, colunas[0] - mx), max(0, linhas[0] - my), min(W, colunas[-1] + mx), min(H, linhas[-1] + my))
+        if (caixa[2] - caixa[0]) * (caixa[3] - caixa[1]) > 0.92 * W * H:
+            return img
+        return img.crop(caixa)
+    except Exception:
+        return img
+
+
 def _to_jpeg(data: bytes, filename: str, mimetype: str) -> bytes:
     img, _modo = _preparar_imagem(data, filename, mimetype)
     out = io.BytesIO()
@@ -2253,6 +2280,13 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
             for i in range(min(2, len(doc))):
                 img, pode_recortar = _pdf_pagina_para_imagem(doc[i])
                 lado = False
+                if not pode_recortar and len(doc) == 1 and _pdf_so_uma_imagem(doc[i]):
+                    # PDF "impresso" com o documento como 1 imagem no meio da
+                    # folha (ex.: CNH nova em pé): tira a margem branca e, se
+                    # ficou alta, manda em 2 metades (letras maiores).
+                    img = _cortar_margem_branca(img)
+                    if img.height > 1.3 * img.width:
+                        dividir = True
                 if pode_recortar:
                     img, info = _recortar_documento(img)
                     recortado = info.startswith("recortado")
@@ -2364,6 +2398,11 @@ def _imagens_para_ia(arquivos):
             w, h = img.size
             cima = img.crop((0, 0, w, int(h * 0.54)))
             baixo = img.crop((0, int(h * 0.46), w, h))
+            if w < 1400:
+                # Metades pequenas: amplia para as letras chegarem maiores.
+                f = 1600 / w
+                cima = cima.resize((1600, int(cima.height * f)), Image.Resampling.LANCZOS)
+                baixo = baixo.resize((1600, int(baixo.height * f)), Image.Resampling.LANCZOS)
             print("[LER] scan de folha em pé: enviando metade de cima e de baixo", flush=True)
             return [_jpeg_para_ia(cima), _jpeg_para_ia(baixo)], NOTA_METADES
         if modo == "paginas_de_lado":
