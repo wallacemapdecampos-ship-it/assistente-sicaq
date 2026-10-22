@@ -994,11 +994,11 @@
           <select id="psEnq"><option value="3280">3280 · Com financ. PJ</option><option value="3302">3302 · Associativo</option></select></div>
         <div class="campo"><label for="psSistema">Sistema de amortização</label>
           <select id="psSistema"><option value="PRICE">PRICE</option><option value="SAC">SAC</option></select></div>
-        <div class="campo"><label for="psCidade">Cidade do imóvel <span class="opcional">da sua última simulação</span></label>
+        <div class="campo"><label for="psCidade">Cidade do imóvel <span class="opcional">do Cadastro</span></label>
           <input id="psCidade" type="text" list="psCidadesLista" autocomplete="off" placeholder="Digite só o nome: Sorocaba"><datalist id="psCidadesLista"></datalist></div>
         <div class="campo"><label for="psValor">Valor do imóvel</label>
           <input id="psValor" type="text" inputmode="decimal" placeholder="0,00"></div>
-        <div class="campo" id="psEmpBox" hidden><label for="psEmp">Empreendimento <span class="opcional">Ribeirão Preto</span></label>
+        <div class="campo" id="psEmpBox" hidden style="display:none"><label for="psEmp">Empreendimento <span class="opcional">Ribeirão Preto</span></label>
           <select id="psEmp"><option value="">Escolha…</option><option value="BELA VISTA">Bela Vista (+R$ 500 na entrada)</option><option value="SOLARE">Solare (+R$ 1.000 na entrada)</option></select></div>
         <div class="campo"><label for="psPrestacao">Prestação máxima SIRIC <span class="opcional">liberada</span></label>
           <input id="psPrestacao" type="text" inputmode="decimal" placeholder="0,00"></div>
@@ -1008,6 +1008,13 @@
           <input id="psObra" type="text" inputmode="numeric"></div>
         <div class="campo"><label for="psExtra">Somar na entrada</label>
           <input id="psExtra" type="text" inputmode="decimal" placeholder="0,00"></div>
+      </div>
+      <div id="psPerguntaEmp" class="pergunta-leme" hidden>
+        <span id="psTextoEmp"><b>Ribeirão Preto: qual empreendimento?</b> Solare soma R$ 1.000 na entrada; Bela Vista soma R$ 500.</span>
+        <span class="botoes-leme">
+          <button id="btnEmpBela" type="button" class="secondary">Bela Vista</button>
+          <button id="btnEmpSolare" type="button" class="secondary">Solare</button>
+        </span>
       </div>
       <div class="ps-checks">
         <label><input type="checkbox" id="psRedutor"> Possui 3 anos de FGTS (redutor)</label>
@@ -3942,7 +3949,7 @@
     const cad = PS.cad.find(c => c && c.municipio);
     if (!PS.manual.psCidade && cad) psEl("psCidade").value = cad.municipio + " - " + cad.uf;
     const cid = psCidadeAtual();
-    if (!PS.manual.psValor && cid && !(cid === "RIBEIRAO PRETO - SP" && psEhMap())) {
+    if (!PS.manual.psValor && cid) {
       const v = PS_VALOR_CIDADE[cid];
       psEl("psValor").value = v ? valorLeitura(v) : psEl("psValor").value;
       psEl("psValor").classList.toggle("destaque", !!v);
@@ -3956,17 +3963,19 @@
   function psRegrasCidade(forcar) {
     const cid = psCidadeAtual();
     const ribeirao = cid === "RIBEIRAO PRETO - SP" && psEhMap();
-    psEl("psEmpBox").hidden = !ribeirao;
+    if (!ribeirao) psEl("psEmp").value = "";      // trocou de cidade: pergunta de novo se voltar a Ribeirão
+    const caixaEmp = psEl("psPerguntaEmp"), emp = psEl("psEmp").value;
+    caixaEmp.hidden = !ribeirao;
+    caixaEmp.classList.toggle("respondida", !!emp);
+    psEl("btnEmpBela").classList.toggle("escolhido", emp === "BELA VISTA");
+    psEl("btnEmpSolare").classList.toggle("escolhido", emp === "SOLARE");
+    psEl("psTextoEmp").innerHTML = !emp
+      ? "<b>Ribeirão Preto: qual empreendimento?</b> Solare soma R$ 1.000 na entrada; Bela Vista soma R$ 500."
+      : (emp === "SOLARE" ? "<b>Solare</b>: R$ 1.000,00 somados na entrada." : "<b>Bela Vista</b>: R$ 500,00 somados na entrada.");
     if (!PS.manual.psObra || forcar) psEl("psObra").value = cid ? (PS_PACAEMBU.includes(cid) ? "24" : "36") : "";
     if (!PS.manual.psExtra || forcar) {
       const extra = psEhMap() ? (PS_EXTRA_CIDADE[cid] || 0) + (ribeirao ? (PS_EXTRA_EMP[psEl("psEmp").value] || 0) : 0) : 0;
       psEl("psExtra").value = extra ? valorLeitura(extra) : "";
-    }
-    // Ribeirão Preto: valor do imóvel pela renda (até 5.000: 264 mil; 5.000,01 a 9.600: 320 mil).
-    const renda = lerValorBR(psEl("psRenda").value) || 0;
-    if (ribeirao && renda && !PS.manual.psValor) {
-      const v = renda <= 5000 ? 264000 : (renda <= 9600 ? 320000 : null);
-      if (v) { psEl("psValor").value = valorLeitura(v); psEl("psValor").classList.add("destaque"); }
     }
   }
 
@@ -4020,7 +4029,7 @@
     if (!(lerValorBR(psEl("psPrestacao").value) > 0)) f.push("prestação máxima");
     if (!(lerValorBR(psEl("psRenda").value) > 0)) f.push("renda");
     if (!/^\d{1,2}$/.test(psEl("psObra").value.trim())) f.push("prazo de obra");
-    if (psCidadeAtual() === "RIBEIRAO PRETO - SP" && psEhMap() && !psEl("psEmp").value) f.push("empreendimento (Bela Vista ou Solare)");
+    if (psCidadeAtual() === "RIBEIRAO PRETO - SP" && psEhMap() && !psEl("psEmp").value) f.push("empreendimento de Ribeirão (Bela Vista ou Solare)");
     const trava = psTravaFaixa2();
     if (trava) f.push(trava);
     if (!psEl("psEnq").value) f.push("enquadramento");
@@ -4218,7 +4227,6 @@
   function psValorPelaCidade() {
     if (PS.manual.psValor || psSimRecente()) return;
     const cid = psCidadeAtual();
-    if (cid === "RIBEIRAO PRETO - SP" && psEhMap()) return;      // vai pela renda (psRegrasCidade)
     const v = PS_VALOR_CIDADE[cid];
     psEl("psValor").value = v ? valorLeitura(v) : "";
     psEl("psValor").classList.toggle("destaque", !!v);
@@ -4249,6 +4257,9 @@
     psAbrir();
   }
   psEl("btnLimparSim").addEventListener("click", psLimpar);
+  [["btnEmpBela", "BELA VISTA"], ["btnEmpSolare", "SOLARE"]].forEach(([id, v]) => psEl(id).addEventListener("click", () => {
+    psEl("psEmp").value = v; PS.manual.psExtra = false; psRegrasCidade(false); psAtualizarBotao();
+  }));
   psEl("psQtd").addEventListener("change", (e) => { PS.qtd = Number(e.target.value) || 1; psSomarRendas(); psDesenhar(); });
   // Renda/nascimento digitados na tabela: atualiza a pactuação sem redesenhar (não perde o cursor).
   function psSomarRendas() {
