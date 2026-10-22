@@ -328,13 +328,13 @@
     .msg.erro::before, #msgRenda.erro::before { content: "✕"; background: #fbe9e7; color: var(--erro); }
     /* Pergunta de Leme no mesmo padrão de aviso. */
     .pergunta-leme { background: var(--folha); border-color: var(--linha); border-left: 4px solid #e2b500; padding: 10px 14px 10px 12px; }
-    .pergunta-leme #textoLeme { display: flex; align-items: center; gap: 10px; flex: 1 1 300px; }
-    .pergunta-leme #textoLeme::before {
+    .pergunta-leme #textoLeme, .pergunta-leme #psTextoEmp { display: flex; align-items: center; gap: 10px; flex: 1 1 300px; }
+    .pergunta-leme #textoLeme::before, .pergunta-leme #psTextoEmp::before {
       content: "?"; flex: 0 0 26px; width: 26px; height: 26px; border-radius: 50%;
       display: grid; place-items: center; font-weight: 700; background: var(--marca-fundo); color: var(--warn);
     }
     .pergunta-leme.respondida { background: var(--folha); border-color: var(--linha); border-left-color: var(--ok); }
-    .pergunta-leme.respondida #textoLeme::before { content: "✓"; background: #e3f3ea; color: var(--ok); }
+    .pergunta-leme.respondida #textoLeme::before, .pergunta-leme.respondida #psTextoEmp::before { content: "✓"; background: #e3f3ea; color: var(--ok); }
 
     /* Holerite: 4 por linha. */
     #painelHolerite .campo { --span: 3; }
