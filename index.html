@@ -138,6 +138,9 @@
     .ps-tabela th { text-align: left; font-size: 12px; color: var(--tinta-2); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--linha); }
     .ps-tabela td { padding: 7px 8px; border-bottom: 1px solid #eef1f3; }
     .ps-tabela td.falta { color: #a3341f; font-weight: 700; }
+    .ps-tabela .ps-in { height: 32px; padding: 4px 8px; max-width: 150px; }
+    .ps-qtd { margin-top: 12px; font-size: 13.5px; color: var(--tinta-2); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .ps-qtd select { height: 32px; width: 70px; margin-left: 6px; }
     @media (max-width: 760px) { #painelPreencherSim .campo { --span: 6; } .ps-tabela { font-size: 12.5px; } }
     [hidden] { display: none !important; }
     .vazio {
@@ -934,6 +937,8 @@
         <label><input type="checkbox" id="psRedutor"> Possui 3 anos de FGTS (redutor)</label>
         <label><input type="checkbox" id="psDependente"> Possui dependentes</label>
       </div>
+      <div id="psQtdBox" class="ps-qtd">Sem Avaliação de risco: preencha à mão ·
+        <label>Participantes <select id="psQtd"><option value="1">1</option><option value="2">2</option></select></label></div>
       <table class="ps-tabela" id="psTabela">
         <thead><tr><th>Proponente</th><th>CPF</th><th>Renda</th><th>% pactuação</th><th>Nascimento</th></tr></thead>
         <tbody id="psParticipantes"><tr><td colspan="5" class="dica">Anexe a Avaliação de risco.</td></tr></tbody>
@@ -3638,7 +3643,7 @@
     "CATANDUVA - SP": 235000, "ITU - SP": 225000, "LEME - SP": 225000, "ITAPETININGA - SP": 223000, "AVARE - SP": 210000 };
   const PS_SIM_RECENTE_MS = 60 * 60 * 1000;
   let psPdfjs = null;
-  const PS = { avaliacao: null, cad: [null, null], manual: {} };
+  const PS = { avaliacao: null, cad: [null, null], manual: {}, qtd: 1, digitado: [{ renda: null, nasc: "" }, { renda: null, nasc: "" }] };
 
   const psEl = (id) => document.getElementById(id);
   const psNorm = (t) => semAcentos(String(t || "")).toUpperCase().replace(/\s*-\s*/g, " - ").replace(/\s+/g, " ").trim();
@@ -3758,17 +3763,30 @@
     return pct.map(v => (v === 100 ? "100" : v.toFixed(2).replace(".", ",")));
   }
 
+  // Participantes: da Avaliação de risco; sem ela, digitados à mão (renda e nascimento).
   function psParticipantes() {
     const av = PS.avaliacao;
-    if (!av) return [];
-    const parts = av.participantes.map(p => ({ ...p }));
+    let parts;
+    if (av) {
+      parts = av.participantes.map(p => ({ ...p }));
+      parts.forEach((p, i) => {
+        const cad = PS.cad.find(c => c && c.cpf === p.cpf);
+        p.doCadastro = !!cad;
+        p.nascimento = cad ? cad.nascimento : (PS.digitado[i] || {}).nasc || "";
+        p.nome = cad ? cad.nome : (p.cpf === av.cpfCliente ? av.nome : "");
+      });
+    } else {
+      parts = [];
+      for (let i = 0; i < PS.qtd; i++) {
+        const cad = PS.cad[i], dig = PS.digitado[i];
+        let renda = dig.renda || 0;
+        if (PS.qtd === 1) renda = lerValorBR(psEl("psRenda").value) || 0;   // 1 proponente: a renda familiar
+        parts.push({ cpf: cad ? cad.cpf : "", nome: cad ? cad.nome : "", renda,
+                     nascimento: cad ? cad.nascimento : dig.nasc, doCadastro: !!cad, manual: true });
+      }
+    }
     const pct = psPactuacao(parts);
-    parts.forEach((p, i) => {
-      p.pactuacao = pct[i];
-      const cad = PS.cad.find(c => c && c.cpf === p.cpf);
-      p.nascimento = cad ? cad.nascimento : "";
-      p.nome = cad ? cad.nome : (p.cpf === av.cpfCliente ? av.nome : "");
-    });
+    parts.forEach((p, i) => { p.pactuacao = pct[i]; });
     return parts;
   }
 
@@ -3837,27 +3855,47 @@
       box.className = "cep-status warn";
       box.insertAdjacentHTML("beforeend", `<div class="ps-aviso-renda">A renda da simulação (R$ ${valorLeitura(u.renda)}) é diferente da avaliação (R$ ${valorLeitura(totalAv)}): confira o valor do imóvel.</div>`);
     }
-    if (!parts.length) {
-      corpo.innerHTML = `<tr><td colspan="5" class="dica">Anexe a Avaliação de risco.</td></tr>`;
-    } else {
-      corpo.innerHTML = parts.map((p, i) => `<tr><td>${i + 1}º ${escHtml(p.nome || "")}</td><td>${escHtml(formatarCpf(p.cpf))}</td>` +
-        `<td>R$ ${valorLeitura(p.renda)}</td><td>${escHtml(p.pactuacao)}%</td>` +
-        `<td class="${p.nascimento ? "" : "falta"}">${p.nascimento ? escHtml(p.nascimento) : `falta o Cadastro do ${i + 1}º`}</td></tr>`).join("");
-    }
+    psEl("psQtdBox").hidden = !!PS.avaliacao;
+    psEl("psQtd").value = String(PS.qtd);
+    corpo.innerHTML = parts.map((p, i) => {
+      const renda = p.manual && PS.qtd > 1
+        ? `<input class="ps-in" data-campo="renda" data-i="${i}" inputmode="decimal" placeholder="0,00" value="${PS.digitado[i].renda ? valorLeitura(PS.digitado[i].renda) : ""}">`
+        : `R$ <span id="psRendaP${i}">${valorLeitura(p.renda)}</span>`;
+      const nasc = p.doCadastro ? escHtml(p.nascimento)
+        : `<input class="ps-in" data-campo="nasc" data-i="${i}" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" value="${escHtml(p.nascimento || "")}">`;
+      return `<tr><td>${i + 1}º ${escHtml(p.nome || "")}</td><td>${p.cpf ? escHtml(formatarCpf(p.cpf)) : "—"}</td>` +
+        `<td>${renda}</td><td><span id="psPct${i}">${escHtml(p.pactuacao)}</span>%</td><td>${nasc}</td></tr>`;
+    }).join("");
     psAtualizarBotao();
+  }
+
+  // Trava: renda de Faixa 2 (até R$ 5.000) não simula com valor acima do teto da Faixa 2 da cidade
+  // (seria o teto da Faixa 3). Só nas cidades da tabela, onde o teto é conhecido.
+  const PS_RENDA_MAX_FX2 = 5000;
+  function psTravaFaixa2() {
+    const renda = lerValorBR(psEl("psRenda").value) || 0;
+    const valor = lerValorBR(psEl("psValor").value) || 0;
+    const teto = PS_VALOR_CIDADE[psCidadeAtual()];
+    if (!renda || !valor || !teto || renda > PS_RENDA_MAX_FX2 || valor <= teto) return "";
+    return `valor do imóvel dentro do teto da Faixa 2 (renda até R$ ${valorLeitura(PS_RENDA_MAX_FX2)}: ` +
+           `máximo R$ ${valorLeitura(teto)} em ${psCidadeAtual()}, não R$ ${valorLeitura(valor)})`;
   }
 
   function psFaltas() {
     const f = [];
     const parts = psParticipantes();
-    if (!PS.avaliacao) f.push("Avaliação de risco");
-    parts.forEach((p, i) => { if (!p.nascimento) f.push(`Cadastro do ${i + 1}º proponente`); });
+    parts.forEach((p, i) => {
+      if (!/^\d{2}\/\d{2}\/\d{4}$/.test(p.nascimento || "")) f.push(`nascimento do ${i + 1}º proponente`);
+      if (parts.length > 1 && !(p.renda > 0)) f.push(`renda do ${i + 1}º proponente`);
+    });
     if (!/ - [A-Z]{2}$/.test(psCidadeAtual())) f.push("cidade (ex.: Sorocaba - SP)");
     if (!(lerValorBR(psEl("psValor").value) > 0)) f.push("valor do imóvel");
     if (!(lerValorBR(psEl("psPrestacao").value) > 0)) f.push("prestação máxima");
     if (!(lerValorBR(psEl("psRenda").value) > 0)) f.push("renda");
     if (!/^\d{1,2}$/.test(psEl("psObra").value.trim())) f.push("prazo de obra");
     if (psCidadeAtual() === "RIBEIRAO PRETO - SP" && psEhMap() && !psEl("psEmp").value) f.push("empreendimento (Bela Vista ou Solare)");
+    const trava = psTravaFaixa2();
+    if (trava) f.push(trava);
     if (!psEl("psEnq").value) f.push("enquadramento");
     return f;
   }
@@ -3870,7 +3908,7 @@
     if (psAguardando) return;
     const m = psEl("psMsg");
     if (extensaoPronta && !psExtensaoSim) { m.textContent = "Atualize a extensão (versão 1.26 ou mais nova) para preencher o simulador da Caixa."; m.className = "erro"; }
-    else if (faltas.length && PS.avaliacao) { m.textContent = "Falta: " + faltas.join(", ") + "."; m.className = "dica"; }
+    else if (faltas.length) { m.textContent = "Falta: " + faltas.join(", ") + "."; m.className = "dica"; }
     else if (!faltas.length) { m.textContent = "Tudo pronto. Abra o simulador da Caixa (já logado) e clique em Preencher."; m.className = "dica"; }
   }
 
@@ -3947,7 +3985,7 @@
       psPadroes();
     }
     psRegrasCidade(false);
-    psAtualizarBotao();
+    psDesenhar();
   }
 
   function psMontarPayload() {
@@ -4032,6 +4070,7 @@
     PS.manual[id] = true;
     e.target.classList.remove("destaque");
     if (id === "psCidade") psValorPelaCidade();
+    if (id === "psRenda" && !PS.avaliacao && PS.qtd === 1) { const sp = psEl("psRendaP0"); if (sp) sp.textContent = valorLeitura(lerValorBR(psEl("psRenda").value) || 0); }
     if (id === "psCidade" || id === "psRenda") psRegrasCidade(false);
     psAtualizarBotao();
   }));
@@ -4069,7 +4108,8 @@
   // Novo cliente: apaga o que foi lido e o que foi digitado (nada de dado do anterior).
   function psLimpar() {
     if (psAguardando) return;
-    PS.avaliacao = null; PS.cad = [null, null]; PS.manual = {};
+    PS.avaliacao = null; PS.cad = [null, null]; PS.manual = {}; PS.qtd = 1;
+    PS.digitado = [{ renda: null, nasc: "" }, { renda: null, nasc: "" }];
     ["psAvaliacao", "psCad1", "psCad2"].forEach(id => { psEl(id).value = ""; });
     ["psCidade", "psValor", "psPrestacao", "psRenda", "psObra", "psExtra"].forEach(id => { psEl(id).value = ""; psEl(id).classList.remove("destaque"); });
     psEl("psOrigem").value = "FGTS"; psEl("psEnq").value = "3280"; psEl("psSistema").value = "PRICE"; psEl("psEmp").value = "";
@@ -4084,6 +4124,30 @@
     psAbrir();
   }
   psEl("btnLimparSim").addEventListener("click", psLimpar);
+  psEl("psQtd").addEventListener("change", (e) => { PS.qtd = Number(e.target.value) || 1; psSomarRendas(); psDesenhar(); });
+  // Renda/nascimento digitados na tabela: atualiza a pactuação sem redesenhar (não perde o cursor).
+  function psSomarRendas() {
+    if (PS.avaliacao || PS.qtd < 2 || PS.manual.psRenda) return;
+    const total = PS.digitado.slice(0, PS.qtd).reduce((s, d) => s + (d.renda || 0), 0);
+    psEl("psRenda").value = total ? valorLeitura(Math.round(total * 100) / 100) : "";
+    psRegrasCidade(false);
+  }
+  psEl("psParticipantes").addEventListener("input", (e) => {
+    const el = e.target.closest(".ps-in");
+    if (!el) return;
+    const i = Number(el.dataset.i);
+    if (el.dataset.campo === "nasc") {
+      const d = el.value.replace(/\D/g, "").slice(0, 8);
+      const f = d.length > 4 ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}` : (d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d);
+      if (f !== el.value) el.value = f;
+      PS.digitado[i].nasc = f;
+    } else {
+      PS.digitado[i].renda = lerValorBR(el.value);
+      psSomarRendas();
+    }
+    psParticipantes().forEach((p, k) => { const sp = psEl("psPct" + k); if (sp) sp.textContent = p.pactuacao; });
+    psAtualizarBotao();
+  });
   psEl("btnPreencherSim").addEventListener("click", psPreencher);
   psEl("tabPreencherSim").addEventListener("click", () => mostrarAba("preencherSim"));
 
