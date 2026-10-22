@@ -2229,6 +2229,15 @@ def _pdf_so_uma_imagem(page):
         return False
 
 
+def _fundo_branco(img, minimo=0.6):
+    """Imagem de documento impresso/digital (fundo quase todo branco), não foto."""
+    try:
+        cinza = np.asarray(img.convert("L").resize((300, max(1, int(300 * img.height / img.width)))))
+        return float((cinza > 225).mean()) >= minimo
+    except Exception:
+        return False
+
+
 def _cortar_margem_branca(img, limiar=235, folga=0.015):
     """Recorta a área com conteúdo (sem as margens brancas da folha)."""
     try:
@@ -2280,13 +2289,16 @@ def _preparar_imagem(data: bytes, filename: str, mimetype: str):
             for i in range(min(2, len(doc))):
                 img, pode_recortar = _pdf_pagina_para_imagem(doc[i])
                 lado = False
-                if not pode_recortar and len(doc) == 1 and _pdf_so_uma_imagem(doc[i]):
-                    # PDF "impresso" com o documento como 1 imagem no meio da
-                    # folha (ex.: CNH nova em pé): tira a margem branca e, se
-                    # ficou alta, manda em 2 metades (letras maiores).
-                    img = _cortar_margem_branca(img)
-                    if img.height > 1.3 * img.width:
-                        dividir = True
+                if len(doc) == 1 and _pdf_so_uma_imagem(doc[i]):
+                    # PDF "impresso" com o documento como 1 imagem branca no
+                    # meio da folha (ex.: CNH nova em pé). Não é foto: o
+                    # recorte de foto pegaria só um quadro (a tabela de
+                    # categorias). Tira a margem branca e, se ficou alta,
+                    # manda em 2 metades (letras maiores).
+                    cortada = _cortar_margem_branca(img)
+                    if cortada.size != img.size and _fundo_branco(cortada) and cortada.height > 1.3 * cortada.width:
+                        img, pode_recortar, dividir = cortada, False, True
+                        print(f"[LER] documento impresso em pé (1 imagem na folha): {img.size}", flush=True)
                 if pode_recortar:
                     img, info = _recortar_documento(img)
                     recortado = info.startswith("recortado")
