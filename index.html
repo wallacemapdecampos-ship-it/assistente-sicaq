@@ -1200,9 +1200,12 @@
     document.getElementById("tabUso").hidden = !(SESSAO && SESSAO.admin);
     // Simulação (nosso simulador): só para a empresa MAP DE CAMPOS. Preencher simulação: todos.
     const ehMap = !!(SESSAO && (SESSAO.dono || String(SESSAO.empresa || "").trim().toUpperCase() === "MAP DE CAMPOS"));
-    document.getElementById("tabSimulacao").hidden = !ehMap;
-    document.getElementById("tabPreencherSim").hidden = !SESSAO;
-    if (!ehMap && document.getElementById("painelSimulacao").classList.contains("active")) mostrarAba("identificacao");
+    // Por enquanto as duas abas de simulação só aparecem para ADM e dono.
+    const admOuDono = !!(SESSAO && (SESSAO.admin || SESSAO.dono));
+    document.getElementById("tabSimulacao").hidden = !(ehMap && admOuDono);
+    document.getElementById("tabPreencherSim").hidden = !admOuDono;
+    if ((!(ehMap && admOuDono) && document.getElementById("painelSimulacao").classList.contains("active")) ||
+        (!admOuDono && document.getElementById("painelPreencherSim").classList.contains("active"))) mostrarAba("identificacao");
     // Analista só cria a senha no 1º acesso; trocar depois é com o ADM.
     document.getElementById("btnTrocarSenha").hidden = !(SESSAO && SESSAO.admin);
   }
