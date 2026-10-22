@@ -3862,6 +3862,15 @@
     const nasc = (tudo.match(/DATA DE NASCIMENTO:?\s+(\d{2}\/\d{2}\/\d{4})/) || [])[1] || "";
     const nome = psDepois(linhas, "Nome Completo do Cliente");
     if (!cpf || !nasc) throw new Error("Não achei o CPF e a data de nascimento no cadastro.");
+    // Cidade do imóvel: a da AGÊNCIA DE RELACIONAMENTO (rodapé do cadastro).
+    const ia = tudo.indexOf("AGENCIA DE RELACIONAMENTO");
+    if (ia >= 0) {
+      const ag = tudo.slice(ia, ia + 600);
+      const mun = (ag.match(/MUNICIPIO:?[ \t]+([A-Z' ]+?)[ \t]*(?:\n|UF\b|CODIGO|$)/) || [])[1];
+      const uf = (ag.match(/\bUF:?[ \t]+([A-Z]{2})\b/) || [])[1] ||
+        (ag.match(/CODIGO E NOME DAS AGENCIAS:?.*?,\s*([A-Z]{2})\b/) || [])[1];
+      if (mun && mun.trim()) return { cpf, nascimento: nasc, nome, municipio: mun.trim(), uf: uf || "" };
+    }
     const end = tudo.slice(Math.max(0, tudo.indexOf("ENDERECO")));
     const mm = end.match(/MUNICIPIO:?\s+([A-Z' ]+?)\s+UF:?\s+([A-Z]{2})\b/) || tudo.match(/MUNICIPIO:?\s+([A-Z' ]+?)\s+UF:?\s+([A-Z]{2})\b/);
     return { cpf, nascimento: nasc, nome, municipio: mm ? mm[1].trim() : "", uf: mm ? mm[2] : "" };
@@ -4079,9 +4088,8 @@
     psDesenhar();
   }
 
-  function psUltimaSimulacao() {
-    try { return JSON.parse(localStorage.getItem("scp-ultima") || "null"); } catch (_) { return null; }
-  }
+  // Não usa mais a última simulação salva: cidade e valor vêm sempre do Cadastro anexado.
+  function psUltimaSimulacao() { return null; }
 
   function psAbrir() {
     psCarregarPdfjs().catch(() => {});       // já deixa o leitor pronto
@@ -4097,8 +4105,7 @@
       box.hidden = false;
     } else {
       box.className = "cep-status warn";
-      box.innerHTML = "<b>Sem simulação recente:</b> a cidade vem do Cadastro e o valor do imóvel da tabela da cidade (em amarelo). " +
-        (document.getElementById("tabSimulacao").hidden ? "Pode trocar à mão." : "Se fizer a simulação na aba Simulação, uso a cidade e o valor de lá.");
+      box.innerHTML = "A cidade vem do <b>Cadastro</b> (Agência de relacionamento) e o valor do imóvel da tabela da cidade (em amarelo). Pode trocar à mão.";
       box.hidden = false;
       psPadroes();
     }
