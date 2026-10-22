@@ -1198,12 +1198,11 @@
     document.getElementById("nomeUsuario").textContent = SESSAO ? SESSAO.nome : "";
     document.getElementById("contaUsuario").hidden = !SESSAO;
     document.getElementById("tabUso").hidden = !(SESSAO && SESSAO.admin);
-    // Simulação e Preencher simulação: só para a empresa MAP DE CAMPOS.
+    // Simulação (nosso simulador): só para a empresa MAP DE CAMPOS. Preencher simulação: todos.
     const ehMap = !!(SESSAO && (SESSAO.dono || String(SESSAO.empresa || "").trim().toUpperCase() === "MAP DE CAMPOS"));
     document.getElementById("tabSimulacao").hidden = !ehMap;
-    document.getElementById("tabPreencherSim").hidden = !ehMap;
-    if (!ehMap && (document.getElementById("painelSimulacao").classList.contains("active") ||
-                   document.getElementById("painelPreencherSim").classList.contains("active"))) mostrarAba("identificacao");
+    document.getElementById("tabPreencherSim").hidden = !SESSAO;
+    if (!ehMap && document.getElementById("painelSimulacao").classList.contains("active")) mostrarAba("identificacao");
     // Analista só cria a senha no 1º acesso; trocar depois é com o ADM.
     document.getElementById("btnTrocarSenha").hidden = !(SESSAO && SESSAO.admin);
   }
@@ -3796,20 +3795,24 @@
     const cad = PS.cad.find(c => c && c.municipio);
     if (!PS.manual.psCidade && cad) psEl("psCidade").value = cad.municipio + " - " + cad.uf;
     const cid = psCidadeAtual();
-    if (!PS.manual.psValor && cid && cid !== "RIBEIRAO PRETO - SP") {
+    if (!PS.manual.psValor && cid && !(cid === "RIBEIRAO PRETO - SP" && psEhMap())) {
       const v = PS_VALOR_CIDADE[cid];
       psEl("psValor").value = v ? valorLeitura(v) : psEl("psValor").value;
       psEl("psValor").classList.toggle("destaque", !!v);
     }
   }
 
+  // Regras de Ribeirão Preto e Avaré (empreendimento, extra na entrada, valor pela renda): só para a MAP DE CAMPOS.
+  function psEhMap() {
+    return !!(SESSAO && (SESSAO.dono || String(SESSAO.empresa || "").trim().toUpperCase() === "MAP DE CAMPOS"));
+  }
   function psRegrasCidade(forcar) {
     const cid = psCidadeAtual();
-    const ribeirao = cid === "RIBEIRAO PRETO - SP";
+    const ribeirao = cid === "RIBEIRAO PRETO - SP" && psEhMap();
     psEl("psEmpBox").hidden = !ribeirao;
     if (!PS.manual.psObra || forcar) psEl("psObra").value = cid ? (PS_PACAEMBU.includes(cid) ? "24" : "36") : "";
     if (!PS.manual.psExtra || forcar) {
-      const extra = (PS_EXTRA_CIDADE[cid] || 0) + (ribeirao ? (PS_EXTRA_EMP[psEl("psEmp").value] || 0) : 0);
+      const extra = psEhMap() ? (PS_EXTRA_CIDADE[cid] || 0) + (ribeirao ? (PS_EXTRA_EMP[psEl("psEmp").value] || 0) : 0) : 0;
       psEl("psExtra").value = extra ? valorLeitura(extra) : "";
     }
     // Ribeirão Preto: valor do imóvel pela renda (até 5.000: 264 mil; 5.000,01 a 9.600: 320 mil).
@@ -3852,7 +3855,7 @@
     if (!(lerValorBR(psEl("psPrestacao").value) > 0)) f.push("prestação máxima");
     if (!(lerValorBR(psEl("psRenda").value) > 0)) f.push("renda");
     if (!/^\d{1,2}$/.test(psEl("psObra").value.trim())) f.push("prazo de obra");
-    if (psCidadeAtual() === "RIBEIRAO PRETO - SP" && !psEl("psEmp").value) f.push("empreendimento (Bela Vista ou Solare)");
+    if (psCidadeAtual() === "RIBEIRAO PRETO - SP" && psEhMap() && !psEl("psEmp").value) f.push("empreendimento (Bela Vista ou Solare)");
     if (!psEl("psEnq").value) f.push("enquadramento");
     return f;
   }
@@ -3937,7 +3940,7 @@
     } else {
       box.className = "cep-status warn";
       box.innerHTML = "<b>Sem simulação recente:</b> a cidade vem do Cadastro e o valor do imóvel da tabela da cidade (em amarelo). " +
-        "Se fizer a simulação na aba Simulação, uso a cidade e o valor de lá.";
+        (document.getElementById("tabSimulacao").hidden ? "Pode trocar à mão." : "Se fizer a simulação na aba Simulação, uso a cidade e o valor de lá.");
       box.hidden = false;
       psPadroes();
     }
@@ -4049,7 +4052,7 @@
   function psValorPelaCidade() {
     if (PS.manual.psValor || psSimRecente()) return;
     const cid = psCidadeAtual();
-    if (cid === "RIBEIRAO PRETO - SP") return;      // vai pela renda (psRegrasCidade)
+    if (cid === "RIBEIRAO PRETO - SP" && psEhMap()) return;      // vai pela renda (psRegrasCidade)
     const v = PS_VALOR_CIDADE[cid];
     psEl("psValor").value = v ? valorLeitura(v) : "";
     psEl("psValor").classList.toggle("destaque", !!v);
