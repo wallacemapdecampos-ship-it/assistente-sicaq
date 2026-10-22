@@ -126,6 +126,19 @@
     #mensagem, #msgPis, #msgCertidao, #mensagemHolerite, #mensagemEndereco { grid-column: 2 / -1; font-size: 12.5px; font-weight: 700; }
     #btnForaPrazo { grid-column: 2 / -1; justify-self: start; width: auto; padding: 0 18px; }
     #mensagem.muted, #msgPis.muted, #msgCertidao.muted, #mensagemHolerite.muted, #mensagemEndereco.muted { font-weight: 400; }
+
+    /* ---------- Preencher simulação ---------- */
+    .ps-msg { grid-column: 2 / -1; font-size: 12.5px; font-weight: 700; }
+    .ps-msg.muted { font-weight: 400; }
+    #painelPreencherSim .campo { --span: 3; }
+    .ps-checks { display: flex; flex-wrap: wrap; gap: 10px 28px; margin: 14px 0 6px; font-size: 14px; }
+    .ps-checks label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .ps-checks input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; }
+    .ps-tabela { width: 100%; border-collapse: collapse; margin: 10px 0 4px; font-size: 13.5px; }
+    .ps-tabela th { text-align: left; font-size: 12px; color: var(--tinta-2); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--linha); }
+    .ps-tabela td { padding: 7px 8px; border-bottom: 1px solid #eef1f3; }
+    .ps-tabela td.falta { color: #a3341f; font-weight: 700; }
+    @media (max-width: 760px) { #painelPreencherSim .campo { --span: 6; } .ps-tabela { font-size: 12.5px; } }
     [hidden] { display: none !important; }
     .vazio {
       margin: 0; padding: 22px 16px; text-align: center;
@@ -405,6 +418,7 @@
     <button id="tabEndereco" class="tab" type="button">Endereço</button>
     <button id="tabHolerite" class="tab" type="button">Renda</button>
     <button id="tabSimulacao" class="tab" type="button">Simulação</button>
+    <button id="tabPreencherSim" class="tab" type="button">Preencher simulação</button>
     <button id="tabUso" class="tab" type="button" hidden>Uso</button>
   </nav>
   <div class="estado-sistema">
@@ -857,6 +871,77 @@
 
   <section id="painelSimulacao" class="painel">
     <iframe id="frameSimulacao" title="Simulador de financiamento" loading="lazy"></iframe>
+  </section>
+
+
+  <section id="painelPreencherSim" class="painel">
+    <div class="card">
+      <div class="card-topo"><h2>Documentos da simulação</h2><span class="dica" style="margin-left:auto">Lidos na hora, sem IA</span></div>
+      <div class="linha-arquivo">
+        <label for="psAvaliacao">Avaliação de risco<small>PDF do sistema</small></label>
+        <label class="arquivo" data-arquivo="psAvaliacao"><input type="file" class="arquivo-input" id="psAvaliacao" accept=".pdf"><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
+        <span class="dica">Prestação liberada, origem, produto, sistema e renda de cada proponente.</span>
+        <span></span>
+        <div id="psMsgAvaliacao" class="msg muted ps-msg">Anexe a Avaliação de risco.</div>
+      </div>
+      <div class="linha-arquivo">
+        <label for="psCad1">Cadastro<small>1º proponente</small></label>
+        <label class="arquivo" data-arquivo="psCad1"><input type="file" class="arquivo-input" id="psCad1" accept=".pdf"><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
+        <span class="dica">Data de nascimento do proponente.</span>
+        <span></span>
+        <div id="psMsgCad1" class="msg muted ps-msg">Anexe o Cadastro do 1º proponente.</div>
+      </div>
+      <div class="linha-arquivo">
+        <label for="psCad2">Cadastro<small>2º proponente</small></label>
+        <label class="arquivo" data-arquivo="psCad2"><input type="file" class="arquivo-input" id="psCad2" accept=".pdf"><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
+        <span class="dica">Só quando a avaliação tiver 2 proponentes.</span>
+        <span></span>
+        <div id="psMsgCad2" class="msg muted ps-msg">Opcional.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-topo">
+        <h2>Simulação na Caixa</h2>
+        <span class="legenda"><i></i>Amarelo: confira</span>
+      </div>
+      <div id="psUltima" class="cep-status" hidden></div>
+      <div class="grid">
+        <div class="campo"><label for="psOrigem">Origem de recursos</label>
+          <select id="psOrigem"><option value="FGTS">FGTS</option><option value="SBPE">SBPE</option></select></div>
+        <div class="campo"><label for="psEnq">Enquadramento</label>
+          <select id="psEnq"><option value="3280">3280 · Com financ. PJ</option><option value="3302">3302 · Associativo</option></select></div>
+        <div class="campo"><label for="psSistema">Sistema de amortização</label>
+          <select id="psSistema"><option value="PRICE">PRICE</option><option value="SAC">SAC</option></select></div>
+        <div class="campo"><label for="psCidade">Cidade do imóvel <span class="opcional">da sua última simulação</span></label>
+          <input id="psCidade" type="text" placeholder="Ex.: Sorocaba - SP"></div>
+        <div class="campo"><label for="psValor">Valor do imóvel</label>
+          <input id="psValor" type="text" inputmode="decimal" placeholder="0,00"></div>
+        <div class="campo" id="psEmpBox" hidden><label for="psEmp">Empreendimento <span class="opcional">Ribeirão Preto</span></label>
+          <select id="psEmp"><option value="">Escolha…</option><option value="BELA VISTA">Bela Vista (+R$ 500 na entrada)</option><option value="SOLARE">Solare (+R$ 1.000 na entrada)</option></select></div>
+        <div class="campo"><label for="psPrestacao">Prestação máxima SIRIC <span class="opcional">liberada</span></label>
+          <input id="psPrestacao" type="text" inputmode="decimal" placeholder="0,00"></div>
+        <div class="campo"><label for="psRenda">Renda familiar bruta</label>
+          <input id="psRenda" type="text" inputmode="decimal" placeholder="0,00"></div>
+        <div class="campo"><label for="psObra">Prazo de obra <span class="opcional">meses</span></label>
+          <input id="psObra" type="text" inputmode="numeric"></div>
+        <div class="campo"><label for="psExtra">Somar na entrada</label>
+          <input id="psExtra" type="text" inputmode="decimal" placeholder="0,00"></div>
+      </div>
+      <div class="ps-checks">
+        <label><input type="checkbox" id="psRedutor"> Possui 3 anos de FGTS (redutor)</label>
+        <label><input type="checkbox" id="psDependente"> Possui dependentes</label>
+      </div>
+      <table class="ps-tabela" id="psTabela">
+        <thead><tr><th>Proponente</th><th>CPF</th><th>Renda</th><th>% pactuação</th><th>Nascimento</th></tr></thead>
+        <tbody id="psParticipantes"><tr><td colspan="5" class="dica">Anexe a Avaliação de risco.</td></tr></tbody>
+      </table>
+      <div id="psResultado" class="cep-status" hidden></div>
+      <div class="acoes">
+        <span id="psMsg" class="dica">Abra o simulador da Caixa (Portal de Empreendimentos) já logado. O preenchimento vai até o detalhamento.</span>
+        <button id="btnPreencherSim" type="button" disabled>Preencher simulação na Caixa</button>
+      </div>
+    </div>
   </section>
 
   <section id="painelUso" class="painel">
@@ -2371,13 +2456,15 @@
     const abas = { identificacao: ["tabIdentificacao", "painelIdentificacao"],
                    endereco: ["tabEndereco", "painelEndereco"],
                    holerite: ["tabHolerite", "painelHolerite"], simulacao: ["tabSimulacao", "painelSimulacao"],
+                   preencherSim: ["tabPreencherSim", "painelPreencherSim"],
                    uso: ["tabUso", "painelUso"] };
     Object.entries(abas).forEach(([chave, [tab, painel]]) => {
       document.getElementById(tab).classList.toggle("active", chave === nome);
       document.getElementById(painel).classList.toggle("active", chave === nome);
     });
     // A faixa do cliente só faz sentido no atendimento (não na aba Uso).
-    document.getElementById("faixaCliente").hidden = nome === "uso" || nome === "simulacao";
+    document.getElementById("faixaCliente").hidden = nome === "uso" || nome === "simulacao" || nome === "preencherSim";
+    if (nome === "preencherSim") psAbrir();
     // O simulador só carrega na primeira vez que a aba é aberta.
     if (nome === "simulacao") {
       const fr = document.getElementById("frameSimulacao");
@@ -3527,6 +3614,374 @@
       if (fr && fr.contentWindow) { e.preventDefault(); fr.contentWindow.focus(); fr.contentWindow.print(); }
     }
   }, true);
+  // ---------- Preencher simulação (Avaliação de risco + Cadastros -> simulador da Caixa) ----------
+  // Os PDFs vêm do sistema da Caixa com texto: lidos aqui no navegador (pdf.js), sem IA e sem servidor.
+  const PS_PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+  const PS_PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+  // Pacaembu: obra de 24 meses (as demais, 36). Extra na entrada pela tela Alterar Prazo/Entrada.
+  const PS_PACAEMBU = ["ITAPETININGA - SP", "TATUI - SP", "LEME - SP", "AVARE - SP", "RIBEIRAO PRETO - SP", "CAMPO GRANDE - MS", "CATANDUVA - SP"];
+  const PS_EXTRA_CIDADE = { "AVARE - SP": 300 };
+  const PS_EXTRA_EMP = { "BELA VISTA": 500, "SOLARE": 1000 };
+  let psPdfjs = null;
+  const PS = { avaliacao: null, cad: [null, null], manual: {} };
+
+  const psEl = (id) => document.getElementById(id);
+  const psNorm = (t) => semAcentos(String(t || "")).toUpperCase().replace(/\s*-\s*/g, " - ").replace(/\s+/g, " ").trim();
+  function psMsg(id, texto, classe = "muted") { const el = psEl(id); el.textContent = texto; el.className = "msg ps-msg " + classe; }
+
+  async function psCarregarPdfjs() {
+    if (psPdfjs) return psPdfjs;
+    psPdfjs = await import(PS_PDFJS);
+    psPdfjs.GlobalWorkerOptions.workerSrc = PS_PDFJS_WORKER;
+    return psPdfjs;
+  }
+
+  // Linhas do PDF montadas pela posição dos textos (igual ao que se vê na tela).
+  async function psLinhasPdf(arquivo) {
+    const lib = await psCarregarPdfjs();
+    const doc = await lib.getDocument({ data: new Uint8Array(await arquivo.arrayBuffer()) }).promise;
+    const linhas = [];
+    for (let n = 1; n <= Math.min(doc.numPages, 6); n++) {
+      const pag = await doc.getPage(n);
+      const tc = await pag.getTextContent();
+      const itens = tc.items.filter(i => String(i.str || "").trim())
+        .map(i => ({ t: String(i.str).trim(), x: i.transform[4], y: i.transform[5] }))
+        .sort((a, b) => b.y - a.y || a.x - b.x);
+      const grupos = [];
+      for (const it of itens) {
+        const g = grupos.find(g => Math.abs(g.y - it.y) <= 3);
+        if (g) g.itens.push(it); else grupos.push({ y: it.y, itens: [it] });
+      }
+      grupos.sort((a, b) => b.y - a.y).forEach(g => linhas.push(g.itens.sort((a, b) => a.x - b.x).map(i => i.t).join("  ")));
+    }
+    try { doc.destroy(); } catch (_) {}
+    return linhas;
+  }
+
+  function psDepois(linhas, rotulo) {
+    const r = new RegExp("^\\s*" + rotulo + "\\s*:?\\s*(.*)$", "i");
+    for (const l of linhas) { const m = semAcentos(l).match(r); if (m && m[1].trim()) return l.slice(l.length - m[1].length).trim(); }
+    return "";
+  }
+  const PS_VALOR = /^(-|\d{1,3}(?:\.\d{3})*,\d{2})$/;
+  // Valor de um rótulo: na mesma linha, ou na linha logo acima/abaixo
+  // (no PDF da Caixa o valor às vezes fica um pouco acima do rótulo).
+  function psCampo(linhas, rotulo, formato) {
+    const r = new RegExp("^" + rotulo + "\\s*:?\\s*(.*)$");
+    for (let i = 0; i < linhas.length; i++) {
+      const u = semAcentos(linhas[i]).toUpperCase().trim();
+      const m = u.match(r);
+      if (!m) continue;
+      const resto = m[1].trim();
+      if (resto && formato.test(resto)) return resto;
+      for (const j of [i - 1, i + 1]) {
+        const v = semAcentos(linhas[j] || "").toUpperCase().trim();
+        if (v && formato.test(v)) return v;
+      }
+    }
+    return "";
+  }
+
+  function psLerAvaliacao(linhas) {
+    const tudo = semAcentos(linhas.join("\n")).toUpperCase();
+    if (!/AVALIACAO DE RISCO/.test(tudo)) throw new Error("Este PDF não parece a Avaliação de risco.");
+    const origem = psCampo(linhas, "ORIGEM DE RECURSO", /^(FGTS|SBPE)$/) || (/ORIGEM DE RECURSO\s+SBPE/.test(tudo) ? "SBPE" : "FGTS");
+    const enq = /ASSOCIATIVO/.test(tudo) ? "3302" : (/UNIDADE VINCULADA/.test(tudo) ? "3280" : "");
+    const prest = psCampo(linhas, "PRESTACAO", /^\d{1,3}(\.\d{3})*,\d{2}$/);
+    const sistema = psCampo(linhas, "SISTEMA DE AMORTIZACAO", /^(PRICE|SAC)$/) || "PRICE";
+    const cpfCliente = soDigitos((tudo.match(/CPF CLIENTE\s+([\d.\-]+)/) || [])[1]);
+    // Rendas: linhas que começam com o CPF (proponente), na seção RENDA.
+    const rendas = {};
+    let naRenda = false;
+    for (const l of linhas) {
+      const u = semAcentos(l).toUpperCase().trim();
+      if (/^RENDA$/.test(u)) { naRenda = true; continue; }
+      if (/^OBSERVACAO/.test(u)) naRenda = false;
+      const m = l.trim().match(/^(\d{3}\.\d{3}\.\d{3}-\d{2})\s+(.*)$/);
+      if (!m || !naRenda) continue;
+      const vals = m[2].split(/\s+/).filter(t => PS_VALOR.test(t));
+      const bruta = vals[0] && vals[0] !== "-" ? lerValorBR(vals[0]) : null;
+      const liquida = vals[1] && vals[1] !== "-" ? lerValorBR(vals[1]) : null;
+      const valor = bruta != null ? bruta : (liquida || 0);   // bruta; informal só tem a líquida
+      const cpf = soDigitos(m[1]);
+      rendas[cpf] = Math.round(((rendas[cpf] || 0) + valor) * 100) / 100;
+    }
+    const cpfs = Object.keys(rendas);
+    if (!cpfs.length) throw new Error("Não achei a renda dos proponentes na avaliação.");
+    // 1º proponente = o cliente da avaliação.
+    cpfs.sort((a, b) => (b === cpfCliente) - (a === cpfCliente));
+    return {
+      origem, enq, sistema, prestacao: prest ? lerValorBR(prest) : null, cpfCliente,
+      nome: psDepois(linhas, "Cliente"),
+      participantes: cpfs.map(cpf => ({ cpf, renda: rendas[cpf] }))
+    };
+  }
+
+  function psLerCadastro(linhas) {
+    const tudo = semAcentos(linhas.join("\n")).toUpperCase();
+    if (!/CADASTRO DE CLIENTES/.test(tudo)) throw new Error("Este PDF não parece o Cadastro de Clientes.");
+    const cpf = soDigitos((tudo.match(/CPF DO CLIENTE:?\s+([\d.\-]+)/) || [])[1]);
+    const nasc = (tudo.match(/DATA DE NASCIMENTO:?\s+(\d{2}\/\d{2}\/\d{4})/) || [])[1] || "";
+    const nome = psDepois(linhas, "Nome Completo do Cliente");
+    if (!cpf || !nasc) throw new Error("Não achei o CPF e a data de nascimento no cadastro.");
+    return { cpf, nascimento: nasc, nome };
+  }
+
+  // Pactuação: regra de três pela renda; a maior renda fica com o valor cortado em
+  // 2 casas (sem arredondar) e o outro com o resto até 100.
+  function psPactuacao(parts) {
+    const total = parts.reduce((s, p) => s + p.renda, 0);
+    if (parts.length === 1 || !total) return parts.map(() => "100");
+    const idxMaior = parts.reduce((m, p, i) => (p.renda > parts[m].renda ? i : m), 0);
+    const cortar = (v) => Math.floor(v * 100 + 1e-7) / 100;
+    const pct = parts.map(p => cortar(p.renda * 100 / total));
+    const resto = idxMaior === parts.length - 1 ? 0 : parts.length - 1;
+    const somaOutros = pct.reduce((s, v, i) => (i === resto ? s : s + v), 0);
+    pct[resto] = Math.round((100 - somaOutros) * 100) / 100;
+    return pct.map(v => (v === 100 ? "100" : v.toFixed(2).replace(".", ",")));
+  }
+
+  function psParticipantes() {
+    const av = PS.avaliacao;
+    if (!av) return [];
+    const parts = av.participantes.map(p => ({ ...p }));
+    const pct = psPactuacao(parts);
+    parts.forEach((p, i) => {
+      p.pactuacao = pct[i];
+      const cad = PS.cad.find(c => c && c.cpf === p.cpf);
+      p.nascimento = cad ? cad.nascimento : "";
+      p.nome = cad ? cad.nome : (p.cpf === av.cpfCliente ? av.nome : "");
+    });
+    return parts;
+  }
+
+  function psCidadeAtual() { return psNorm(psEl("psCidade").value); }
+
+  function psRegrasCidade(forcar) {
+    const cid = psCidadeAtual();
+    const ribeirao = cid === "RIBEIRAO PRETO - SP";
+    psEl("psEmpBox").hidden = !ribeirao;
+    if (!PS.manual.psObra || forcar) psEl("psObra").value = cid ? (PS_PACAEMBU.includes(cid) ? "24" : "36") : "";
+    if (!PS.manual.psExtra || forcar) {
+      const extra = (PS_EXTRA_CIDADE[cid] || 0) + (ribeirao ? (PS_EXTRA_EMP[psEl("psEmp").value] || 0) : 0);
+      psEl("psExtra").value = extra ? valorLeitura(extra) : "";
+    }
+    // Ribeirão Preto: valor do imóvel pela renda (até 5.000: 264 mil; 5.000,01 a 9.600: 320 mil).
+    const renda = lerValorBR(psEl("psRenda").value) || 0;
+    if (ribeirao && renda && !PS.manual.psValor) {
+      const v = renda <= 5000 ? 264000 : (renda <= 9600 ? 320000 : null);
+      if (v) { psEl("psValor").value = valorLeitura(v); psEl("psValor").classList.add("destaque"); }
+    }
+  }
+
+  function psDesenhar() {
+    const parts = psParticipantes();
+    const corpo = psEl("psParticipantes");
+    // Renda da simulação diferente da avaliação: o valor do imóvel pode não ser o mesmo.
+    const u = psUltimaSimulacao(), box = psEl("psUltima");
+    const totalAv = parts.reduce((s, p) => s + p.renda, 0);
+    const avisoAntigo = box.querySelector(".ps-aviso-renda");
+    if (avisoAntigo) avisoAntigo.remove();
+    if (u && u.renda && totalAv && Math.abs(u.renda - totalAv) > 1 && !box.hidden) {
+      box.className = "cep-status warn";
+      box.insertAdjacentHTML("beforeend", `<div class="ps-aviso-renda">A renda da simulação (R$ ${valorLeitura(u.renda)}) é diferente da avaliação (R$ ${valorLeitura(totalAv)}): confira o valor do imóvel.</div>`);
+    }
+    if (!parts.length) {
+      corpo.innerHTML = `<tr><td colspan="5" class="dica">Anexe a Avaliação de risco.</td></tr>`;
+    } else {
+      corpo.innerHTML = parts.map((p, i) => `<tr><td>${i + 1}º ${escHtml(p.nome || "")}</td><td>${escHtml(formatarCpf(p.cpf))}</td>` +
+        `<td>R$ ${valorLeitura(p.renda)}</td><td>${escHtml(p.pactuacao)}%</td>` +
+        `<td class="${p.nascimento ? "" : "falta"}">${p.nascimento ? escHtml(p.nascimento) : `falta o Cadastro do ${i + 1}º`}</td></tr>`).join("");
+    }
+    psAtualizarBotao();
+  }
+
+  function psFaltas() {
+    const f = [];
+    const parts = psParticipantes();
+    if (!PS.avaliacao) f.push("Avaliação de risco");
+    parts.forEach((p, i) => { if (!p.nascimento) f.push(`Cadastro do ${i + 1}º proponente`); });
+    if (!/ - [A-Z]{2}$/.test(psCidadeAtual())) f.push("cidade (ex.: Sorocaba - SP)");
+    if (!(lerValorBR(psEl("psValor").value) > 0)) f.push("valor do imóvel");
+    if (!(lerValorBR(psEl("psPrestacao").value) > 0)) f.push("prestação máxima");
+    if (!(lerValorBR(psEl("psRenda").value) > 0)) f.push("renda");
+    if (!/^\d{1,2}$/.test(psEl("psObra").value.trim())) f.push("prazo de obra");
+    if (psCidadeAtual() === "RIBEIRAO PRETO - SP" && !psEl("psEmp").value) f.push("empreendimento (Bela Vista ou Solare)");
+    if (!psEl("psEnq").value) f.push("enquadramento");
+    return f;
+  }
+
+  let psAguardando = false, psEspera = null, psExtensaoSim = false;
+  function psAtualizarBotao() {
+    const b = psEl("btnPreencherSim");
+    const faltas = psFaltas();
+    b.disabled = psAguardando || !extensaoPronta || !psExtensaoSim || faltas.length > 0;
+    if (psAguardando) return;
+    const m = psEl("psMsg");
+    if (extensaoPronta && !psExtensaoSim) { m.textContent = "Atualize a extensão (versão 1.26 ou mais nova) para preencher o simulador da Caixa."; m.className = "erro"; }
+    else if (faltas.length && PS.avaliacao) { m.textContent = "Falta: " + faltas.join(", ") + "."; m.className = "dica"; }
+    else if (!faltas.length) { m.textContent = "Tudo pronto. Abra o simulador da Caixa (já logado) e clique em Preencher."; m.className = "dica"; }
+  }
+
+  async function psLerArquivo(input, qual) {
+    const arq = input.files && input.files[0];
+    const msgId = qual === "av" ? "psMsgAvaliacao" : (qual === 0 ? "psMsgCad1" : "psMsgCad2");
+    if (!arq) {
+      if (qual === "av") PS.avaliacao = null; else PS.cad[qual] = null;
+      psMsg(msgId, qual === "av" ? "Anexe a Avaliação de risco." : (qual === 0 ? "Anexe o Cadastro do 1º proponente." : "Opcional."));
+      psDesenhar();
+      return;
+    }
+    const t0 = performance.now();
+    psMsg(msgId, "Lendo…", "warn");
+    try {
+      const linhas = await psLinhasPdf(arq);
+      if (!linhas.length) throw new Error("Esse PDF não tem texto (é imagem). Use o PDF gerado pelo sistema.");
+      if (qual === "av") {
+        const av = psLerAvaliacao(linhas);
+        PS.avaliacao = av;
+        psEl("psOrigem").value = av.origem;
+        if (av.enq) psEl("psEnq").value = av.enq;
+        psEl("psSistema").value = av.sistema;
+        if (av.prestacao) psEl("psPrestacao").value = valorLeitura(av.prestacao);
+        const total = av.participantes.reduce((s, p) => s + p.renda, 0);
+        psEl("psRenda").value = valorLeitura(Math.round(total * 100) / 100);
+        ["psPrestacao", "psRenda"].forEach(id => psEl(id).classList.remove("destaque"));
+        const seg = ((performance.now() - t0) / 1000).toFixed(1).replace(".", ",");
+        psMsg(msgId, `Lida em ${seg} s: ${av.participantes.length} proponente(s), prestação R$ ${av.prestacao ? valorLeitura(av.prestacao) : "?"}, ` +
+          `${av.origem} · ${av.enq || "produto não reconhecido"} · ${av.sistema}.` + (av.enq ? "" : " Escolha o enquadramento."), av.enq ? "ok" : "warn");
+        psEl("psCad2").closest(".linha-arquivo").querySelector(".dica").textContent =
+          av.participantes.length > 1 ? "A avaliação tem 2 proponentes: anexe o cadastro do 2º." : "Só quando a avaliação tiver 2 proponentes.";
+        psRegrasCidade(false);
+      } else {
+        const cad = psLerCadastro(linhas);
+        const outro = PS.cad[qual === 0 ? 1 : 0];
+        if (outro && outro.cpf === cad.cpf) throw new Error("Esse cadastro é da mesma pessoa do outro campo.");
+        PS.cad[qual] = cad;
+        const naAv = !PS.avaliacao || PS.avaliacao.participantes.some(p => p.cpf === cad.cpf);
+        psMsg(msgId, `${cad.nome || "Cliente"} · CPF ${formatarCpf(cad.cpf)} · nascimento ${cad.nascimento}` +
+          (naAv ? "" : " · ATENÇÃO: esse CPF não está na Avaliação de risco."), naAv ? "ok" : "erro");
+      }
+    } catch (e) {
+      if (qual === "av") PS.avaliacao = null; else PS.cad[qual] = null;
+      psMsg(msgId, "Erro: " + (e && e.message ? e.message : e), "erro");
+    }
+    psDesenhar();
+  }
+
+  function psUltimaSimulacao() {
+    try { return JSON.parse(localStorage.getItem("scp-ultima") || "null"); } catch (_) { return null; }
+  }
+
+  function psAbrir() {
+    psCarregarPdfjs().catch(() => {});       // já deixa o leitor pronto
+    const u = psUltimaSimulacao();
+    const box = psEl("psUltima");
+    if (u && u.cidade && u.valor > 0) {
+      if (!PS.manual.psCidade) psEl("psCidade").value = u.cidade;
+      if (!PS.manual.psValor && psCidadeAtual() !== "RIBEIRAO PRETO - SP") psEl("psValor").value = valorLeitura(u.valor);
+      const min = Math.max(0, Math.round((Date.now() - (u.em || 0)) / 60000));
+      box.className = "cep-status ok";
+      box.innerHTML = `<b>Última simulação:</b> ${escHtml(u.cidade)} · imóvel R$ ${valorLeitura(u.valor)}` +
+        (u.renda ? ` · renda R$ ${valorLeitura(u.renda)}` : "") + ` (${min < 60 ? "há " + min + " min" : "há mais de 1 hora"}). Cidade e valor vieram dela.`;
+      box.hidden = false;
+    } else {
+      box.className = "cep-status warn";
+      box.innerHTML = "<b>Sem simulação:</b> faça a simulação na aba Simulação (cidade e valor do imóvel vêm de lá) ou digite aqui.";
+      box.hidden = false;
+    }
+    psRegrasCidade(false);
+    psAtualizarBotao();
+  }
+
+  function psMontarPayload() {
+    return {
+      origem: psEl("psOrigem").value,
+      enquadramento: psEl("psEnq").value,
+      sistema: psEl("psSistema").value,
+      cidade: psEl("psCidade").value.trim().replace(/\s*-\s*/g, " - "),
+      valor_imovel: lerValorBR(psEl("psValor").value),
+      prestacao: lerValorBR(psEl("psPrestacao").value),
+      renda: lerValorBR(psEl("psRenda").value),
+      participantes: psParticipantes().map(p => ({ pactuacao: p.pactuacao, nascimento: p.nascimento })),
+      redutor: psEl("psRedutor").checked,
+      dependente: psEl("psDependente").checked,
+      prazo_obra: Number(psEl("psObra").value.trim()),
+      entrada_extra: lerValorBR(psEl("psExtra").value) || 0
+    };
+  }
+
+  function psTerminar() {
+    psAguardando = false;
+    clearTimeout(psEspera);
+    psEl("btnPreencherSim").textContent = "Preencher simulação na Caixa";
+    psAtualizarBotao();
+  }
+
+  function psPreencher() {
+    const faltas = psFaltas();
+    if (faltas.length) { psEl("psMsg").textContent = "Falta: " + faltas.join(", ") + "."; psEl("psMsg").className = "erro"; return; }
+    psAguardando = true;
+    psEl("psResultado").hidden = true;
+    psEl("btnPreencherSim").textContent = "Preenchendo…";
+    psAtualizarBotao();
+    psEl("psMsg").textContent = "A extensão está preenchendo o simulador da Caixa, tela por tela. Não mexa na aba da Caixa até terminar.";
+    psEl("psMsg").className = "warn";
+    window.postMessage({ source: "ASSISTENTE_SICAQ_SITE", type: "FILL_SIMULACAO", id: `sim-${Date.now()}`, payload: psMontarPayload() }, window.location.origin);
+    clearTimeout(psEspera);
+    psEspera = setTimeout(() => {
+      if (!psAguardando) return;
+      psTerminar();
+      psEl("psMsg").textContent = "A Caixa não respondeu a tempo. Confira se o simulador está aberto e logado; se a sessão caiu, entre de novo e clique outra vez.";
+      psEl("psMsg").className = "erro";
+    }, 150000);
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window || event.origin !== window.location.origin) return;
+    const msg = event.data || {};
+    if (msg.source !== "ASSISTENTE_SICAQ_EXTENSION") return;
+    if (msg.type === "EXTENSION_READY") { psExtensaoSim = !!msg.simulador; psAtualizarBotao(); return; }
+    if (msg.type === "SIM_ACCEPTED") {
+      if (!msg.ok) { psTerminar(); psEl("psMsg").textContent = "A extensão não aceitou: " + (msg.error || "erro") + "."; psEl("psMsg").className = "erro"; }
+      else if (msg.aba === "nova") { psEl("psMsg").textContent = "Abri o simulador da Caixa numa aba nova. Se pedir login, entre e clique em Preencher de novo."; }
+      return;
+    }
+    if (msg.type === "SIM_RESULT") {
+      const r = msg.result || {};
+      psTerminar();
+      const box = psEl("psResultado");
+      if (!r.ok) {
+        psEl("psMsg").textContent = "Parou: " + (r.erro || "erro desconhecido");
+        psEl("psMsg").className = "erro";
+        return;
+      }
+      const v = (n) => (n == null ? "—" : "R$ " + valorLeitura(n));
+      box.className = "cep-status ok";
+      box.innerHTML = `<b>Simulação preenchida na Caixa:</b> entrada ${v(r.entrada)}` +
+        (r.entrada_extra ? ` (era ${v(r.entrada_original)} + ${v(r.entrada_extra)})` : "") +
+        ` · desconto ${v(r.desconto)} · financiamento ${v(r.financiamento)} · 1ª prestação ${v(r.prestacao)}` +
+        (r.juros ? ` · juros ${escHtml(r.juros)}` : "") + ".";
+      box.hidden = false;
+      psEl("psMsg").textContent = "Pronto. Confira o detalhamento na Caixa.";
+      psEl("psMsg").className = "ok";
+    }
+  });
+
+  window.addEventListener("storage", (e) => { if (e.key === "scp-ultima" && psEl("painelPreencherSim").classList.contains("active")) psAbrir(); });
+  psEl("psAvaliacao").addEventListener("change", (e) => psLerArquivo(e.target, "av"));
+  psEl("psCad1").addEventListener("change", (e) => psLerArquivo(e.target, 0));
+  psEl("psCad2").addEventListener("change", (e) => psLerArquivo(e.target, 1));
+  ["psCidade", "psValor", "psPrestacao", "psRenda", "psObra", "psExtra"].forEach(id => psEl(id).addEventListener("input", (e) => {
+    PS.manual[id] = true;
+    e.target.classList.remove("destaque");
+    if (id === "psCidade" || id === "psRenda") psRegrasCidade(false);
+    psAtualizarBotao();
+  }));
+  ["psEmp", "psOrigem", "psEnq", "psSistema"].forEach(id => psEl(id).addEventListener("change", () => { if (id === "psEmp") psRegrasCidade(false); psAtualizarBotao(); }));
+  psEl("btnPreencherSim").addEventListener("click", psPreencher);
+  psEl("tabPreencherSim").addEventListener("click", () => mostrarAba("preencherSim"));
+
   document.getElementById("tabUso").addEventListener("click", () => mostrarAba("uso"));
   document.getElementById("btnAtualizarUso").addEventListener("click", carregarUso);
   setInterval(() => {
