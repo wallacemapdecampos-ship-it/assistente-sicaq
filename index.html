@@ -876,7 +876,8 @@
 
   <section id="painelPreencherSim" class="painel">
     <div class="card">
-      <div class="card-topo"><h2>Documentos da simulação</h2><span class="dica" style="margin-left:auto">Lidos na hora, sem IA</span></div>
+      <div class="card-topo"><h2>Documentos da simulação</h2><span class="dica" style="margin-left:auto">Lidos na hora, sem IA</span>
+        <button id="btnLimparSim" type="button" class="secondary" style="margin-left:14px">Limpar tudo</button></div>
       <div class="linha-arquivo">
         <label for="psAvaliacao">Avaliação de risco<small>PDF do sistema</small></label>
         <label class="arquivo" data-arquivo="psAvaliacao"><input type="file" class="arquivo-input" id="psAvaliacao" accept=".pdf"><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
@@ -4025,6 +4026,24 @@
     const f = psCidadeAtual();
     if (f && f !== psNorm(psEl("psCidade").value)) { psEl("psCidade").value = f; psRegrasCidade(false); psAtualizarBotao(); }
   });
+  // Novo cliente: apaga o que foi lido e o que foi digitado (nada de dado do anterior).
+  function psLimpar() {
+    if (psAguardando) return;
+    PS.avaliacao = null; PS.cad = [null, null]; PS.manual = {};
+    ["psAvaliacao", "psCad1", "psCad2"].forEach(id => { psEl(id).value = ""; });
+    ["psCidade", "psValor", "psPrestacao", "psRenda", "psObra", "psExtra"].forEach(id => { psEl(id).value = ""; psEl(id).classList.remove("destaque"); });
+    psEl("psOrigem").value = "FGTS"; psEl("psEnq").value = "3280"; psEl("psSistema").value = "PRICE"; psEl("psEmp").value = "";
+    psEl("psRedutor").checked = false; psEl("psDependente").checked = false;
+    psMsg("psMsgAvaliacao", "Anexe a Avaliação de risco.");
+    psMsg("psMsgCad1", "Anexe o Cadastro do 1º proponente.");
+    psMsg("psMsgCad2", "Opcional.");
+    psEl("psCad2").closest(".linha-arquivo").querySelector(".dica").textContent = "Só quando a avaliação tiver 2 proponentes.";
+    psEl("psResultado").hidden = true;
+    psEl("psMsg").textContent = "Tudo limpo. Anexe os documentos do próximo cliente."; psEl("psMsg").className = "dica";
+    psDesenhar();
+    psAbrir();
+  }
+  psEl("btnLimparSim").addEventListener("click", psLimpar);
   psEl("btnPreencherSim").addEventListener("click", psPreencher);
   psEl("tabPreencherSim").addEventListener("click", () => mostrarAba("preencherSim"));
 
