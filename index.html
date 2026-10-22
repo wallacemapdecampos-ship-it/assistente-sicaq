@@ -254,11 +254,87 @@
     .pergunta-leme.respondida { background: var(--campo); border-color: var(--linha); font-size: 12.5px; color: var(--tinta-2); }
     .pergunta-leme .botoes-leme { display: flex; gap: 8px; }
     .pergunta-leme.respondida button { height: 26px; padding: 0 10px; font-size: 12px; }
+    .pergunta-leme:not(.respondida) button.principal-leme { background: var(--azul); color: #fff; border-color: var(--azul); }
+    .pergunta-leme:not(.respondida) button.principal-leme:hover:not(:disabled) { background: var(--azul-escuro); border-color: var(--azul-escuro); }
     .pergunta-leme button.secondary.escolhido,
     .pergunta-leme button.secondary.escolhido:hover:not(:disabled) { background: var(--azul); color: #fff; border-color: var(--azul); opacity: 1; }
     #msgRenda { font-size: 12.5px; max-width: 70ch; }
     #msgRenda.dica, #msgRenda.muted { color: var(--tinta-2); }
     #msgRenda.ok, #msgRenda.warn, #msgRenda.erro { font-weight: 700; }
+
+    /* ---------- Visual 2026-10: botões, avisos, copiar, destaque ---------- */
+    button { transition: background .15s, border-color .15s, transform .05s; }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    /* Botão lendo: rodinha girando (o JS põe a classe .lendo). */
+    button.lendo:disabled { opacity: .8; cursor: wait; }
+    button.lendo::before {
+      content: ""; display: inline-block; width: 13px; height: 13px; margin-right: 8px; vertical-align: -2px;
+      border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%;
+      animation: girar .7s linear infinite;
+    }
+    button.secondary.lendo::before { border-color: #b9cbdc; border-top-color: var(--azul); }
+    @keyframes girar { to { transform: rotate(360deg); } }
+    /* Ação que apaga: link discreto. */
+    button.botao-link {
+      background: none !important; border-color: transparent !important; color: var(--tinta-2) !important;
+      text-decoration: underline; text-underline-offset: 3px; padding: 0 6px;
+    }
+    button.botao-link:hover:not(:disabled) { color: var(--erro) !important; }
+    /* Campo definido pelo sistema: cadeado + borda tracejada. */
+    .campo input.fixo {
+      border-style: dashed !important; padding-left: 30px;
+      background: #f1f4f6 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237a8a99' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='11' width='16' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E") no-repeat 10px center !important;
+      color: #33475a !important;
+    }
+    /* Valor principal: Líquida para o SICAQ. */
+    label[for="hLiquida"] { color: var(--azul) !important; }
+    .campo input#hLiquida { font-size: 17px; font-weight: 700; border: 2px solid var(--azul); background: #f4f9fd; }
+    .campo input#hLiquida.destaque { border-color: #e2b500 !important; }
+    /* Botão de copiar dentro do campo. */
+    .com-copia { position: relative; display: block; }
+    .com-copia > input { padding-right: 36px !important; }
+    .copiar {
+      position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+      width: 28px; height: 26px; padding: 0; border: 0; border-radius: 5px;
+      background: transparent; color: var(--tinta-2); font-size: 14px; font-weight: 400; line-height: 1;
+      display: grid; place-items: center;
+    }
+    .copiar:hover:not(:disabled) { background: var(--azul-claro); color: var(--azul); border: 0; }
+    .copiar:active:not(:disabled) { transform: translateY(-50%); }
+    .copiar.feito { color: var(--ok); }
+    .copiar[hidden] { display: none; }
+    .aviso-copiado {
+      position: fixed; left: 50%; bottom: 24px; z-index: 50; transform: translate(-50%, 16px); opacity: 0;
+      background: var(--tinta); color: #fff; padding: 9px 16px; border-radius: 999px;
+      font-weight: 700; font-size: 13px; transition: .2s; pointer-events: none;
+    }
+    .aviso-copiado.on { opacity: 1; transform: translate(-50%, 0); }
+    /* Avisos (mensagens ok / atenção / erro): faixa lateral colorida + ícone. */
+    .msg.ok, .msg.warn, .msg.erro, #msgRenda.ok, #msgRenda.warn, #msgRenda.erro {
+      display: flex; align-items: flex-start; gap: 9px;
+      padding: 8px 12px; border: 1px solid var(--linha); border-left: 4px solid; border-radius: var(--raio);
+      background: var(--folha); line-height: 1.45;
+    }
+    .msg.ok::before, .msg.warn::before, .msg.erro::before,
+    #msgRenda.ok::before, #msgRenda.warn::before, #msgRenda.erro::before {
+      flex: 0 0 20px; width: 20px; height: 20px; border-radius: 50%;
+      display: grid; place-items: center; font-size: 12px; font-weight: 700; margin-top: -1px;
+    }
+    .msg.ok, #msgRenda.ok { border-left-color: var(--ok); }
+    .msg.ok::before, #msgRenda.ok::before { content: "✓"; background: #e3f3ea; color: var(--ok); }
+    .msg.warn, #msgRenda.warn { border-left-color: #e2b500; }
+    .msg.warn::before, #msgRenda.warn::before { content: "!"; background: var(--marca-fundo); color: var(--warn); }
+    .msg.erro, #msgRenda.erro { border-left-color: var(--erro); }
+    .msg.erro::before, #msgRenda.erro::before { content: "✕"; background: #fbe9e7; color: var(--erro); }
+    /* Pergunta de Leme no mesmo padrão de aviso. */
+    .pergunta-leme { background: var(--folha); border-color: var(--linha); border-left: 4px solid #e2b500; padding: 10px 14px 10px 12px; }
+    .pergunta-leme #textoLeme { display: flex; align-items: center; gap: 10px; flex: 1 1 300px; }
+    .pergunta-leme #textoLeme::before {
+      content: "?"; flex: 0 0 26px; width: 26px; height: 26px; border-radius: 50%;
+      display: grid; place-items: center; font-weight: 700; background: var(--marca-fundo); color: var(--warn);
+    }
+    .pergunta-leme.respondida { background: var(--folha); border-color: var(--linha); border-left-color: var(--ok); }
+    .pergunta-leme.respondida #textoLeme::before { content: "✓"; background: #e3f3ea; color: var(--ok); }
 
     /* Holerite: 4 por linha. */
     #painelHolerite .campo { --span: 3; }
@@ -857,7 +933,7 @@
         <span id="textoLeme"><b>Este cliente é de Leme?</b> Em Leme o adiantamento não é somado à líquida.</span>
         <span class="botoes-leme">
           <button id="btnLemeSim" type="button" class="secondary">Sim, é Leme</button>
-          <button id="btnLemeNao" type="button" class="secondary">Não</button>
+          <button id="btnLemeNao" type="button" class="secondary principal-leme">Não, somar</button>
         </span>
       </div>
 
@@ -881,7 +957,7 @@
   <section id="painelPreencherSim" class="painel">
     <div class="card">
       <div class="card-topo"><h2>Documentos da simulação</h2><span class="dica" style="margin-left:auto">Lidos na hora, sem IA</span>
-        <button id="btnLimparSim" type="button" class="secondary" style="margin-left:14px">Limpar tudo</button></div>
+        <button id="btnLimparSim" type="button" class="secondary botao-link" style="margin-left:14px">Limpar tudo</button></div>
       <div class="linha-arquivo">
         <label for="psAvaliacao">Avaliação de risco<small>PDF do sistema</small></label>
         <label class="arquivo" data-arquivo="psAvaliacao"><input type="file" class="arquivo-input" id="psAvaliacao" accept=".pdf"><span class="arquivo-botao">Escolher arquivo</span><span class="arquivo-nome">Nenhum arquivo · ou arraste aqui</span></label>
@@ -987,6 +1063,48 @@
   </section>
 </main>
 <script>
+  // ---- Visual: rodinha nos botões que estão lendo + botões de copiar ----
+  document.addEventListener("DOMContentLoaded", () => {
+    const marcar = b => b.classList.toggle("lendo", b.disabled && /^(Lendo|Conferindo|Enviando|Preenchendo|…)/.test(b.textContent.trim()));
+    const obs = new MutationObserver(ms => ms.forEach(m => {
+      const b = (m.target.nodeType === 3 ? m.target.parentElement : m.target);
+      if (b && b.tagName === "BUTTON") marcar(b);
+    }));
+    document.querySelectorAll("button").forEach(b => {
+      obs.observe(b, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
+    });
+
+    const aviso = document.createElement("div");
+    aviso.className = "aviso-copiado"; aviso.setAttribute("role", "status");
+    document.body.appendChild(aviso);
+    let tempo;
+    ["hCnpj", "hCompetencia", "hAdmissao", "hIrrf", "hBruta", "hLiquida", "hLiquidoOriginal", "hAdiantamento"].forEach(id => {
+      const inp = document.getElementById(id);
+      if (!inp) return;
+      const caixa = document.createElement("span");
+      caixa.className = "com-copia";
+      inp.parentNode.insertBefore(caixa, inp);
+      caixa.appendChild(inp);
+      const bt = document.createElement("button");
+      bt.type = "button"; bt.className = "copiar"; bt.textContent = "⧉";
+      bt.title = "Copiar"; bt.setAttribute("aria-label", "Copiar valor");
+      caixa.appendChild(bt);
+      const mostrar = () => { bt.hidden = !inp.value.trim(); };
+      inp.addEventListener("input", mostrar);
+      setInterval(mostrar, 700);  // valores preenchidos pela leitura não disparam "input"
+      mostrar();
+      bt.addEventListener("click", async () => {
+        const v = inp.value.trim();
+        if (!v) return;
+        try { await navigator.clipboard.writeText(v); }
+        catch (e) { inp.select(); try { document.execCommand("copy"); } catch (e2) {} }
+        bt.textContent = "✓"; bt.classList.add("feito");
+        aviso.textContent = "Copiado: " + v; aviso.classList.add("on");
+        clearTimeout(tempo);
+        tempo = setTimeout(() => { aviso.classList.remove("on"); bt.textContent = "⧉"; bt.classList.remove("feito"); }, 1200);
+      });
+    });
+  });
   const API = "https://assistente-sicaq.onrender.com";
   let ultimoDados = null;
   let extensaoPronta = false;
