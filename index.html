@@ -915,7 +915,7 @@
         <div class="campo"><label for="psSistema">Sistema de amortização</label>
           <select id="psSistema"><option value="PRICE">PRICE</option><option value="SAC">SAC</option></select></div>
         <div class="campo"><label for="psCidade">Cidade do imóvel <span class="opcional">da sua última simulação</span></label>
-          <input id="psCidade" type="text" placeholder="Ex.: Sorocaba - SP"></div>
+          <input id="psCidade" type="text" list="psCidadesLista" autocomplete="off" placeholder="Digite só o nome: Sorocaba"><datalist id="psCidadesLista"></datalist></div>
         <div class="campo"><label for="psValor">Valor do imóvel</label>
           <input id="psValor" type="text" inputmode="decimal" placeholder="0,00"></div>
         <div class="campo" id="psEmpBox" hidden><label for="psEmp">Empreendimento <span class="opcional">Ribeirão Preto</span></label>
@@ -4017,14 +4017,40 @@
   ["psCidade", "psValor", "psPrestacao", "psRenda", "psObra", "psExtra"].forEach(id => psEl(id).addEventListener("input", (e) => {
     PS.manual[id] = true;
     e.target.classList.remove("destaque");
-    if (id === "psCidade") { const v = PS_VALOR_CIDADE[psCidadeAtual()]; if (v && !PS.manual.psValor && !psSimRecente()) { psEl("psValor").value = valorLeitura(v); psEl("psValor").classList.add("destaque"); } }
+    if (id === "psCidade") psValorPelaCidade();
     if (id === "psCidade" || id === "psRenda") psRegrasCidade(false);
     psAtualizarBotao();
   }));
   ["psEmp", "psOrigem", "psEnq", "psSistema"].forEach(id => psEl(id).addEventListener("change", () => { if (id === "psEmp") psRegrasCidade(false); psAtualizarBotao(); }));
+  // Sugestões enquanto digita: "SOROCABA - SP" (lista do IBGE).
+  psEl("psCidade").addEventListener("input", () => {
+    const t = psNorm(psEl("psCidade").value);
+    const dl = psEl("psCidadesLista");
+    if (t.length < 3 || !MUNICIPIOS || / - [A-Z]{2}$/.test(t)) { dl.innerHTML = ""; return; }
+    const achados = [];
+    for (const uf of Object.keys(MUNICIPIOS)) {
+      if (uf.length !== 2) continue;
+      for (const nome of MUNICIPIOS[uf]) if (nome.startsWith(t)) achados.push(nome + " - " + uf);
+    }
+    achados.sort((a, b) => (b.endsWith(" - SP") - a.endsWith(" - SP")) || a.localeCompare(b));
+    dl.innerHTML = achados.slice(0, 12).map(c => `<option value="${escHtml(c)}"></option>`).join("");
+  });
+  psEl("psCidade").addEventListener("keydown", (e) => { if (e.key === "Enter") psEl("psCidade").blur(); });
+  // Valor do imóvel pela tabela da cidade (vazio se a cidade não estiver na tabela).
+  function psValorPelaCidade() {
+    if (PS.manual.psValor || psSimRecente()) return;
+    const cid = psCidadeAtual();
+    if (cid === "RIBEIRAO PRETO - SP") return;      // vai pela renda (psRegrasCidade)
+    const v = PS_VALOR_CIDADE[cid];
+    psEl("psValor").value = v ? valorLeitura(v) : "";
+    psEl("psValor").classList.toggle("destaque", !!v);
+  }
   psEl("psCidade").addEventListener("blur", () => {
     const f = psCidadeAtual();
-    if (f && f !== psNorm(psEl("psCidade").value)) { psEl("psCidade").value = f; psRegrasCidade(false); psAtualizarBotao(); }
+    if (f && f !== psNorm(psEl("psCidade").value)) psEl("psCidade").value = f;
+    psValorPelaCidade();
+    psRegrasCidade(false);
+    psAtualizarBotao();
   });
   // Novo cliente: apaga o que foi lido e o que foi digitado (nada de dado do anterior).
   function psLimpar() {
