@@ -251,9 +251,59 @@ def _linhas_holerite_anotadas(palavras):
         return (w[0] + w[2]) / 2
 
     colunas, saida = None, []
+    secoes = None  # layout lado a lado: (x de DESCONTOS, x de BASES)
     for ln in linhas:
         ws = sorted(ln["ws"], key=lambda w: w[0])
         textos = [_tirar_acentos(str(w[4])).upper() for w in ws]
+
+        # Layout "R E M U N E R A Ç Õ E S | D E S C O N T O S | B A S E S":
+        # proventos e descontos ficam LADO A LADO na mesma linha. Separa cada
+        # linha pela posição dos títulos (senão a IA mistura as colunas).
+        junto = "".join(textos)
+        if sum(len(x) == 1 for x in textos) >= 10 and "DESCONTOS" in junto and \
+                any(k in junto for k in ("REMUNERAC", "PROVENTOS", "VENCIMENTOS")):
+            def x_de(palavra):
+                for i in range(len(textos)):
+                    if "".join(textos[i:i + len(palavra)]) == palavra:
+                        return ws[i][0]
+                return None
+            x_desc = x_de("DESCONTOS")
+            x_base = x_de("BASES") or float("inf")
+            if x_desc is not None:
+                secoes = (x_desc, x_base)
+                colunas = None
+                saida.append("REMUNERAÇÕES (proventos) | DESCONTOS | BASES  -- colunas lado a lado; cada linha abaixo já vem separada")
+                continue
+        if secoes:
+            if any(k in x for x in textos for k in ("TOTAL", "LIQUIDO")):
+                secoes = None
+            else:
+                x_desc, x_base = secoes
+                g_prov = [w for w in ws if w[0] < x_desc - 2]
+                g_desc = [w for w in ws if x_desc - 2 <= w[0] < x_base - 2]
+                g_base = [w for w in ws if w[0] >= x_base - 2]
+                # o código da verba de desconto (ex.: "401") às vezes começa um
+                # pouco antes do título DESCONTOS: devolve para a coluna certa
+                while g_desc and g_prov and re.fullmatch(r"\d{2,4}", str(g_prov[-1][4])) and \
+                        (len(g_prov) == 1 or any(_VALOR_BR.match(str(w[4])) for w in g_prov[:-1])):
+                    g_desc.insert(0, g_prov.pop())
+                partes_linha = []
+                for rotulo, grupo in (("PROVENTO", g_prov), ("DESCONTO", g_desc), ("BASE", g_base)):
+                    if not grupo:
+                        continue
+                    valores = [w for w in grupo if _VALOR_BR.match(str(w[4]))]
+                    txt = []
+                    for w in grupo:
+                        if rotulo != "BASE" and valores and w is valores[-1]:
+                            txt.append(f"[{rotulo}: {w[4]}]")
+                        elif rotulo != "BASE" and _VALOR_BR.match(str(w[4])):
+                            txt.append(f"[REF: {w[4]}]")
+                        else:
+                            txt.append(str(w[4]))
+                    partes_linha.append((rotulo, " ".join(txt)))
+                for rotulo, txt in partes_linha:
+                    saida.append(txt if rotulo != "BASE" else "(base) " + txt)
+                continue
         prov = next((w for w, x in zip(ws, textos) if x.startswith(("VENCIMENTO", "PROVENTO", "CREDITO"))), None)
         desc = next((w for w, x in zip(ws, textos) if x.startswith(("DESCONTO", "DEBITO"))), None)
         if prov and desc:
