@@ -948,7 +948,7 @@ def _pergunta_leme(usuario):
 
 # Dono do sistema: o único que vê todas as empresas, cria empresas e move
 # analistas entre elas. Outro ADM (de uma empresa cliente) só vê a dele.
-DONOS_SISTEMA = ("wallace", "camila")
+DONOS_SISTEMA = ("wallace", "camila", "gustavo", "angelica")
 DONO_SISTEMA = DONOS_SISTEMA[0]
 
 
@@ -1486,7 +1486,7 @@ def uso():
                             "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
                             "excluidos": excluidos, "admins": admins,
-                            "donos": list(DONOS_SISTEMA) if dono else [],
+                            "donos": list(DONOS_SISTEMA),
                             "custo": {"medias": medias, "preco": PRECO_SIMULADO, "comparacao": PRECO_COMPARACAO,
                                       "cotacao": _cotacao_dolar()}})
     except Exception as e:
@@ -1500,7 +1500,7 @@ def uso():
                     "nomes": nomes, "senhas": senhas, "bloqueados": bloqueados,
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
                             "excluidos": excluidos, "admins": admins,
-                            "donos": list(DONOS_SISTEMA) if dono else [],
+                            "donos": list(DONOS_SISTEMA),
                             "custo": {"medias": medias, "preco": PRECO_SIMULADO, "comparacao": PRECO_COMPARACAO,
                                       "cotacao": _cotacao_dolar()}})
 
