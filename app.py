@@ -5864,6 +5864,11 @@ def ler():
             dados_raw["campos_incertos"] = list(dados_raw.get("campos_incertos") or []) + ["tipo_documento"]
         # Só o rótulo do tipo vai para o log (nenhum dado pessoal).
         print(f"[LER] tipo lido={tipo_lido[:40]!r} -> {tipo or 'NAO IDENTIFICADO'}", flush=True)
+        # Diagnóstico sem dado pessoal: só os NOMES dos campos que vieram vazios.
+        _chaves = ("nome", "cpf", "rg", "data_nascimento", "numero_cnh", "data_emissao", "validade",
+                   "filiacao_1", "filiacao_2", "naturalidade_municipio", "mrz")
+        _vazios = [k for k in _chaves if not str(dados_raw.get(k) or "").strip()]
+        print(f"[LER] modelo={modelo} vazios={','.join(_vazios) or 'nenhum'}; imagens={len(image_bytes)}", flush=True)
 
         # RG/CIN: validade igual à emissão é cópia errada (RG antigo nem tem).
         if tipo in ("RG", "CIN"):
