@@ -4207,6 +4207,25 @@
   psEl("psAvaliacao").addEventListener("change", (e) => psLerArquivo(e.target, "av"));
   psEl("psCad1").addEventListener("change", (e) => psLerArquivo(e.target, 0));
   psEl("psCad2").addEventListener("change", (e) => psLerArquivo(e.target, 1));
+  // Máscara de dinheiro igual à da Simulação: os dígitos entram pela direita, sempre com 2 casas
+  // (digitar 35000000 vira 350.000,00). Roda antes das regras abaixo.
+  ["psValor", "psPrestacao", "psRenda", "psExtra"].forEach(id => {
+    const el = psEl(id);
+    el.addEventListener("input", (e) => {
+      if (el._colando) return;
+      const d = el.value.replace(/\D/g, "").replace(/^0+/, "");
+      el.value = d ? valorLeitura(parseInt(d.slice(-15), 10) / 100) : "";
+      const n = el.value.length; try { el.setSelectionRange(n, n); } catch (_) {}
+    }, true);
+    el.addEventListener("paste", (e) => {
+      const v = lerValorBR((e.clipboardData || window.clipboardData).getData("text"));
+      if (v > 0) {
+        e.preventDefault(); el._colando = true; el.value = valorLeitura(v);
+        el.dispatchEvent(new Event("input", { bubbles: true })); el._colando = false;
+      }
+    });
+    el.addEventListener("focus", () => { const n = el.value.length; setTimeout(() => { try { el.setSelectionRange(n, n); } catch (_) {} }, 0); });
+  });
   ["psCidade", "psValor", "psPrestacao", "psRenda", "psObra", "psExtra"].forEach(id => psEl(id).addEventListener("input", (e) => {
     PS.manual[id] = true;
     e.target.classList.remove("destaque");
