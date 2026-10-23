@@ -2616,10 +2616,7 @@
     // O simulador só carrega na primeira vez que a aba é aberta.
     if (nome === "simulacao") {
       const fr = document.getElementById("frameSimulacao");
-      // Simulador no mesmo lugar que o site: Render (novo) ou GitHub Pages (antigo).
-      if (!fr.getAttribute("src")) fr.src = location.hostname.endsWith("onrender.com")
-        ? "https://simulador-casa-propria.onrender.com/?embed=1"
-        : "https://wallacemapdecampos-ship-it.github.io/simulador-casa-propria/?embed=1";
+      if (!fr.getAttribute("src")) fr.src = "https://simulador-casa-propria.onrender.com/?embed=1";
     }
     if (nome === "uso") carregarUso();
   }

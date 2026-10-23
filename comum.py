@@ -41,11 +41,10 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # até 2 arquivos
 
 
 
-# Endereços do site que podem chamar o servidor: o novo (Render) e o antigo
-# (GitHub Pages, enquanto estiver no ar). ALLOWED_ORIGIN pode somar outros, separados por vírgula.
+# Endereço do site que pode chamar o servidor (Render). O antigo do GitHub Pages
+# foi desligado em 23/10/2026. ALLOWED_ORIGIN pode somar outros, separados por vírgula.
 ALLOWED_ORIGINS = sorted({
     "https://assistente-sicaq-site.onrender.com",
-    "https://wallacemapdecampos-ship-it.github.io",
     *[o.strip().rstrip("/") for o in os.getenv("ALLOWED_ORIGIN", "").split(",") if o.strip()],
 })
 
