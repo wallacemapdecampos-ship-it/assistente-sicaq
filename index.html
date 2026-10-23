@@ -3835,11 +3835,11 @@
     // SBPE não tem redutor nem dependente: some e vai desmarcado.
     psEl("psChecks").hidden = sbpe;
     if (sbpe) { psEl("psRedutor").checked = false; psEl("psDependente").checked = false; }
-    [...psEl("psEnq").options].forEach(o => { const ok = sbpe ? o.value === "1976" : o.value !== "1976"; o.hidden = !ok; o.disabled = !ok; });
-    if (sbpe) { psEl("psEnq").value = "1976"; return; }
-    if (PS.manual.psEnq && psEl("psEnq").value !== "1976") return;     // escolhido à mão
+    // Só aparece o código da situação: SBPE 1976; faixa 2 só 3280; faixa 3 só 3302.
     const renda = lerValorBR(psEl("psRenda").value) || 0;
-    psEl("psEnq").value = renda > PS_RENDA_MAX_FX2 ? "3302" : "3280";
+    const cod = sbpe ? "1976" : (renda > PS_RENDA_MAX_FX2 ? "3302" : "3280");
+    [...psEl("psEnq").options].forEach(o => { const ok = o.value === cod; o.hidden = !ok; o.disabled = !ok; });
+    psEl("psEnq").value = cod;
   }
 
   function psLerAvaliacao(linhas) {
