@@ -2128,6 +2128,9 @@
   document.getElementById("btnLerPis").addEventListener("click", lerPis);
   document.getElementById("pis").addEventListener("input", (event) => {
     event.target.classList.remove("destaque");
+    // Digitando ou colando: fica só com os números (tira pontos, traço e espaços).
+    const so = event.target.value.replace(/\D/g, "").slice(0, 11);
+    if (so !== event.target.value) event.target.value = so;
     const d = pisDigitos();
     if (d.length === 11) {
       setMsgPis(pisValido(d) ? "PIS válido." : "PIS não confere (dígito verificador).", pisValido(d) ? "ok" : "erro");
