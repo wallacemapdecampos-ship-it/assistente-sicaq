@@ -109,6 +109,10 @@ Regras:
   "INSS" se for extrato/demonstrativo de pagamento de benefício do
   INSS (aposentadoria, pensão por morte, auxílio etc.); "ESOCIAL" se for
   recibo de empregado DOMÉSTICO do eSocial (empregador pessoa física);
+  "OUTRO" se NÃO for comprovante de renda: comprovante de depósito, PIX,
+  TED/DOC ou transferência bancária, extrato de conta, recibo de pagamento
+  sem a tabela de proventos e descontos, nota fiscal etc. (nesse caso as
+  outras chaves ficam vazias);
   "HOLERITE" nos demais casos.
 - competencia: mês/ano do comprovante em MM/AAAA. Muitos holerites não
   escrevem "competência": mostram só o PERÍODO (ex.: "01/09/2026 a
@@ -1013,6 +1017,13 @@ def ler_holerite():
             # A IA viu que é declaração de IR: lê com a regra própria dela.
             info, tempo_ir = _irpf_por_ia(arquivos)
             return _resposta_irpf(info, arquivos, inicio, "IA (declaração em imagem)", tempo_api + tempo_ir)
+        if str((resultado or {}).get("origem") or "").upper().strip() == "OUTRO":
+            # Depósito, PIX, transferência, extrato...: não é comprovante de renda.
+            print("[HOLERITE] arquivo não é comprovante de renda (origem=OUTRO)", flush=True)
+            return jsonify({"ok": False, "code": "NAO_E_RENDA",
+                            "error": "Este arquivo não parece um comprovante de renda (holerite, eSocial ou INSS). "
+                                     "Comprovante de depósito, PIX, transferência ou extrato de conta não serve: "
+                                     "anexe o holerite."}), 422
         if _holerite_estado_sp_pdf(arquivos):
             resultado = {**(resultado or {}), "folha_estado_sp": True}
         dados = _normalizar_holerite(resultado, fora_prazo=fora_prazo)
