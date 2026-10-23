@@ -3827,6 +3827,14 @@
     return "";
   }
 
+  // SBPE: só aparece o 1976. FGTS: só 3280 e 3302.
+  function psOpcoesEnq() {
+    const sbpe = psEl("psOrigem").value === "SBPE";
+    [...psEl("psEnq").options].forEach(o => { const ok = sbpe ? o.value === "1976" : o.value !== "1976"; o.hidden = !ok; o.disabled = !ok; });
+    if (sbpe) psEl("psEnq").value = "1976";
+    else if (psEl("psEnq").value === "1976") psEl("psEnq").value = "3280";
+  }
+
   function psLerAvaliacao(linhas) {
     const tudo = semAcentos(linhas.join("\n")).toUpperCase();
     if (!/AVALIACAO DE RISCO/.test(tudo)) throw new Error("Este PDF não parece a Avaliação de risco.");
@@ -4075,6 +4083,7 @@
         PS.avaliacao = av;
         psEl("psOrigem").value = av.origem;
         if (av.enq) psEl("psEnq").value = av.enq;
+        psOpcoesEnq();
         psEl("psSistema").value = av.sistema;
         if (av.prestacao) psEl("psPrestacao").value = valorLeitura(av.prestacao);
         const total = av.participantes.reduce((s, p) => s + p.renda, 0);
@@ -4242,10 +4251,7 @@
       if (psEl("psOrigem").value === "SBPE") psEl("psEnq").value = "1976";
       else if (psEl("psEnq").value === "1976") psEl("psEnq").value = "3280";
     }
-    if (id === "psEnq") {
-      if (psEl("psEnq").value === "1976") psEl("psOrigem").value = "SBPE";
-      else if (psEl("psOrigem").value === "SBPE") psEl("psOrigem").value = "FGTS";
-    }
+    psOpcoesEnq();
     psAtualizarBotao();
   }));
   // Sugestões enquanto digita: "SOROCABA - SP" (lista do IBGE).
@@ -4285,6 +4291,7 @@
     ["psAvaliacao", "psCad1", "psCad2"].forEach(id => { psEl(id).value = ""; });
     ["psCidade", "psValor", "psPrestacao", "psRenda", "psObra", "psExtra"].forEach(id => { psEl(id).value = ""; psEl(id).classList.remove("destaque"); });
     psEl("psOrigem").value = "FGTS"; psEl("psEnq").value = "3280"; psEl("psSistema").value = "PRICE"; psEl("psEmp").value = "";
+    psOpcoesEnq();
     psEl("psRedutor").checked = false; psEl("psDependente").checked = false;
     psMsg("psMsgAvaliacao", "Anexe a Avaliação de risco.");
     psMsg("psMsgCad1", "Anexe o Cadastro do 1º proponente.");
