@@ -1236,6 +1236,9 @@ def uso():
     contas = _usuarios()
     admins = {u: bool(contas.get(u, {}).get("admin")) for u in nomes}
     medias = _medias_tokens()
+    # Custo estimado da IA: só os donos do sistema veem.
+    custo = {"medias": medias, "preco": PRECO_SIMULADO, "comparacao": PRECO_COMPARACAO,
+             "cotacao": _cotacao_dolar()} if dono else None
     todos = _usuarios_todos()
     excluidos = [{"usuario": u, "nome": str(todos[u].get("nome") or u)}
                  for u in sorted(_excluidos(atualizar=True)) if u in todos] if dono else []
@@ -1259,8 +1262,7 @@ def uso():
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
                             "excluidos": excluidos, "admins": admins,
                             "donos": list(DONOS_SISTEMA),
-                            "custo": {"medias": medias, "preco": PRECO_SIMULADO, "comparacao": PRECO_COMPARACAO,
-                                      "cotacao": _cotacao_dolar()}})
+                            "custo": custo})
     except Exception as e:
         print(f"[USO] leitura do banco falhou ({type(e).__name__})", flush=True)
 
@@ -1273,5 +1275,4 @@ def uso():
                             "empresas": lista_empresas, "empresa_de": empresa_de, "dono": dono,
                             "excluidos": excluidos, "admins": admins,
                             "donos": list(DONOS_SISTEMA),
-                            "custo": {"medias": medias, "preco": PRECO_SIMULADO, "comparacao": PRECO_COMPARACAO,
-                                      "cotacao": _cotacao_dolar()}})
+                            "custo": custo})
