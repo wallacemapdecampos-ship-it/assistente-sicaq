@@ -132,6 +132,7 @@
     .ps-msg.muted { font-weight: 400; }
     #painelPreencherSim .campo { --span: 3; }
     .ps-checks { display: flex; flex-wrap: wrap; gap: 10px 28px; margin: 14px 0 6px; font-size: 14px; }
+    .ps-checks[hidden] { display: none; }
     .ps-checks label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
     .ps-checks input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; }
     .ps-tabela { width: 100%; border-collapse: collapse; margin: 10px 0 4px; font-size: 13.5px; }
@@ -1016,7 +1017,7 @@
           <button id="btnEmpSolare" type="button" class="secondary">Solare</button>
         </span>
       </div>
-      <div class="ps-checks">
+      <div class="ps-checks" id="psChecks">
         <label><input type="checkbox" id="psRedutor"> Possui 3 anos de FGTS (redutor)</label>
         <label><input type="checkbox" id="psDependente"> Possui dependentes</label>
       </div>
@@ -3831,6 +3832,9 @@
   // Enquadramento: SBPE = 1976. MCMV (FGTS) = 3280 na faixa 2 (renda até 5.000,00) e 3302 na faixa 3.
   function psOpcoesEnq() {
     const sbpe = psEl("psOrigem").value === "SBPE";
+    // SBPE não tem redutor nem dependente: some e vai desmarcado.
+    psEl("psChecks").hidden = sbpe;
+    if (sbpe) { psEl("psRedutor").checked = false; psEl("psDependente").checked = false; }
     [...psEl("psEnq").options].forEach(o => { const ok = sbpe ? o.value === "1976" : o.value !== "1976"; o.hidden = !ok; o.disabled = !ok; });
     if (sbpe) { psEl("psEnq").value = "1976"; return; }
     if (PS.manual.psEnq && psEl("psEnq").value !== "1976") return;     // escolhido à mão
@@ -4152,8 +4156,8 @@
       prestacao: lerValorBR(psEl("psPrestacao").value),
       renda: lerValorBR(psEl("psRenda").value),
       participantes: psParticipantes().map(p => ({ pactuacao: p.pactuacao, nascimento: p.nascimento })),
-      redutor: psEl("psRedutor").checked,
-      dependente: psEl("psDependente").checked,
+      redutor: psEl("psOrigem").value !== "SBPE" && psEl("psRedutor").checked,
+      dependente: psEl("psOrigem").value !== "SBPE" && psEl("psDependente").checked,
       prazo_obra: Number(psEl("psObra").value.trim()),
       entrada_extra: lerValorBR(psEl("psExtra").value) || 0
     };
