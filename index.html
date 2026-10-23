@@ -991,7 +991,7 @@
         <div class="campo"><label for="psOrigem">Origem de recursos</label>
           <select id="psOrigem"><option value="FGTS">FGTS</option><option value="SBPE">SBPE</option></select></div>
         <div class="campo"><label for="psEnq">Enquadramento</label>
-          <select id="psEnq"><option value="3280">3280 · Com financ. PJ</option><option value="3302">3302 · Associativo</option></select></div>
+          <select id="psEnq"><option value="3280">3280 · Com financ. PJ</option><option value="3302">3302 · Associativo</option><option value="1976">1976 · SBPE</option></select></div>
         <div class="campo"><label for="psSistema">Sistema de amortização</label>
           <select id="psSistema"><option value="PRICE">PRICE</option><option value="SAC">SAC</option></select></div>
         <div class="campo"><label for="psCidade">Cidade do imóvel <span class="opcional">do Cadastro</span></label>
@@ -3831,7 +3831,8 @@
     const tudo = semAcentos(linhas.join("\n")).toUpperCase();
     if (!/AVALIACAO DE RISCO/.test(tudo)) throw new Error("Este PDF não parece a Avaliação de risco.");
     const origem = psCampo(linhas, "ORIGEM DE RECURSO", /^(FGTS|SBPE)$/) || (/ORIGEM DE RECURSO\s+SBPE/.test(tudo) ? "SBPE" : "FGTS");
-    const enq = /ASSOCIATIVO/.test(tudo) ? "3302" : (/UNIDADE VINCULADA/.test(tudo) ? "3280" : "");
+    // SBPE: enquadramento 1976. FGTS: 3302 (associativo) ou 3280 (unidade vinculada).
+    const enq = origem === "SBPE" ? "1976" : (/ASSOCIATIVO/.test(tudo) ? "3302" : (/UNIDADE VINCULADA/.test(tudo) ? "3280" : ""));
     const prest = psCampo(linhas, "PRESTACAO", /^\d{1,3}(\.\d{3})*,\d{2}$/);
     const sistema = psCampo(linhas, "SISTEMA DE AMORTIZACAO", /^(PRICE|SAC)$/) || "PRICE";
     const cpfCliente = soDigitos((tudo.match(/CPF CLIENTE\s+([\d.\-]+)/) || [])[1]);
@@ -4234,7 +4235,19 @@
     if (id === "psCidade" || id === "psRenda") psRegrasCidade(false);
     psAtualizarBotao();
   }));
-  ["psEmp", "psOrigem", "psEnq", "psSistema"].forEach(id => psEl(id).addEventListener("change", () => { if (id === "psEmp") psRegrasCidade(false); psAtualizarBotao(); }));
+  ["psEmp", "psOrigem", "psEnq", "psSistema"].forEach(id => psEl(id).addEventListener("change", () => {
+    if (id === "psEmp") psRegrasCidade(false);
+    // Origem manda no enquadramento: SBPE = 1976; voltando para FGTS, 3280.
+    if (id === "psOrigem") {
+      if (psEl("psOrigem").value === "SBPE") psEl("psEnq").value = "1976";
+      else if (psEl("psEnq").value === "1976") psEl("psEnq").value = "3280";
+    }
+    if (id === "psEnq") {
+      if (psEl("psEnq").value === "1976") psEl("psOrigem").value = "SBPE";
+      else if (psEl("psOrigem").value === "SBPE") psEl("psOrigem").value = "FGTS";
+    }
+    psAtualizarBotao();
+  }));
   // Sugestões enquanto digita: "SOROCABA - SP" (lista do IBGE).
   psEl("psCidade").addEventListener("input", () => {
     const t = psNorm(psEl("psCidade").value);
