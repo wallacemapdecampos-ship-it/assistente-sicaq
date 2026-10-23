@@ -41,16 +41,20 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # até 2 arquivos
 
 
 
-ALLOWED_ORIGIN = os.getenv(
-    "ALLOWED_ORIGIN",
+# Endereços do site que podem chamar o servidor: o novo (Render) e o antigo
+# (GitHub Pages, enquanto estiver no ar). ALLOWED_ORIGIN pode somar outros, separados por vírgula.
+ALLOWED_ORIGINS = sorted({
+    "https://assistente-sicaq-site.onrender.com",
     "https://wallacemapdecampos-ship-it.github.io",
-).rstrip("/")
+    *[o.strip().rstrip("/") for o in os.getenv("ALLOWED_ORIGIN", "").split(",") if o.strip()],
+})
+
 
 
 
 CORS(
     app,
-    resources={r"/*": {"origins": [ALLOWED_ORIGIN]}},
+    resources={r"/*": {"origins": ALLOWED_ORIGINS}},
     supports_credentials=False,
 )
 
@@ -336,7 +340,7 @@ def _origin_ok():
     # Permite chamadas sem Origin apenas para health/diagnóstico direto.
     if not origin:
         return request.path == "/health"
-    return origin == ALLOWED_ORIGIN
+    return origin in ALLOWED_ORIGINS
 
 
 
