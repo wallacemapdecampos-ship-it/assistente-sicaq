@@ -219,6 +219,8 @@
     .campo label .opcional { font-weight: 400; font-size: 11.5px; }
     .conta-liquida { display: block; margin-top: 3px; font-size: 11.5px; color: var(--tinta-2); font-variant-numeric: tabular-nums; }
     .conta-liquida:empty { display: none; }
+    .conta-liquida.erro { color: var(--erro); font-weight: 700; }
+    .conta-liquida.ok { color: var(--ok); }
     .campo input, .campo select {
       width: 100%; height: 34px; padding: 0 10px;
       border: 1px solid #c7d2d9; border-radius: var(--raio);
@@ -1002,7 +1004,8 @@
         <div class="campo" id="psEmpBox" hidden style="display:none"><label for="psEmp">Empreendimento <span class="opcional">Ribeirão Preto</span></label>
           <select id="psEmp"><option value="">Escolha…</option><option value="BELA VISTA">Bela Vista (+R$ 500 na entrada)</option><option value="SOLARE">Solare (+R$ 1.000 na entrada)</option></select></div>
         <div class="campo"><label for="psPrestacao">Prestação máxima SIRIC <span class="opcional">liberada</span></label>
-          <input id="psPrestacao" type="text" inputmode="decimal" placeholder="0,00"></div>
+          <input id="psPrestacao" type="text" inputmode="decimal" placeholder="0,00">
+          <small id="psComprometimento" class="conta-liquida"></small></div>
         <div class="campo"><label for="psRenda">Renda familiar bruta</label>
           <input id="psRenda" type="text" inputmode="decimal" placeholder="0,00"></div>
         <div class="campo"><label for="psObra">Prazo de obra <span class="opcional">meses</span></label>
@@ -4066,7 +4069,24 @@
   }
 
   let psAguardando = false, psEspera = null, psExtensaoSim = false;
+  // Só visual: quanto da renda a prestação compromete (máximo 30%).
+  function psMostrarComprometimento() {
+    const el = psEl("psComprometimento");
+    const prest = lerValorBR(psEl("psPrestacao").value) || 0, renda = lerValorBR(psEl("psRenda").value) || 0;
+    if (!(prest > 0 && renda > 0)) { el.textContent = ""; el.className = "conta-liquida"; return; }
+    const pct = prest / renda * 100, max = Math.floor(renda * 30) / 100;
+    const pctTxt = pct.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (pct > 30.0001) {
+      el.textContent = `${pctTxt}% da renda · passou dos 30% (máx. R$ ${valorLeitura(max)})`;
+      el.className = "conta-liquida erro";
+    } else {
+      el.textContent = `${pctTxt}% da renda · máx. 30% = R$ ${valorLeitura(max)}`;
+      el.className = "conta-liquida" + (pct >= 29.99 ? " ok" : "");
+    }
+  }
+
   function psAtualizarBotao() {
+    psMostrarComprometimento();
     const b = psEl("btnPreencherSim");
     const faltas = psFaltas();
     b.disabled = psAguardando || !extensaoPronta || !psExtensaoSim || faltas.length > 0;
