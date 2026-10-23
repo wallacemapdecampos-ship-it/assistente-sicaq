@@ -3828,19 +3828,21 @@
   }
 
   // SBPE: só aparece o 1976. FGTS: só 3280 e 3302.
+  // Enquadramento: SBPE = 1976. MCMV (FGTS) = 3280 na faixa 2 (renda até 5.000,00) e 3302 na faixa 3.
   function psOpcoesEnq() {
     const sbpe = psEl("psOrigem").value === "SBPE";
     [...psEl("psEnq").options].forEach(o => { const ok = sbpe ? o.value === "1976" : o.value !== "1976"; o.hidden = !ok; o.disabled = !ok; });
-    if (sbpe) psEl("psEnq").value = "1976";
-    else if (psEl("psEnq").value === "1976") psEl("psEnq").value = "3280";
+    if (sbpe) { psEl("psEnq").value = "1976"; return; }
+    if (PS.manual.psEnq && psEl("psEnq").value !== "1976") return;     // escolhido à mão
+    const renda = lerValorBR(psEl("psRenda").value) || 0;
+    psEl("psEnq").value = renda > PS_RENDA_MAX_FX2 ? "3302" : "3280";
   }
 
   function psLerAvaliacao(linhas) {
     const tudo = semAcentos(linhas.join("\n")).toUpperCase();
     if (!/AVALIACAO DE RISCO/.test(tudo)) throw new Error("Este PDF não parece a Avaliação de risco.");
     const origem = psCampo(linhas, "ORIGEM DE RECURSO", /^(FGTS|SBPE)$/) || (/ORIGEM DE RECURSO\s+SBPE/.test(tudo) ? "SBPE" : "FGTS");
-    // SBPE: enquadramento 1976. FGTS: 3302 (associativo) ou 3280 (unidade vinculada).
-    const enq = origem === "SBPE" ? "1976" : (/ASSOCIATIVO/.test(tudo) ? "3302" : (/UNIDADE VINCULADA/.test(tudo) ? "3280" : ""));
+    const enq = origem === "SBPE" ? "1976" : "";   // MCMV: pela faixa da renda (psOpcoesEnq)
     const prest = psCampo(linhas, "PRESTACAO", /^\d{1,3}(\.\d{3})*,\d{2}$/);
     const sistema = psCampo(linhas, "SISTEMA DE AMORTIZACAO", /^(PRICE|SAC)$/) || "PRICE";
     const cpfCliente = soDigitos((tudo.match(/CPF CLIENTE\s+([\d.\-]+)/) || [])[1]);
@@ -3972,6 +3974,7 @@
   function psRegrasCidade(forcar) {
     const cid = psCidadeAtual();
     const ribeirao = cid === "RIBEIRAO PRETO - SP" && psEhMap();
+    psOpcoesEnq();
     if (!ribeirao) psEl("psEmp").value = "";      // trocou de cidade: pergunta de novo se voltar a Ribeirão
     const caixaEmp = psEl("psPerguntaEmp"), emp = psEl("psEmp").value;
     caixaEmp.hidden = !ribeirao;
@@ -4091,7 +4094,7 @@
         ["psPrestacao", "psRenda"].forEach(id => psEl(id).classList.remove("destaque"));
         const seg = ((performance.now() - t0) / 1000).toFixed(1).replace(".", ",");
         psMsg(msgId, `Lida em ${seg} s: ${av.participantes.length} proponente(s), prestação R$ ${av.prestacao ? valorLeitura(av.prestacao) : "?"}, ` +
-          `${av.origem} · ${av.enq || "produto não reconhecido"} · ${av.sistema}.` + (av.enq ? "" : " Escolha o enquadramento."), av.enq ? "ok" : "warn");
+          `${av.origem} · ${av.sistema}.`, "ok");
         psEl("psCad2").closest(".linha-arquivo").querySelector(".dica").textContent =
           av.participantes.length > 1 ? "A avaliação tem 2 proponentes: anexe o cadastro do 2º." : "Só quando a avaliação tiver 2 proponentes.";
         psRegrasCidade(false);
@@ -4247,10 +4250,8 @@
   ["psEmp", "psOrigem", "psEnq", "psSistema"].forEach(id => psEl(id).addEventListener("change", () => {
     if (id === "psEmp") psRegrasCidade(false);
     // Origem manda no enquadramento: SBPE = 1976; voltando para FGTS, 3280.
-    if (id === "psOrigem") {
-      if (psEl("psOrigem").value === "SBPE") psEl("psEnq").value = "1976";
-      else if (psEl("psEnq").value === "1976") psEl("psEnq").value = "3280";
-    }
+    if (id === "psEnq") PS.manual.psEnq = true;
+    if (id === "psOrigem") PS.manual.psEnq = false;
     psOpcoesEnq();
     psAtualizarBotao();
   }));
